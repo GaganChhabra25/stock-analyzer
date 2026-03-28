@@ -41,6 +41,7 @@ def _ret_cell(ret):
 
 CSS = """
 * { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
 body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background: #0d1117;
@@ -326,6 +327,25 @@ td { padding: 10px 13px; vertical-align: middle; }
   border-radius: 8px; font-size: 11px; color: #d29922; line-height: 1.6;
 }
 
+/* ── Stock links (jump to detail card) ── */
+.stock-link {
+  color: #e6edf3; text-decoration: none;
+  border-bottom: 1px dashed rgba(88,166,255,0.35);
+  transition: color 0.15s, border-color 0.15s;
+}
+.stock-link:hover { color: #58a6ff; border-bottom-color: #58a6ff; }
+
+/* ── Card highlight on anchor jump ── */
+.ccard:target {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 2px rgba(88,166,255,0.35);
+  animation: card-flash 1.2s ease-out;
+}
+@keyframes card-flash {
+  0%   { box-shadow: 0 0 0 4px rgba(88,166,255,0.55); }
+  100% { box-shadow: 0 0 0 1px rgba(88,166,255,0.2); }
+}
+
 /* ── Take Trade checkbox ── */
 .take-trade-cb {
   width: 17px; height: 17px; cursor: pointer; accent-color: #56d364;
@@ -334,6 +354,42 @@ td { padding: 10px 13px; vertical-align: middle; }
 .trade-taken-label {
   font-size: 10px; color: #56d364; font-weight: 700;
   letter-spacing: 0.4px; display: block; margin-top: 2px;
+}
+
+/* ── Track a Stock form ── */
+.track-stock-panel {
+  background: #161b22; border: 1px solid #30363d;
+  border-radius: 14px; padding: 16px 20px; margin-bottom: 28px;
+  display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+}
+.track-stock-panel .ts-label {
+  font-size: 11px; color: #8b949e; text-transform: uppercase;
+  letter-spacing: 0.6px; margin-bottom: 5px;
+}
+.track-stock-panel input[type=text],
+.track-stock-panel input[type=number],
+.track-stock-panel select {
+  background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+  border-radius: 7px; padding: 7px 10px; font-size: 12px;
+  outline: none; transition: border-color 0.15s;
+}
+.track-stock-panel input[type=text]:focus,
+.track-stock-panel input[type=number]:focus,
+.track-stock-panel select:focus { border-color: #58a6ff; }
+.track-stock-panel input[type=text]  { width: 120px; text-transform: uppercase; }
+.track-stock-panel input[type=number]{ width: 110px; }
+.track-stock-panel select            { width: 110px; }
+.track-stock-btn {
+  background: rgba(86,211,100,0.12); border: 1px solid rgba(86,211,100,0.4);
+  color: #56d364; font-size: 12px; font-weight: 700;
+  padding: 7px 18px; border-radius: 7px; cursor: pointer;
+  transition: background 0.15s; white-space: nowrap;
+}
+.track-stock-btn:hover { background: rgba(86,211,100,0.22); }
+.manual-badge {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px;
+  background: rgba(88,166,255,0.15); color: #58a6ff;
+  font-weight: 700; letter-spacing: 0.3px; margin-left: 4px;
 }
 
 /* ── Active Trades panel ── */
@@ -407,14 +463,13 @@ function saveActiveTrades(trades) {
 function takeTrade(symbol, cb) {
   var trades = getActiveTrades();
   if (cb.checked) {
-    // Get stock data from embedded JSON
     var data = window.SCREENER_DATA && window.SCREENER_DATA[symbol];
     trades[symbol] = {
-      symbol: symbol,
-      name:   data ? data.name   : symbol,
-      sector: data ? data.sector : '',
-      cmp:    data ? data.cmp    : 0,
-      direction: data ? data.direction : '',
+      symbol:      symbol,
+      name:        data ? data.name      : symbol,
+      sector:      data ? data.sector    : '',
+      cmp:         data ? data.cmp       : 0,
+      direction:   data ? data.direction : '',
       probability: data ? data.probability : 0,
       takenAt: new Date().toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})
     };
@@ -425,16 +480,68 @@ function takeTrade(symbol, cb) {
   renderActiveTrades();
 }
 
+function addCustomTrade() {
+  var symEl  = document.getElementById('custom-symbol');
+  var prxEl  = document.getElementById('custom-price');
+  var dirEl  = document.getElementById('custom-direction');
+  var errEl  = document.getElementById('custom-error');
+
+  var sym = symEl.value.trim().toUpperCase().replace(/[^A-Z0-9&]/g, '');
+  var prc = parseFloat(prxEl.value) || 0;
+  var dir = dirEl.value;
+
+  if (!sym) { errEl.textContent = 'Enter a valid NSE symbol.'; return; }
+  errEl.textContent = '';
+
+  var trades = getActiveTrades();
+  // Prefer live data from current scan if available
+  var data = window.SCREENER_DATA && window.SCREENER_DATA[sym];
+  trades[sym] = {
+    symbol:      sym,
+    name:        data ? data.name   : sym,
+    sector:      data ? data.sector : 'Manual',
+    cmp:         prc  > 0 ? prc : (data ? data.cmp : 0),
+    direction:   dir,
+    probability: data ? data.probability : 0,
+    manual:      true,
+    takenAt: new Date().toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})
+  };
+  saveActiveTrades(trades);
+  renderActiveTrades();
+
+  // Sync checkbox if stock is in current scan
+  var cb  = document.getElementById('cb_' + sym);
+  var lbl = document.getElementById('tl_' + sym);
+  if (cb)  cb.checked = true;
+  if (lbl) lbl.style.display = 'block';
+
+  symEl.value = '';
+  prxEl.value = '';
+  dirEl.value = 'UP';
+}
+
 function completeTrade(symbol) {
   var trades = getActiveTrades();
   delete trades[symbol];
   saveActiveTrades(trades);
-  // Uncheck the checkbox if stock is in current scan
   var cb = document.getElementById('cb_' + symbol);
   if (cb) cb.checked = false;
   var lbl = document.getElementById('tl_' + symbol);
   if (lbl) lbl.style.display = 'none';
   renderActiveTrades();
+}
+
+function goToCard(sym) {
+  var card = document.getElementById('card_' + sym);
+  if (!card) return;
+  card.scrollIntoView({behavior: 'smooth', block: 'start'});
+  // Briefly highlight
+  card.style.borderColor = '#58a6ff';
+  card.style.boxShadow   = '0 0 0 3px rgba(88,166,255,0.4)';
+  setTimeout(function() {
+    card.style.borderColor = '';
+    card.style.boxShadow   = '';
+  }, 1800);
 }
 
 function renderActiveTrades() {
@@ -455,27 +562,36 @@ function renderActiveTrades() {
   var rows = '';
   keys.forEach(function(sym) {
     var t = trades[sym];
-    var dirColor = t.direction === 'UP' ? '#56d364' : '#f85149';
-    var dirArrow = t.direction === 'UP' ? '\\u25b2' : '\\u25bc';
-    // Check if stock is in current scan and get latest CMP
-    var latest = window.SCREENER_DATA && window.SCREENER_DATA[sym];
-    var cmpDisplay = latest
-      ? ('\\u20b9' + latest.cmp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}))
-      : ('\\u20b9' + t.cmp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' <span style="font-size:9px;color:#8b949e">(prev scan)</span>');
+    var dirColor = t.direction === 'UP' ? '#56d364' : (t.direction === 'DOWN' ? '#f85149' : '#8b949e');
+    var dirArrow = t.direction === 'UP' ? '\\u25b2' : (t.direction === 'DOWN' ? '\\u25bc' : '—');
+    var latest   = window.SCREENER_DATA && window.SCREENER_DATA[sym];
+    var curCmp   = latest ? latest.cmp : 0;
+    var cmpDisplay = curCmp > 0
+      ? ('\\u20b9' + curCmp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}))
+      : (t.cmp > 0
+          ? ('\\u20b9' + t.cmp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' <span style="font-size:9px;color:#8b949e">(entry price)</span>')
+          : '<span style="color:#8b949e">—</span>');
     var pnlHtml = '';
-    if (latest && t.cmp > 0) {
-      var pnl = ((latest.cmp - t.cmp) / t.cmp) * 100;
+    if (curCmp > 0 && t.cmp > 0) {
+      var pnl = ((curCmp - t.cmp) / t.cmp) * 100;
       var pnlColor = pnl >= 0 ? '#56d364' : '#f85149';
-      var pnlSign  = pnl >= 0 ? '+' : '';
-      pnlHtml = '<div style="font-size:10px;color:' + pnlColor + ';font-weight:700">' + pnlSign + pnl.toFixed(1) + '% since entry</div>';
+      pnlHtml = '<div style="font-size:10px;color:' + pnlColor + ';font-weight:700">' + (pnl>=0?'+':'') + pnl.toFixed(1) + '% since entry</div>';
     }
+    var manualTag = t.manual ? '<span class="manual-badge">MANUAL</span>' : '';
+    // Card link (if card exists in this report)
+    var cardEl = document.getElementById('card_' + sym);
+    var symHtml = cardEl
+      ? '<a href="#card_' + sym + '" class="stock-link" style="font-size:13px;font-weight:700">' + sym + '</a>'
+      : '<strong style="font-size:13px">' + sym + '</strong>';
     rows += '<tr style="border-top:1px solid rgba(86,211,100,0.15)">'
-      + '<td><strong style="font-size:13px">' + sym + '</strong>'
+      + '<td>' + symHtml + manualTag
       + '<div style="font-size:10px;color:#8b949e">' + t.name + '</div></td>'
       + '<td style="color:#8b949e;font-size:11px">' + t.sector + '</td>'
-      + '<td>' + cmpDisplay + pnlHtml + '</td>'
-      + '<td><span style="color:' + dirColor + ';font-weight:700">' + dirArrow + ' ' + t.direction + '</span></td>'
-      + '<td><strong style="color:' + dirColor + '">' + t.probability + '%</strong></td>'
+      + '<td>' + cmpDisplay + pnlHtml
+      + (t.cmp > 0 ? '<div style="font-size:9px;color:#8b949e">Entry: \\u20b9' + t.cmp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) + '</div>' : '')
+      + '</td>'
+      + '<td><span style="color:' + dirColor + ';font-weight:700">' + dirArrow + ' ' + (t.direction||'—') + '</span></td>'
+      + '<td>' + (t.probability > 0 ? '<strong style="color:' + dirColor + '">' + t.probability + '%</strong>' : '<span style="color:#8b949e">—</span>') + '</td>'
       + '<td><span class="at-trade-taken-at">' + t.takenAt + '</span></td>'
       + '<td><button class="complete-btn" onclick="completeTrade(\\'' + sym + '\\')">\\u2713 Mark Complete</button></td>'
       + '</tr>';
@@ -486,7 +602,6 @@ function renderActiveTrades() {
 // Init on page load
 window.addEventListener('DOMContentLoaded', function() {
   var trades = getActiveTrades();
-  // Restore checkboxes for stocks in current scan
   Object.keys(trades).forEach(function(sym) {
     var cb  = document.getElementById('cb_' + sym);
     var lbl = document.getElementById('tl_' + sym);
@@ -494,6 +609,14 @@ window.addEventListener('DOMContentLoaded', function() {
     if (lbl) lbl.style.display = 'block';
   });
   renderActiveTrades();
+
+  // Allow Enter key in custom trade form
+  document.getElementById('custom-symbol').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') addCustomTrade();
+  });
+  document.getElementById('custom-price').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') addCustomTrade();
+  });
 });
 """
 
@@ -650,7 +773,7 @@ def _build_card(c: dict, idx: int) -> str:
     detail_id = f"detail_{idx}"
 
     return f"""
-<div class="ccard {dir_cls}">
+<div class="ccard {dir_cls}" id="card_{c['symbol']}">
   <div class="ccard-header">
     <div>
       <div class="ccard-symbol">{c['symbol']}</div>
@@ -739,7 +862,7 @@ def _summary_row(c: dict, rank: int) -> str:
     return f"""<tr>
       <td style="font-size:13px;font-weight:700;color:#8b949e">#{rank}</td>
       <td>
-        <strong style="font-size:13px">{sym}</strong>
+        <a href="#card_{sym}" class="stock-link" style="font-size:13px;font-weight:700">{sym}</a>
         <div style="font-size:10px;color:#8b949e">{c['name']}</div>
       </td>
       <td style="color:#8b949e;font-size:11px">{c['sector']}</td>
@@ -789,7 +912,7 @@ def _cur_month_table_rows(candidates: list) -> str:
         mtd_cls  = "pos" if mtd >= 0 else "neg"
         mtd_sign = "+" if mtd >= 0 else ""
         rows.append(f"""<tr>
-          <td><strong>{c['symbol']}</strong><div style="font-size:10px;color:#8b949e">{c['sector']}</div></td>
+          <td><a href="#card_{c['symbol']}" class="stock-link"><strong>{c['symbol']}</strong></a><div style="font-size:10px;color:#8b949e">{c['sector']}</div></td>
           <td><strong>₹{c['cmp']:,.2f}</strong></td>
           <td class="{mtd_cls}">{mtd_sign}{mtd:.1f}%<div style="font-size:9px;color:#8b949e">from ₹{cm.get("month_open",0):,.0f}</div></td>
           <td style="color:#d29922">{days}d</td>
@@ -821,7 +944,7 @@ def _next_month_table_rows(candidates: list) -> str:
         rlo     = nm.get("range_low",  c["cmp"])
         rtgt    = nm.get("base_target", c["cmp"])
         rows.append(f"""<tr>
-          <td><strong>{c['symbol']}</strong><div style="font-size:10px;color:#8b949e">{c['sector']}</div></td>
+          <td><a href="#card_{c['symbol']}" class="stock-link"><strong>{c['symbol']}</strong></a><div style="font-size:10px;color:#8b949e">{c['sector']}</div></td>
           <td><strong>₹{c['cmp']:,.2f}</strong></td>
           <td><span class="dir-badge {'up' if ndir=='UP' else 'dn'}">{'▲' if ndir=='UP' else '▼'} {ndir}</span></td>
           <td><strong style="color:{color}">{prob:.0f}%</strong>
@@ -945,6 +1068,38 @@ def generate_screener_report(candidates: list, output_file: str) -> str:
       </tr></thead>
       <tbody id="active-trades-tbody"></tbody>
     </table>
+  </div>
+
+  <!-- Track a Stock (manual active trade) -->
+  <div class="track-stock-panel">
+    <div>
+      <div class="ts-label">Track another stock in Active Trades</div>
+      <div style="font-size:11px;color:#8b949e;margin-bottom:8px">
+        Add any NSE symbol you're already trading — tracked until you mark it complete
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <div>
+          <div class="ts-label">Symbol</div>
+          <input type="text" id="custom-symbol" placeholder="e.g. INFY" maxlength="20">
+        </div>
+        <div>
+          <div class="ts-label">Entry Price (₹)</div>
+          <input type="number" id="custom-price" placeholder="optional" min="0" step="0.05">
+        </div>
+        <div>
+          <div class="ts-label">Direction</div>
+          <select id="custom-direction">
+            <option value="UP">▲ LONG / UP</option>
+            <option value="DOWN">▼ SHORT / DOWN</option>
+          </select>
+        </div>
+        <div>
+          <div class="ts-label">&nbsp;</div>
+          <button class="track-stock-btn" onclick="addCustomTrade()">+ Track Stock</button>
+        </div>
+        <div id="custom-error" style="font-size:11px;color:#f85149;align-self:center"></div>
+      </div>
+    </div>
   </div>
 
   <!-- Summary table -->
