@@ -424,6 +424,41 @@ td { padding: 10px 13px; vertical-align: middle; }
   font-size: 10px; color: #7ee787; opacity: 0.7;
 }
 
+/* ── Change alert banner ── */
+.change-alert-banner {
+  border-radius: 12px; padding: 14px 20px; margin-bottom: 22px;
+  border: 1px solid rgba(210,153,34,0.5);
+  background: rgba(210,153,34,0.08);
+}
+.change-alert-banner .cab-title {
+  font-size: 13px; font-weight: 800; color: #d29922;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.alert-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 0; border-top: 1px solid rgba(210,153,34,0.2);
+  font-size: 12px;
+}
+.alert-item .ai-sym {
+  font-weight: 800; font-size: 13px; color: #e6edf3; min-width: 90px;
+}
+.alert-flip  { color: #f85149; font-weight: 700; }
+.alert-up    { color: #56d364; font-weight: 700; }
+.alert-down  { color: #f85149; font-weight: 700; }
+.alert-neutral { color: #d29922; }
+
+/* ── Tracked stock card (not in top-N) ── */
+.ccard.tracked-card {
+  border-left-color: #58a6ff !important;
+  opacity: 0.92;
+}
+.tracked-badge {
+  font-size: 9px; padding: 2px 6px; border-radius: 4px;
+  background: rgba(88,166,255,0.15); color: #58a6ff;
+  border: 1px solid rgba(88,166,255,0.3); font-weight: 700;
+  letter-spacing: 0.3px; display: inline-block; margin-top: 3px;
+}
+
 /* ── Print ── */
 @media print {
   body { background: white; color: black; }
@@ -515,6 +550,18 @@ function addCustomTrade() {
   if (cb)  cb.checked = true;
   if (lbl) lbl.style.display = 'block';
 
+  // Show CLI hint to get live analysis
+  var priceArg = prc > 0 ? ' --price ' + prc : '';
+  var cmd = 'python run_screener.py --track ' + sym + priceArg + ' --direction ' + dir;
+  errEl.style.color = '#58a6ff';
+  errEl.innerHTML = sym + ' added. For live probability &amp; CMP, run:<br>'
+    + '<code style="font-size:10px;background:#0d1117;padding:3px 6px;border-radius:4px;color:#56d364">'
+    + cmd + '</code>'
+    + ' <button onclick="navigator.clipboard.writeText(\\'' + cmd.replace(/'/g, "\\\\'") + '\\')'
+    + ';this.textContent=\\'Copied!\\';setTimeout(()=>this.textContent=\\'Copy\\',1500)" '
+    + 'style="font-size:10px;padding:2px 7px;background:#21262d;border:1px solid #30363d;'
+    + 'color:#8b949e;border-radius:4px;cursor:pointer;margin-left:6px">Copy</button>';
+
   symEl.value = '';
   prxEl.value = '';
   dirEl.value = 'UP';
@@ -572,12 +619,32 @@ function renderActiveTrades() {
           ? ('\\u20b9' + t.cmp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' <span style="font-size:9px;color:#8b949e">(entry price)</span>')
           : '<span style="color:#8b949e">—</span>');
     var pnlHtml = '';
-    if (curCmp > 0 && t.cmp > 0) {
-      var pnl = ((curCmp - t.cmp) / t.cmp) * 100;
+    var entryPrc = t.cmp || 0;  // entry CMP stored when trade taken
+    // For Python-tracked trades, use meta entry_price if available
+    var meta = window.ACTIVE_TRADES_META && window.ACTIVE_TRADES_META[sym];
+    if (meta && meta.entry_price > 0) entryPrc = meta.entry_price;
+    if (curCmp > 0 && entryPrc > 0) {
+      var pnl = ((curCmp - entryPrc) / entryPrc) * 100;
       var pnlColor = pnl >= 0 ? '#56d364' : '#f85149';
       pnlHtml = '<div style="font-size:10px;color:' + pnlColor + ';font-weight:700">' + (pnl>=0?'+':'') + pnl.toFixed(1) + '% since entry</div>';
     }
-    var manualTag = t.manual ? '<span class="manual-badge">MANUAL</span>' : '';
+    // Show current probability from live scan
+    var liveProbHtml = '';
+    if (latest && latest.probability > 0) {
+      var pColor = latest.direction === 'UP' ? '#56d364' : '#f85149';
+      liveProbHtml = '<strong style="color:' + pColor + '">' + latest.probability + '%</strong>';
+      // Flag change vs entry
+      var entryProb = (meta && meta.entry_probability) || t.probability || 0;
+      if (entryProb > 0 && Math.abs(latest.probability - entryProb) >= 5) {
+        var pdiff = latest.probability - entryProb;
+        var pc = pdiff > 0 ? '#56d364' : '#f85149';
+        liveProbHtml += '<span style="font-size:9px;color:' + pc + ';margin-left:3px">('
+          + (pdiff>0?'+':'') + pdiff.toFixed(1) + '%)</span>';
+      }
+    } else {
+      liveProbHtml = '<span style="color:#8b949e;font-size:10px">run screener</span>';
+    }
+    var manualTag = t.manual ? '<span class="manual-badge">MANUAL</span>' : (t.fromPython ? '' : '');
     // Card link (if card exists in this report)
     var cardEl = document.getElementById('card_' + sym);
     var symHtml = cardEl
@@ -591,7 +658,7 @@ function renderActiveTrades() {
       + (t.cmp > 0 ? '<div style="font-size:9px;color:#8b949e">Entry: \\u20b9' + t.cmp.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) + '</div>' : '')
       + '</td>'
       + '<td><span style="color:' + dirColor + ';font-weight:700">' + dirArrow + ' ' + (t.direction||'—') + '</span></td>'
-      + '<td>' + (t.probability > 0 ? '<strong style="color:' + dirColor + '">' + t.probability + '%</strong>' : '<span style="color:#8b949e">—</span>') + '</td>'
+      + '<td>' + liveProbHtml + '</td>'
       + '<td><span class="at-trade-taken-at">' + t.takenAt + '</span></td>'
       + '<td><button class="complete-btn" onclick="completeTrade(\\'' + sym + '\\')">\\u2713 Mark Complete</button></td>'
       + '</tr>';
@@ -599,8 +666,134 @@ function renderActiveTrades() {
   tbody.innerHTML = rows;
 }
 
+// ── Change alert detection ─────────────────────────────────────────────────────
+function detectAndShowAlerts() {
+  var meta    = window.ACTIVE_TRADES_META || {};
+  var data    = window.SCREENER_DATA || {};
+  var lsTrades = getActiveTrades();
+  var alerts  = [];
+
+  // Check all symbols that are either in Python meta or localStorage
+  var allSyms = {};
+  Object.keys(meta).forEach(function(s) { allSyms[s] = true; });
+  Object.keys(lsTrades).forEach(function(s) { allSyms[s] = true; });
+
+  Object.keys(allSyms).forEach(function(sym) {
+    var current = data[sym];
+    if (!current) return;  // not in this scan's data
+
+    var entryDir  = null;
+    var entryProb = 0;
+    var entryName = sym;
+
+    // Prefer Python meta (more reliable — set at time of --track)
+    if (meta[sym]) {
+      entryDir  = meta[sym].entry_direction  || null;
+      entryProb = meta[sym].entry_probability || 0;
+      entryName = meta[sym].name || sym;
+    } else if (lsTrades[sym]) {
+      entryDir  = lsTrades[sym].direction   || null;
+      entryProb = lsTrades[sym].probability || 0;
+      entryName = lsTrades[sym].name || sym;
+    }
+
+    // Direction flip
+    if (entryDir && entryDir !== current.direction) {
+      alerts.push({
+        type: 'flip',
+        sym:  sym,
+        name: entryName,
+        from: entryDir,
+        to:   current.direction,
+        prob: current.probability,
+      });
+    }
+
+    // Probability swing ≥5%
+    if (entryProb > 0) {
+      var diff = current.probability - entryProb;
+      if (Math.abs(diff) >= 5) {
+        alerts.push({
+          type: 'prob',
+          sym:  sym,
+          name: entryName,
+          from: entryProb,
+          to:   current.probability,
+          diff: diff,
+          dir:  current.direction,
+        });
+      }
+    }
+  });
+
+  if (alerts.length === 0) return;
+
+  var rows = alerts.map(function(a) {
+    if (a.type === 'flip') {
+      var fromCol = a.from === 'UP' ? 'alert-up' : 'alert-down';
+      var toCol   = a.to   === 'UP' ? 'alert-up' : 'alert-down';
+      var fromArrow = a.from === 'UP' ? '\\u25b2' : '\\u25bc';
+      var toArrow   = a.to   === 'UP' ? '\\u25b2' : '\\u25bc';
+      return '<div class="alert-item">'
+        + '<span class="ai-sym">' + a.sym + '</span>'
+        + '<span>Direction flipped &nbsp;<span class="' + fromCol + '">' + fromArrow + ' ' + a.from + '</span>'
+        + ' &rarr; <span class="' + toCol + '">' + toArrow + ' ' + a.to + '</span>'
+        + ' &nbsp;<span style="color:#8b949e">( now ' + a.prob + '% probability )</span>'
+        + '</span></div>';
+    } else {
+      var sign    = a.diff >= 0 ? '+' : '';
+      var diffCol = a.diff >= 0 ? '#56d364' : '#f85149';
+      return '<div class="alert-item">'
+        + '<span class="ai-sym">' + a.sym + '</span>'
+        + '<span class="alert-neutral">Probability changed &nbsp;'
+        + '<strong>' + a.from.toFixed(1) + '%</strong> &rarr; '
+        + '<strong style="color:' + diffCol + '">' + a.to.toFixed(1) + '%</strong>'
+        + ' &nbsp;<span style="color:' + diffCol + ';font-weight:700">(' + sign + a.diff.toFixed(1) + '%)</span>'
+        + '</span></div>';
+    }
+  }).join('');
+
+  var banner = document.createElement('div');
+  banner.className = 'change-alert-banner';
+  banner.innerHTML = '<div class="cab-title">\\u26a0\\ufe0f Active Trade Alerts (' + alerts.length + ')'
+    + '<span style="font-size:11px;font-weight:400;color:#d29922;margin-left:4px">— changes since your entry</span></div>'
+    + rows;
+
+  var mainEl = document.querySelector('.main');
+  if (mainEl) mainEl.insertBefore(banner, mainEl.firstChild);
+}
+
+// ── Sync Python-tracked trades into localStorage ───────────────────────────────
+function syncPythonTrades() {
+  var meta   = window.ACTIVE_TRADES_META || {};
+  var data   = window.SCREENER_DATA || {};
+  var trades = getActiveTrades();
+  var changed = false;
+
+  Object.keys(meta).forEach(function(sym) {
+    if (!trades[sym]) {
+      var m       = meta[sym];
+      var current = data[sym] || {};
+      trades[sym] = {
+        symbol:      sym,
+        name:        m.name || current.name || sym,
+        sector:      current.sector || 'Tracked',
+        cmp:         m.entry_price  || current.cmp || 0,
+        direction:   m.entry_direction || current.direction || '',
+        probability: current.probability || m.entry_probability || 0,
+        takenAt:     m.added_at || '',
+        fromPython:  true,
+      };
+      changed = true;
+    }
+  });
+  if (changed) saveActiveTrades(trades);
+}
+
 // Init on page load
 window.addEventListener('DOMContentLoaded', function() {
+  syncPythonTrades();
+
   var trades = getActiveTrades();
   Object.keys(trades).forEach(function(sym) {
     var cb  = document.getElementById('cb_' + sym);
@@ -609,6 +802,7 @@ window.addEventListener('DOMContentLoaded', function() {
     if (lbl) lbl.style.display = 'block';
   });
   renderActiveTrades();
+  detectAndShowAlerts();
 
   // Allow Enter key in custom trade form
   document.getElementById('custom-symbol').addEventListener('keydown', function(e) {
@@ -722,13 +916,13 @@ def _month_pred_block(c: dict) -> str:
 
 # ── Card builder ──────────────────────────────────────────────────────────────
 
-def _build_card(c: dict, idx: int) -> str:
+def _build_card(c: dict, idx: int, tracked: bool = False) -> str:
     direction = c["direction"]
     prob      = c["probability"]
     bd        = c["breakdown"]
     up        = direction == "UP"
 
-    dir_cls    = "up-card" if up else "dn-card"
+    dir_cls    = ("up-card" if up else "dn-card") + (" tracked-card" if tracked else "")
     prob_color = "#56d364" if up else "#f85149"
     prob_cls   = "up-color" if up else "dn-color"
 
@@ -772,6 +966,7 @@ def _build_card(c: dict, idx: int) -> str:
 
     detail_id = f"detail_{idx}"
 
+    tracked_badge = '<div class="tracked-badge">📌 TRACKED</div>' if tracked else ""
     return f"""
 <div class="ccard {dir_cls}" id="card_{c['symbol']}">
   <div class="ccard-header">
@@ -779,6 +974,7 @@ def _build_card(c: dict, idx: int) -> str:
       <div class="ccard-symbol">{c['symbol']}</div>
       <div class="ccard-name">{c['name']}</div>
       <div class="ccard-sector">{c['sector']}</div>
+      {tracked_badge}
     </div>
     <div class="ccard-right">
       <div class="ccard-price">₹{c['cmp']:,.2f}</div>
@@ -966,7 +1162,9 @@ def _next_month_table_rows(candidates: list) -> str:
 
 # ── Main generator ────────────────────────────────────────────────────────────
 
-def generate_screener_report(candidates: list, output_file: str) -> str:
+def generate_screener_report(candidates: list, output_file: str,
+                              active_trades_meta: dict = None,
+                              active_trades_data: dict = None) -> str:
     ts     = datetime.now().strftime("%d %b %Y, %I:%M %p")
     n_up   = sum(1 for c in candidates if c["direction"] == "UP")
     n_dn   = len(candidates) - n_up
@@ -980,7 +1178,16 @@ def generate_screener_report(candidates: list, output_file: str) -> str:
     summary_rows = "\n".join(_summary_row(c, i+1) for i, c in enumerate(candidates))
     cards_html   = "\n".join(_build_card(c, i) for i, c in enumerate(candidates))
 
-    # Build compact stock data dict for JS (for Active Trades panel)
+    # Cards for tracked symbols not in top picks
+    tracked_cards_html = ""
+    if active_trades_data:
+        tracked_list = list(active_trades_data.values())
+        tracked_cards_html = "\n".join(
+            _build_card(c, 9000 + i, tracked=True)
+            for i, c in enumerate(tracked_list)
+        )
+
+    # Build stock data dict for JS — screener picks + extra tracked symbols
     screener_data = {
         c["symbol"]: {
             "name":        c["name"],
@@ -988,10 +1195,36 @@ def generate_screener_report(candidates: list, output_file: str) -> str:
             "cmp":         c["cmp"],
             "direction":   c["direction"],
             "probability": round(c["probability"], 1),
+            "tech_score":  round(c.get("tech_score", 0), 1),
+            "rsi":         round(c.get("rsi", 0), 1),
+            "win_rate":    round(c.get("win_rate", 0), 1),
+            "monthly_vol": round(c.get("monthly_vol", 0), 1),
+            "atr_pct":     round(c.get("atr_pct", 0), 2),
+            "vs_52h":      round(c.get("vs_52h", 0), 1),
+            "daily_val_cr":round(c.get("daily_val_cr", 0), 1),
         }
         for c in candidates
     }
-    screener_data_js = json.dumps(screener_data, ensure_ascii=False)
+    # Merge in extra tracked symbols (analyzed but not in top picks)
+    for sym, c in (active_trades_data or {}).items():
+        screener_data[sym] = {
+            "name":        c["name"],
+            "sector":      c["sector"],
+            "cmp":         c["cmp"],
+            "direction":   c["direction"],
+            "probability": round(c["probability"], 1),
+            "tech_score":  round(c.get("tech_score", 0), 1),
+            "rsi":         round(c.get("rsi", 0), 1),
+            "win_rate":    round(c.get("win_rate", 0), 1),
+            "monthly_vol": round(c.get("monthly_vol", 0), 1),
+            "atr_pct":     round(c.get("atr_pct", 0), 2),
+            "vs_52h":      round(c.get("vs_52h", 0), 1),
+            "daily_val_cr":round(c.get("daily_val_cr", 0), 1),
+            "tracked":     True,
+        }
+
+    screener_data_js      = json.dumps(screener_data, ensure_ascii=False)
+    active_trades_meta_js = json.dumps(active_trades_meta or {}, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1155,6 +1388,10 @@ def generate_screener_report(candidates: list, output_file: str) -> str:
     {cards_html}
   </div>
 
+  <!-- Tracked active trade cards (not in top picks) -->
+  {f'''<div class="sec-title">📌 Your Tracked Stocks — Full Analysis</div>
+  <div class="cards-grid">{tracked_cards_html}</div>''' if tracked_cards_html else ''}
+
   <div class="disclaimer">
     ⚠️ <strong>Disclaimer:</strong> This screener is for educational and informational purposes only.
     Probabilities are statistical estimates based on historical patterns — past performance does not
@@ -1165,7 +1402,8 @@ def generate_screener_report(candidates: list, output_file: str) -> str:
 </div>
 
 <script>
-window.SCREENER_DATA = {screener_data_js};
+window.SCREENER_DATA      = {screener_data_js};
+window.ACTIVE_TRADES_META = {active_trades_meta_js};
 {JS}
 </script>
 </body>

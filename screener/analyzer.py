@@ -494,7 +494,23 @@ class StockScreener:
 
     # ── Single stock analysis ─────────────────────────────────────────────────
 
-    def _analyze_one(self, symbol: str, hist: pd.DataFrame):
+    def analyze_extra_symbols(self, symbols: list) -> dict:
+        """
+        Download and fully analyze specific symbols regardless of liquidity or ranking.
+        Used for user-tracked active trades. Returns {symbol: result_dict}.
+        """
+        if not symbols:
+            return {}
+        print(f"  Fetching data for {len(symbols)} tracked symbol(s)…")
+        all_data = self._batch_download(symbols)
+        results  = {}
+        for sym, hist in all_data.items():
+            result = self._analyze_one(sym, hist, force=True)
+            if result:
+                results[sym] = result
+        return results
+
+    def _analyze_one(self, symbol: str, hist: pd.DataFrame, force: bool = False):
         try:
             close  = hist["Close"]
             volume = hist["Volume"]
@@ -505,7 +521,7 @@ class StockScreener:
             avg_price   = float(close.tail(20).mean())
             avg_vol     = float(volume.tail(20).mean())
             daily_val_cr = avg_price * avg_vol / 1e7   # crores
-            if daily_val_cr < MIN_DAILY_VALUE_CR:
+            if daily_val_cr < MIN_DAILY_VALUE_CR and not force:
                 return None
 
             latest_close = float(close.iloc[-1])
