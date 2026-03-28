@@ -355,6 +355,77 @@ To save as PDF: Chrome → `Ctrl+P` → Save as PDF
 
 ---
 
+## Web App — Running Locally
+
+The project includes a Flask web dashboard that lets you run analysis and view reports from a browser, protected by Google OAuth login.
+
+### Prerequisites
+
+- Python 3.9+
+- A Google Cloud OAuth 2.0 Client ID (free)
+
+### Step 1 — Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### Step 2 — Create a Google OAuth Client ID
+
+1. Go to [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials)
+2. Click **Create Credentials → OAuth 2.0 Client ID**
+3. Application type: **Web application**
+4. Under **Authorized redirect URIs**, add:
+   ```
+   http://127.0.0.1:5000/auth/callback
+   http://localhost:5000/auth/callback
+   ```
+5. Copy the **Client ID** and **Client Secret**
+
+### Step 3 — Create your `.env` file
+
+Copy the example and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```env
+FLASK_SECRET_KEY=any-long-random-string-here
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+ALLOWED_EMAILS=youremail@gmail.com
+```
+
+> Only emails listed in `ALLOWED_EMAILS` can log in. Separate multiple with commas.
+
+### Step 4 — Run the app
+
+```bash
+python app.py
+```
+
+Open **http://127.0.0.1:5000** in your browser. Sign in with your Google account.
+
+### What the dashboard does
+
+| Button | What it runs | Output |
+|--------|-------------|--------|
+| **Run Analysis** | `python main.py` | `reports/portfolio_report.html` |
+| **Run Screener** | `python run_screener.py --no-open` | `reports/screener_report.html` |
+
+Jobs run in the background — the dashboard polls for status and shows a live log. Click **Open Report** when done.
+
+### Notes
+
+- The `.env` file is gitignored — never commit it
+- On Windows, make sure your terminal supports UTF-8 (the app handles this automatically via `python-dotenv`)
+- For production deployment, use gunicorn behind nginx — see `deploy/` folder
+
+---
+
 ## Customising Goals
 
 Edit `config.py`:

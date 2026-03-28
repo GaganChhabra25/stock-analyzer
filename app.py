@@ -13,6 +13,10 @@ from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
+# Load .env for local development (no-op if file absent or vars already set)
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
+
 from flask import (Flask, redirect, url_for, session, render_template,
                    send_file, abort, jsonify)
 from authlib.integrations.flask_client import OAuth
@@ -75,10 +79,12 @@ def _run_job(job_id: str, cmd: list):
             [sys.executable] + cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=str(BASE_DIR),
             timeout=600,
         )
-        log = result.stdout + result.stderr
+        log = (result.stdout or "") + (result.stderr or "")
         status = "done" if result.returncode == 0 else "error"
     except subprocess.TimeoutExpired:
         log = "Analysis timed out after 10 minutes."
