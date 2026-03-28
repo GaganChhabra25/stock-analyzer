@@ -360,25 +360,21 @@ td { padding: 10px 13px; vertical-align: middle; }
 .track-stock-panel {
   background: #161b22; border: 1px solid #30363d;
   border-radius: 14px; padding: 16px 20px; margin-bottom: 28px;
-  display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
 }
 .track-stock-panel .ts-label {
   font-size: 11px; color: #8b949e; text-transform: uppercase;
   letter-spacing: 0.6px; margin-bottom: 5px;
 }
-.track-stock-panel input[type=text],
 .track-stock-panel input[type=number],
 .track-stock-panel select {
   background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
   border-radius: 7px; padding: 7px 10px; font-size: 12px;
   outline: none; transition: border-color 0.15s;
 }
-.track-stock-panel input[type=text]:focus,
 .track-stock-panel input[type=number]:focus,
 .track-stock-panel select:focus { border-color: #58a6ff; }
-.track-stock-panel input[type=text]  { width: 120px; text-transform: uppercase; }
-.track-stock-panel input[type=number]{ width: 110px; }
-.track-stock-panel select            { width: 110px; }
+.track-stock-panel input[type=number]{ width: 120px; }
+.track-stock-panel select            { width: 140px; }
 .track-stock-btn {
   background: rgba(86,211,100,0.12); border: 1px solid rgba(86,211,100,0.4);
   color: #56d364; font-size: 12px; font-weight: 700;
@@ -391,6 +387,52 @@ td { padding: 10px 13px; vertical-align: middle; }
   background: rgba(88,166,255,0.15); color: #58a6ff;
   font-weight: 700; letter-spacing: 0.3px; margin-left: 4px;
 }
+
+/* ── Stock search autocomplete ── */
+.stock-search-wrap {
+  position: relative; display: inline-block;
+}
+.stock-search-input {
+  background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+  border-radius: 7px; padding: 7px 32px 7px 10px; font-size: 12px;
+  outline: none; transition: border-color 0.15s; width: 260px;
+}
+.stock-search-input:focus { border-color: #58a6ff; }
+.stock-search-input.has-selection {
+  border-color: rgba(86,211,100,0.5); color: #56d364; font-weight: 600;
+}
+.stock-search-clear {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: #8b949e; font-size: 14px;
+  cursor: pointer; padding: 0; display: none; line-height: 1;
+}
+.stock-search-clear:hover { color: #f85149; }
+.stock-search-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: #1c2333; border: 1px solid #30363d; border-radius: 9px;
+  overflow: hidden; z-index: 999; display: none;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  max-height: 320px; overflow-y: auto;
+}
+.stock-search-dropdown::-webkit-scrollbar { width: 4px; }
+.stock-search-dropdown::-webkit-scrollbar-track { background: #1c2333; }
+.stock-search-dropdown::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+.ssd-item {
+  padding: 9px 13px; cursor: pointer; border-bottom: 1px solid #21262d;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: background 0.1s;
+}
+.ssd-item:last-child { border-bottom: none; }
+.ssd-item:hover, .ssd-item.active { background: #262d3a; }
+.ssd-left { display: flex; flex-direction: column; gap: 2px; }
+.ssd-sym  { font-size: 13px; font-weight: 800; color: #e6edf3; }
+.ssd-name { font-size: 10px; color: #8b949e; }
+.ssd-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.ssd-cmp  { font-size: 12px; font-weight: 600; color: #e6edf3; }
+.ssd-prob { font-size: 10px; font-weight: 700; }
+.ssd-sector { font-size: 9px; color: #58a6ff; background: rgba(88,166,255,0.1);
+  padding: 1px 5px; border-radius: 3px; }
+.ssd-empty { padding: 14px; text-align: center; color: #8b949e; font-size: 12px; }
 
 /* ── Active Trades panel ── */
 .active-trades-panel {
@@ -515,54 +557,213 @@ function takeTrade(symbol, cb) {
   renderActiveTrades();
 }
 
+// ── Stock search autocomplete ──────────────────────────────────────────────────
+var _searchSelected = null;   // { symbol, name, cmp, direction, probability, sector }
+var _searchActiveIdx = -1;
+
+function initStockSearch() {
+  var inp  = document.getElementById('stock-search-input');
+  var drop = document.getElementById('stock-search-dropdown');
+  var clr  = document.getElementById('stock-search-clear');
+  if (!inp) return;
+
+  inp.addEventListener('input', function() {
+    _searchSelected = null;
+    inp.classList.remove('has-selection');
+    clr.style.display = inp.value ? 'block' : 'none';
+    var q = inp.value.trim();
+    if (!q) { drop.style.display = 'none'; return; }
+    renderSearchDropdown(q);
+  });
+
+  inp.addEventListener('keydown', function(e) {
+    var items = drop.querySelectorAll('.ssd-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _searchActiveIdx = Math.min(_searchActiveIdx + 1, items.length - 1);
+      updateSearchActive(items);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _searchActiveIdx = Math.max(_searchActiveIdx - 1, 0);
+      updateSearchActive(items);
+    } else if (e.key === 'Enter') {
+      if (_searchActiveIdx >= 0 && items[_searchActiveIdx]) {
+        items[_searchActiveIdx].click();
+      } else if (items.length === 1) {
+        items[0].click();
+      } else {
+        addCustomTrade();
+      }
+    } else if (e.key === 'Escape') {
+      drop.style.display = 'none';
+    }
+  });
+
+  inp.addEventListener('blur', function() {
+    setTimeout(function() { drop.style.display = 'none'; }, 180);
+  });
+
+  clr.addEventListener('click', function() {
+    inp.value = '';
+    clr.style.display = 'none';
+    inp.classList.remove('has-selection');
+    _searchSelected = null;
+    drop.style.display = 'none';
+    inp.focus();
+  });
+}
+
+function updateSearchActive(items) {
+  items.forEach(function(el, i) {
+    el.classList.toggle('active', i === _searchActiveIdx);
+  });
+}
+
+function renderSearchDropdown(q) {
+  var drop = document.getElementById('stock-search-dropdown');
+  var results = searchStocks(q);
+  _searchActiveIdx = -1;
+
+  if (results.length === 0) {
+    drop.innerHTML = '<div class="ssd-empty">No stocks found for "' + q + '"</div>';
+    drop.style.display = 'block';
+    return;
+  }
+
+  drop.innerHTML = results.map(function(r) {
+    var dirColor = r.direction === 'UP' ? '#56d364' : '#f85149';
+    var dirArrow = r.direction === 'UP' ? '\\u25b2' : '\\u25bc';
+    var cmpStr   = r.cmp > 0 ? '\\u20b9' + r.cmp.toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2}) : '';
+    var probStr  = r.probability > 0 ? '<span class="ssd-prob" style="color:' + dirColor + '">' + dirArrow + ' ' + r.probability + '%</span>' : '';
+    return '<div class="ssd-item" data-sym="' + r.symbol + '">'
+      + '<div class="ssd-left">'
+      + '<span class="ssd-sym">' + r.symbol + '</span>'
+      + '<span class="ssd-name">' + (r.name || '') + '</span>'
+      + '</div>'
+      + '<div class="ssd-right">'
+      + cmpStr ? '<span class="ssd-cmp">' + cmpStr + '</span>' : ''
+      + probStr
+      + '<span class="ssd-sector">' + (r.sector || '') + '</span>'
+      + '</div>'
+      + '</div>';
+  }).join('');
+
+  drop.querySelectorAll('.ssd-item').forEach(function(el) {
+    el.addEventListener('mousedown', function(e) {
+      e.preventDefault();
+      var sym = el.getAttribute('data-sym');
+      selectStock(sym);
+    });
+  });
+
+  drop.style.display = 'block';
+}
+
+function selectStock(sym) {
+  var data = window.SCREENER_DATA && window.SCREENER_DATA[sym];
+  _searchSelected = data ? {
+    symbol:      sym,
+    name:        data.name,
+    sector:      data.sector,
+    cmp:         data.cmp,
+    direction:   data.direction,
+    probability: data.probability,
+  } : { symbol: sym, name: sym, sector: '', cmp: 0, direction: '', probability: 0 };
+
+  var inp  = document.getElementById('stock-search-input');
+  var drop = document.getElementById('stock-search-dropdown');
+  var clr  = document.getElementById('stock-search-clear');
+  inp.value = sym + (data ? '  —  ' + data.name : '');
+  inp.classList.add('has-selection');
+  clr.style.display = 'block';
+  drop.style.display = 'none';
+
+  // Pre-fill direction from screener data
+  if (data && data.direction) {
+    document.getElementById('custom-direction').value = data.direction;
+  }
+
+  // Auto-fill CMP if no price entered
+  var prxEl = document.getElementById('custom-price');
+  if (!prxEl.value && data && data.cmp > 0) {
+    prxEl.value = data.cmp;
+  }
+}
+
+function searchStocks(q) {
+  var ql  = q.toLowerCase();
+  var data = window.SCREENER_DATA || {};
+  var results = [];
+  Object.keys(data).forEach(function(sym) {
+    var d = data[sym];
+    var nameMatch = d.name && d.name.toLowerCase().includes(ql);
+    var symMatch  = sym.toLowerCase().includes(ql);
+    if (symMatch || nameMatch) {
+      results.push({
+        symbol:      sym,
+        name:        d.name || sym,
+        sector:      d.sector || '',
+        cmp:         d.cmp || 0,
+        direction:   d.direction || '',
+        probability: d.probability || 0,
+        _symExact:   sym.toLowerCase() === ql,
+        _symStarts:  sym.toLowerCase().startsWith(ql),
+      });
+    }
+  });
+  results.sort(function(a, b) {
+    if (a._symExact  && !b._symExact)  return -1;
+    if (!a._symExact && b._symExact)   return 1;
+    if (a._symStarts && !b._symStarts) return -1;
+    if (!a._symStarts && b._symStarts) return 1;
+    return a.symbol.localeCompare(b.symbol);
+  });
+  return results.slice(0, 10);
+}
+
 function addCustomTrade() {
-  var symEl  = document.getElementById('custom-symbol');
   var prxEl  = document.getElementById('custom-price');
   var dirEl  = document.getElementById('custom-direction');
   var errEl  = document.getElementById('custom-error');
 
-  var sym = symEl.value.trim().toUpperCase().replace(/[^A-Z0-9&]/g, '');
   var prc = parseFloat(prxEl.value) || 0;
   var dir = dirEl.value;
 
-  if (!sym) { errEl.textContent = 'Enter a valid NSE symbol.'; return; }
+  if (!_searchSelected) { errEl.style.color='#f85149'; errEl.textContent = 'Search and select a stock first.'; return; }
   errEl.textContent = '';
 
-  var trades = getActiveTrades();
-  // Prefer live data from current scan if available
+  var sym  = _searchSelected.symbol;
   var data = window.SCREENER_DATA && window.SCREENER_DATA[sym];
+  var trades = getActiveTrades();
   trades[sym] = {
     symbol:      sym,
-    name:        data ? data.name   : sym,
-    sector:      data ? data.sector : 'Manual',
-    cmp:         prc  > 0 ? prc : (data ? data.cmp : 0),
+    name:        _searchSelected.name   || (data ? data.name   : sym),
+    sector:      _searchSelected.sector || (data ? data.sector : 'Manual'),
+    cmp:         prc > 0 ? prc : (_searchSelected.cmp || (data ? data.cmp : 0)),
     direction:   dir,
-    probability: data ? data.probability : 0,
+    probability: _searchSelected.probability || (data ? data.probability : 0),
     manual:      true,
     takenAt: new Date().toLocaleString('en-IN', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})
   };
   saveActiveTrades(trades);
   renderActiveTrades();
 
-  // Sync checkbox if stock is in current scan
+  // Sync checkbox if stock is in top picks
   var cb  = document.getElementById('cb_' + sym);
   var lbl = document.getElementById('tl_' + sym);
   if (cb)  cb.checked = true;
   if (lbl) lbl.style.display = 'block';
 
-  // Show CLI hint to get live analysis
-  var priceArg = prc > 0 ? ' --price ' + prc : '';
-  var cmd = 'python run_screener.py --track ' + sym + priceArg + ' --direction ' + dir;
-  errEl.style.color = '#58a6ff';
-  errEl.innerHTML = sym + ' added. For live probability &amp; CMP, run:<br>'
-    + '<code style="font-size:10px;background:#0d1117;padding:3px 6px;border-radius:4px;color:#56d364">'
-    + cmd + '</code>'
-    + ' <button onclick="navigator.clipboard.writeText(\\'' + cmd.replace(/'/g, "\\\\'") + '\\')'
-    + ';this.textContent=\\'Copied!\\';setTimeout(()=>this.textContent=\\'Copy\\',1500)" '
-    + 'style="font-size:10px;padding:2px 7px;background:#21262d;border:1px solid #30363d;'
-    + 'color:#8b949e;border-radius:4px;cursor:pointer;margin-left:6px">Copy</button>';
+  errEl.style.color = '#56d364';
+  errEl.textContent = sym + ' added to Active Trades!';
+  setTimeout(function() { errEl.textContent = ''; }, 3000);
 
-  symEl.value = '';
+  // Reset form
+  var inp = document.getElementById('stock-search-input');
+  var clr = document.getElementById('stock-search-clear');
+  if (inp) { inp.value = ''; inp.classList.remove('has-selection'); }
+  if (clr) clr.style.display = 'none';
+  _searchSelected = null;
   prxEl.value = '';
   dirEl.value = 'UP';
 }
@@ -808,11 +1009,8 @@ window.addEventListener('DOMContentLoaded', function() {
   });
   renderActiveTrades();
   detectAndShowAlerts();
+  initStockSearch();
 
-  // Allow Enter key in custom trade form
-  document.getElementById('custom-symbol').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') addCustomTrade();
-  });
   document.getElementById('custom-price').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') addCustomTrade();
   });
@@ -1300,33 +1498,35 @@ def generate_screener_report(candidates: list, output_file: str,
 
   <!-- Track a Stock (manual active trade) -->
   <div class="track-stock-panel">
-    <div>
-      <div class="ts-label">Track another stock in Active Trades</div>
-      <div style="font-size:11px;color:#8b949e;margin-bottom:8px">
-        Add any NSE symbol you're already trading — tracked until you mark it complete
+    <div class="ts-label">Track Another Stock in Active Trades</div>
+    <div style="font-size:11px;color:#8b949e;margin-bottom:12px">
+      Search by name or symbol — tracked with live P&amp;L until marked complete
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+      <div>
+        <div class="ts-label">Search Stock</div>
+        <div class="stock-search-wrap">
+          <input type="text" id="stock-search-input" class="stock-search-input"
+            placeholder="Type name or symbol…" autocomplete="off">
+          <button class="stock-search-clear" id="stock-search-clear" title="Clear">✕</button>
+          <div class="stock-search-dropdown" id="stock-search-dropdown"></div>
+        </div>
       </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <div>
-          <div class="ts-label">Symbol</div>
-          <input type="text" id="custom-symbol" placeholder="e.g. INFY" maxlength="20">
-        </div>
-        <div>
-          <div class="ts-label">Entry Price (₹)</div>
-          <input type="number" id="custom-price" placeholder="optional" min="0" step="0.05">
-        </div>
-        <div>
-          <div class="ts-label">Direction</div>
-          <select id="custom-direction">
-            <option value="UP">▲ LONG / UP</option>
-            <option value="DOWN">▼ SHORT / DOWN</option>
-          </select>
-        </div>
-        <div>
-          <div class="ts-label">&nbsp;</div>
-          <button class="track-stock-btn" onclick="addCustomTrade()">+ Track Stock</button>
-        </div>
-        <div id="custom-error" style="font-size:11px;color:#f85149;align-self:center"></div>
+      <div>
+        <div class="ts-label">Entry Price (₹)</div>
+        <input type="number" id="custom-price" placeholder="optional (auto-fills)" min="0" step="0.05">
       </div>
+      <div>
+        <div class="ts-label">Direction</div>
+        <select id="custom-direction">
+          <option value="UP">▲ LONG / UP</option>
+          <option value="DOWN">▼ SHORT / DOWN</option>
+        </select>
+      </div>
+      <div>
+        <button class="track-stock-btn" onclick="addCustomTrade()">+ Track Stock</button>
+      </div>
+      <div id="custom-error" style="font-size:11px;align-self:center;max-width:300px"></div>
     </div>
   </div>
 

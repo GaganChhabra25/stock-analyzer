@@ -77,17 +77,6 @@ The report header shows three rows of cards:
 | 🏦 Mutual Funds | Invested · Current Value · P&L · Monthly SIP |
 | 🎯 Goal Summary | Total Portfolio · Corpus Projected · SIP Needed/Month |
 
-### Corpus Projection Formula
-
-```
-Total Corpus = FV of current portfolio + FV of future SIPs
-
-FV of portfolio = Current Value × (1 + CAGR)^years
-FV of SIPs      = Monthly SIP × [(1+r)^n − 1] / r × (1+r)
-```
-
-Three scenarios always shown: **Conservative 12%**, **Base 15%**, **Optimistic 18%**
-
 ---
 
 ## Tool 2 — NSE Market Screener
@@ -112,6 +101,13 @@ python run_screener.py --fast
 
 # Don't auto-open browser
 python run_screener.py --no-open
+
+# Add a stock to persistent active trade tracking
+python run_screener.py --track MCX
+python run_screener.py --track INFY --price 1450 --direction UP
+
+# Stop tracking a stock
+python run_screener.py --untrack MCX
 ```
 
 ### What the Screener Analyses
@@ -148,7 +144,7 @@ For each pick:
 - **Direction** — UP or DOWN
 - **Probability** — combining seasonal win rate + current momentum
 - **Aligned / Conflict badge** — whether seasonal pattern and current momentum agree
-- **April seasonal history** — year-by-year returns for the last 5 years
+- **Seasonal history** — year-by-year returns for the last 5 years
 - **Expected price range** — ₹low – ₹high based on 1-month historical volatility
 - **Base target price** — directional price target for end of next month
 
@@ -167,6 +163,91 @@ Last 5 complete weeks (Monday open → Friday close) for each pick:
 
 ---
 
+## Screener Report — Interactive Features
+
+### Clickable Stock Navigation
+
+Every stock symbol in the **summary table**, **current month table**, and **next month table** is a clickable link. Clicking it smoothly scrolls to that stock's detailed analysis card and briefly highlights it in blue — no manual searching needed.
+
+---
+
+### Active Trades Panel
+
+A persistent trades tracker built into every screener report. Trades are stored in your browser's localStorage and survive page reloads and new scans.
+
+**Add a screener pick to Active Trades:**
+Check the **Take Trade** checkbox in the rightmost column of the summary table. The stock is immediately added to the Active Trades panel at the top.
+
+**What the panel shows for each trade:**
+
+| Column | What it shows |
+|--------|--------------|
+| Stock | Symbol, name, MANUAL badge if manually added |
+| Sector | Stock's sector |
+| CMP / P&L | Live CMP from current scan · Entry price · % gain/loss since entry |
+| Direction | ▲ UP or ▼ DOWN at time of entry |
+| Probability | Live probability from current scan (with ±delta vs entry if changed) |
+| Trade Taken At | Timestamp when you added the trade |
+| Action | ✓ Mark Complete — removes from tracking |
+
+Trades persist across scans. When you run the screener again, the panel updates with fresh CMP and recalculated P&L for all active trades.
+
+---
+
+### Track Any Stock (Not Just Top Picks)
+
+A **"Track Another Stock"** form is always visible just above the summary table. Use it to track any NSE stock — even one that didn't make the top-15 cut.
+
+**How to use:**
+1. **Search** — type a company name or symbol (e.g. "MCX" or "multi comm") in the search box. A dropdown shows matching stocks with their live CMP, probability, and direction from the current scan.
+2. **Select** a stock from the dropdown — entry price and direction auto-fill from scan data.
+3. Optionally override the **entry price** and **direction**.
+4. Click **+ Track Stock**.
+
+The stock is instantly added to the Active Trades panel with real probability and CMP data.
+
+**What the search covers:** All stocks that passed the liquidity filter in the current scan (~120 in full mode, ~60 in fast mode) — not just the top 15. This means you can track virtually any liquid NSE stock.
+
+---
+
+### Persistent Tracking via CLI
+
+For stocks you always want tracked (across multiple scans), use the `--track` flag instead of the in-browser form:
+
+```bash
+# Add MCX to persistent tracking with your entry price
+python run_screener.py --track MCX --price 5800 --direction UP
+
+# Auto-detect direction from current technical analysis
+python run_screener.py --track INFY
+
+# Stop tracking
+python run_screener.py --untrack MCX
+```
+
+When a symbol is tracked via CLI:
+- It is saved to `data/active_trades.json`
+- On **every subsequent run**, it is downloaded and fully analyzed — even if it doesn't make the top-N cut
+- It appears in a **"Your Tracked Stocks"** section at the bottom of the report with a full detail card (blue border, 📌 TRACKED badge)
+- Entry price, direction, and probability at time of first `--track` are saved as the baseline for change detection
+
+---
+
+### Change Alerts
+
+Every time the report opens, it compares the **current analysis** of your active trades against the **snapshot taken when you entered the trade**.
+
+Two types of alerts are shown in a banner at the top of the page:
+
+| Alert | Trigger | Color |
+|-------|---------|-------|
+| Direction flip | Stock changed from UP → DOWN or DOWN → UP | 🔴 Red |
+| Probability shift | Probability moved ≥ 5% from entry baseline | 🟡 Yellow |
+
+The banner lists every affected stock with the before/after values. No alert = no changes.
+
+---
+
 ## Project Structure
 
 ```
@@ -180,7 +261,8 @@ stock-analyzer/
 │
 ├── data/
 │   ├── zerodha_holdings.csv     # Your Zerodha export (drop here)
-│   └── mf_holdings.csv          # Your MF holdings (fill manually)
+│   ├── mf_holdings.csv          # Your MF holdings (fill manually)
+│   └── active_trades.json       # Tracked stocks — auto-managed by screener
 │
 ├── analyzers/
 │   ├── stock_analyzer.py        # Scores direct equity stocks via yfinance
@@ -188,9 +270,9 @@ stock-analyzer/
 │   └── portfolio_analyzer.py    # Aggregates results, runs projections
 │
 ├── screener/
-│   ├── universe.py              # 148 NSE stocks with name/sector metadata
+│   ├── universe.py              # NSE stock universe with name/sector metadata
 │   ├── analyzer.py              # Screening engine: technicals + month predictions
-│   └── report.py                # Dark-theme HTML screener report
+│   └── report.py                # Dark-theme self-contained HTML screener report
 │
 ├── utils/
 │   ├── data_loader.py           # Reads & validates CSV files
@@ -258,6 +340,9 @@ python run_screener.py
 
 # Market screener — fast mode
 python run_screener.py --fast --top 10
+
+# Track a stock persistently
+python run_screener.py --track SYMBOL --price PRICE --direction UP
 ```
 
 ### Step 5 — Open reports
@@ -315,6 +400,7 @@ The SIP simulator in the HTML report also lets you override these values live in
 - **yfinance data quality**: Occasionally returns incomplete fundamentals for PSUs and banking stocks. Tool defaults to neutral scores when data is missing.
 - **Screener probabilities**: Statistical estimates based on historical patterns. 72–92% is the range for selected setups — not a guarantee of future returns.
 - **MF returns**: Calculated from NAV history only. Does not account for exit loads or tax.
+- **Active trades storage**: Trades added via the in-browser form are stored in browser localStorage — they persist across page reloads but are browser-specific. Use `--track` CLI for device-independent persistence.
 - **Not financial advice**: For personal tracking and decision-support only. Always consult a SEBI-registered advisor before acting.
 
 ---
