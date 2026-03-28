@@ -1,0 +1,32 @@
+# Systemd service for Stock Analyzer web app
+# Place at: /etc/systemd/system/stock-analyzer.service
+# Then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable stock-analyzer
+#   sudo systemctl start stock-analyzer
+#   sudo systemctl status stock-analyzer
+
+[Unit]
+Description=Stock Analyzer Web App
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/stock-analyzer
+EnvironmentFile=/home/ubuntu/stock-analyzer/.env
+
+# 2 workers is enough for a personal app; increase if needed
+ExecStart=/home/ubuntu/stock-analyzer/venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:5000 \
+    --timeout 660 \
+    --access-logfile /home/ubuntu/stock-analyzer/logs/access.log \
+    --error-logfile  /home/ubuntu/stock-analyzer/logs/error.log \
+    app:app
+
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

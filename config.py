@@ -56,3 +56,14 @@ ZERODHA_HOLDINGS_FILE = "data/zerodha_holdings.csv"
 MF_HOLDINGS_FILE      = "data/mf_holdings.csv"
 REPORT_OUTPUT_FILE    = "reports/analysis_report.txt"
 HTML_REPORT_FILE      = "reports/portfolio_report.html"
+
+# ============================================================
+#  GOOGLE OAUTH — Allowed email addresses
+#  Only these Google accounts can log in to the web app.
+#  You can also set ALLOWED_EMAILS env var (comma-separated)
+#  which takes precedence over this list.
+# ============================================================
+
+ALLOWED_EMAILS = [
+    "gagan.chhabra@gmail.com", "gc1133@gmail.com",   # ← replace with your Google email
+]

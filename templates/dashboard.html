@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Analyzer — Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #0d1117;
+  color: #c9d1d9;
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+.header {
+  background: linear-gradient(135deg, #1a365d 0%, #2d6a4f 100%);
+  padding: 18px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-logo { font-size: 24px; }
+.header-title { font-size: 18px; font-weight: 700; color: #fff; }
+.header-sub { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.user-chip {
+  display: flex; align-items: center; gap: 9px;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 99px;
+  padding: 5px 14px 5px 5px;
+}
+.user-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: #4a90d9;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: #fff;
+  overflow: hidden;
+}
+.user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.user-name { font-size: 13px; font-weight: 600; color: #fff; }
+.user-email { font-size: 10px; color: rgba(255,255,255,0.6); }
+.logout-btn {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.85);
+  padding: 7px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.logout-btn:hover { background: rgba(255,255,255,0.2); }
+
+/* ── Main content ── */
+.main { padding: 36px 40px; max-width: 960px; margin: 0 auto; }
+
+.page-title {
+  font-size: 22px; font-weight: 700; color: #f0f6fc;
+  margin-bottom: 6px;
+}
+.page-sub { font-size: 13px; color: #8b949e; margin-bottom: 32px; }
+
+/* ── Report cards ── */
+.cards-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 32px;
+}
+@media (max-width: 680px) { .cards-grid { grid-template-columns: 1fr; } }
+
+.report-card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 14px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  transition: border-color 0.2s;
+}
+.report-card:hover { border-color: #58a6ff; }
+
+.rc-top { display: flex; align-items: flex-start; gap: 14px; }
+.rc-icon {
+  font-size: 28px; line-height: 1;
+  background: #21262d;
+  width: 52px; height: 52px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.rc-title { font-size: 16px; font-weight: 700; color: #f0f6fc; }
+.rc-desc { font-size: 12px; color: #8b949e; margin-top: 4px; line-height: 1.5; }
+
+.rc-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: #484f58;
+}
+.rc-meta .dot { width: 6px; height: 6px; border-radius: 50%; background: #484f58; }
+.rc-meta .dot.green { background: #3fb950; }
+.rc-updated { color: #8b949e; }
+
+.rc-actions { display: flex; gap: 10px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 18px;
+  border-radius: 7px;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  border: none;
+  text-decoration: none;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-primary {
+  background: #238636;
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) { background: #2ea043; }
+.btn-secondary {
+  background: #21262d;
+  color: #c9d1d9;
+  border: 1px solid #30363d;
+}
+.btn-secondary:hover:not(:disabled) { background: #30363d; }
+.btn-open {
+  background: #1f6feb;
+  color: #fff;
+}
+.btn-open:hover { background: #388bfd; }
+
+/* ── Status badge ── */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11px; font-weight: 600;
+}
+.status-idle    { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+.status-running { background: #1c3a5e; color: #58a6ff; border: 1px solid #1f6feb; }
+.status-done    { background: #1a3a23; color: #3fb950; border: 1px solid #238636; }
+.status-error   { background: #3d1c1c; color: #f85149; border: 1px solid #6e2d2d; }
+.spinner { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Log panel ── */
+.log-panel {
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-family: 'Consolas', monospace;
+  font-size: 11px;
+  color: #8b949e;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  display: none;
+}
+
+/* ── Info section ── */
+.info-section {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 14px;
+  padding: 24px 28px;
+}
+.info-title {
+  font-size: 13px; font-weight: 700; color: #f0f6fc;
+  margin-bottom: 14px;
+  display: flex; align-items: center; gap: 8px;
+}
+.info-row {
+  display: flex; justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 12px;
+}
+.info-row:last-child { border-bottom: none; }
+.info-row .lbl { color: #8b949e; }
+.info-row .val { color: #f0f6fc; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <span class="header-logo">📊</span>
+    <div>
+      <div class="header-title">Stock Analyzer</div>
+      <div class="header-sub">Portfolio &amp; Market Screener — NSE/BSE</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="user-chip">
+      <div class="user-avatar">
+        {% if user.picture %}
+          <img src="{{ user.picture }}" alt="{{ user.name }}">
+        {% else %}
+          {{ user.name[0].upper() }}
+        {% endif %}
+      </div>
+      <div>
+        <div class="user-name">{{ user.name }}</div>
+        <div class="user-email">{{ user.email }}</div>
+      </div>
+    </div>
+    <a href="/logout" class="logout-btn">Sign Out</a>
+  </div>
+</div>
+
+<!-- Main -->
+<div class="main">
+  <div class="page-title">Dashboard</div>
+  <div class="page-sub">
+    Run analysis to generate reports, then open them below.
+    Reports update with live NSE data each time you run.
+  </div>
+
+  <div class="cards-grid">
+
+    <!-- Portfolio Report Card -->
+    <div class="report-card">
+      <div class="rc-top">
+        <div class="rc-icon">📈</div>
+        <div>
+          <div class="rc-title">Portfolio Report</div>
+          <div class="rc-desc">
+            Stock + MF holdings analysis · P&amp;L · Scores ·
+            Goal projection towards ₹6 Cr target
+          </div>
+        </div>
+      </div>
+      <div class="rc-meta">
+        {% if reports.portfolio.exists %}
+          <span class="dot green"></span>
+          <span class="rc-updated">Last run: {{ reports.portfolio.updated }}</span>
+        {% else %}
+          <span class="dot"></span>
+          <span>No report yet — click Run to generate</span>
+        {% endif %}
+      </div>
+      <div class="rc-actions">
+        {% if reports.portfolio.exists %}
+          <a href="/reports/portfolio_report.html" target="_blank" class="btn btn-open">
+            ↗ Open Report
+          </a>
+        {% endif %}
+        <button id="run-portfolio" class="btn btn-primary" onclick="runJob('portfolio')">
+          ▶ Run Analysis
+        </button>
+      </div>
+      <span id="status-portfolio" class="status-badge status-idle">
+        {% if jobs.portfolio %}
+          {% if jobs.portfolio.status == 'running' %}
+            <span class="spinner">⟳</span> Running…
+          {% elif jobs.portfolio.status == 'done' %}
+            ✓ Done
+          {% elif jobs.portfolio.status == 'error' %}
+            ✗ Error
+          {% endif %}
+        {% else %}
+          — Idle
+        {% endif %}
+      </span>
+      <div id="log-portfolio" class="log-panel">{% if jobs.portfolio %}{{ jobs.portfolio.log }}{% endif %}</div>
+    </div>
+
+    <!-- Screener Report Card -->
+    <div class="report-card">
+      <div class="rc-top">
+        <div class="rc-icon">🔭</div>
+        <div>
+          <div class="rc-title">Market Screener</div>
+          <div class="rc-desc">
+            NSE high-probability setups · Nifty 500 universe ·
+            Active trade tracking · Month predictions
+          </div>
+        </div>
+      </div>
+      <div class="rc-meta">
+        {% if reports.screener.exists %}
+          <span class="dot green"></span>
+          <span class="rc-updated">Last run: {{ reports.screener.updated }}</span>
+        {% else %}
+          <span class="dot"></span>
+          <span>No report yet — click Run to generate</span>
+        {% endif %}
+      </div>
+      <div class="rc-actions">
+        {% if reports.screener.exists %}
+          <a href="/reports/screener_report.html" target="_blank" class="btn btn-open">
+            ↗ Open Report
+          </a>
+        {% endif %}
+        <button id="run-screener" class="btn btn-primary" onclick="runJob('screener')">
+          ▶ Run Screener
+        </button>
+      </div>
+      <span id="status-screener" class="status-badge status-idle">
+        {% if jobs.screener %}
+          {% if jobs.screener.status == 'running' %}
+            <span class="spinner">⟳</span> Running…
+          {% elif jobs.screener.status == 'done' %}
+            ✓ Done
+          {% elif jobs.screener.status == 'error' %}
+            ✗ Error
+          {% endif %}
+        {% else %}
+          — Idle
+        {% endif %}
+      </span>
+      <div id="log-screener" class="log-panel">{% if jobs.screener %}{{ jobs.screener.log }}{% endif %}</div>
+    </div>
+
+  </div>
+
+  <!-- Session info -->
+  <div class="info-section">
+    <div class="info-title">ℹ Session Info</div>
+    <div class="info-row">
+      <span class="lbl">Signed in as</span>
+      <span class="val">{{ user.email }}</span>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Portfolio report</span>
+      <span class="val">{{ reports.portfolio.updated or 'Not generated' }}</span>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Screener report</span>
+      <span class="val">{{ reports.screener.updated or 'Not generated' }}</span>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Goal</span>
+      <span class="val">₹6 Crore in 15 Years @ 15% CAGR</span>
+    </div>
+  </div>
+</div>
+
+<script>
+var _polling = {};
+
+function setStatus(job, status, text) {
+  var el = document.getElementById('status-' + job);
+  el.className = 'status-badge status-' + status;
+  el.innerHTML = text;
+}
+
+function setBtn(job, disabled) {
+  var btn = document.getElementById('run-' + job);
+  btn.disabled = disabled;
+}
+
+function showLog(job, text) {
+  var el = document.getElementById('log-' + job);
+  if (text) {
+    el.textContent = text;
+    el.style.display = 'block';
+    el.scrollTop = el.scrollHeight;
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function runJob(job) {
+  setBtn(job, true);
+  setStatus(job, 'running', '<span class="spinner">⟳</span> Starting…');
+
+  fetch('/run/' + job, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.status === 'already_running') {
+        setStatus(job, 'running', '<span class="spinner">⟳</span> Already running…');
+      }
+      pollStatus(job);
+    })
+    .catch(function() {
+      setStatus(job, 'error', '✗ Failed to start');
+      setBtn(job, false);
+    });
+}
+
+function pollStatus(job) {
+  if (_polling[job]) clearInterval(_polling[job]);
+  _polling[job] = setInterval(function() {
+    fetch('/job-status/' + job)
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.status === 'running') {
+          setStatus(job, 'running', '<span class="spinner">⟳</span> Running…');
+        } else if (data.status === 'done') {
+          clearInterval(_polling[job]);
+          setStatus(job, 'done', '✓ Done — ' + (data.finished_at || ''));
+          setBtn(job, false);
+          showLog(job, data.log || '');
+          // Refresh page after 1s so "Open Report" link / timestamp updates
+          setTimeout(function() { location.reload(); }, 1200);
+        } else if (data.status === 'error') {
+          clearInterval(_polling[job]);
+          setStatus(job, 'error', '✗ Error');
+          setBtn(job, false);
+          showLog(job, data.log || 'An error occurred.');
+        }
+      });
+  }, 2000);
+}
+
+// Resume polling for any jobs that were running when page loaded
+{% for job_id, job in jobs.items() %}
+  {% if job.status == 'running' %}
+    setBtn('{{ job_id }}', true);
+    setStatus('{{ job_id }}', 'running', '<span class="spinner">⟳</span> Running…');
+    pollStatus('{{ job_id }}');
+  {% endif %}
+{% endfor %}
+</script>
+
+</body>
+</html>
