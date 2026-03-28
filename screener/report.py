@@ -641,8 +641,13 @@ function renderActiveTrades() {
         liveProbHtml += '<span style="font-size:9px;color:' + pc + ';margin-left:3px">('
           + (pdiff>0?'+':'') + pdiff.toFixed(1) + '%)</span>';
       }
+    } else if (t.probability > 0) {
+      // Not in current scan — show probability stored at time of entry
+      var pColor = t.direction === 'UP' ? '#56d364' : '#f85149';
+      liveProbHtml = '<strong style="color:' + pColor + '">' + t.probability + '%</strong>'
+        + '<div style="font-size:9px;color:#8b949e">at entry</div>';
     } else {
-      liveProbHtml = '<span style="color:#8b949e;font-size:10px">run screener</span>';
+      liveProbHtml = '<span style="color:#8b949e;font-size:10px">—</span>';
     }
     var manualTag = t.manual ? '<span class="manual-badge">MANUAL</span>' : (t.fromPython ? '' : '');
     // Card link (if card exists in this report)
@@ -1164,7 +1169,8 @@ def _next_month_table_rows(candidates: list) -> str:
 
 def generate_screener_report(candidates: list, output_file: str,
                               active_trades_meta: dict = None,
-                              active_trades_data: dict = None) -> str:
+                              active_trades_data: dict = None,
+                              all_stocks: list = None) -> str:
     ts     = datetime.now().strftime("%d %b %Y, %I:%M %p")
     n_up   = sum(1 for c in candidates if c["direction"] == "UP")
     n_dn   = len(candidates) - n_up
@@ -1187,9 +1193,8 @@ def generate_screener_report(candidates: list, output_file: str,
             for i, c in enumerate(tracked_list)
         )
 
-    # Build stock data dict for JS — screener picks + extra tracked symbols
-    screener_data = {
-        c["symbol"]: {
+    def _compact(c, **extra):
+        return {
             "name":        c["name"],
             "sector":      c["sector"],
             "cmp":         c["cmp"],
@@ -1202,26 +1207,16 @@ def generate_screener_report(candidates: list, output_file: str,
             "atr_pct":     round(c.get("atr_pct", 0), 2),
             "vs_52h":      round(c.get("vs_52h", 0), 1),
             "daily_val_cr":round(c.get("daily_val_cr", 0), 1),
+            **extra,
         }
-        for c in candidates
-    }
-    # Merge in extra tracked symbols (analyzed but not in top picks)
+
+    # Start with ALL analyzed stocks (lightweight) so any NSE stock
+    # added to Active Trades has live probability/CMP available in JS
+    screener_data = {c["symbol"]: _compact(c) for c in (all_stocks or candidates)}
+
+    # Overlay/add extra tracked symbols (force-analyzed even outside top-N)
     for sym, c in (active_trades_data or {}).items():
-        screener_data[sym] = {
-            "name":        c["name"],
-            "sector":      c["sector"],
-            "cmp":         c["cmp"],
-            "direction":   c["direction"],
-            "probability": round(c["probability"], 1),
-            "tech_score":  round(c.get("tech_score", 0), 1),
-            "rsi":         round(c.get("rsi", 0), 1),
-            "win_rate":    round(c.get("win_rate", 0), 1),
-            "monthly_vol": round(c.get("monthly_vol", 0), 1),
-            "atr_pct":     round(c.get("atr_pct", 0), 2),
-            "vs_52h":      round(c.get("vs_52h", 0), 1),
-            "daily_val_cr":round(c.get("daily_val_cr", 0), 1),
-            "tracked":     True,
-        }
+        screener_data[sym] = _compact(c, tracked=True)
 
     screener_data_js      = json.dumps(screener_data, ensure_ascii=False)
     active_trades_meta_js = json.dumps(active_trades_meta or {}, ensure_ascii=False)

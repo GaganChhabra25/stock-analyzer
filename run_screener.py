@@ -103,15 +103,15 @@ def main():
         print(f"  Added {sym} to active tracking (direction: {args.direction}, price: {args.price or 'auto'}).\n")
 
     # ── Run screener ───────────────────────────────────────────────────────────
-    screener   = StockScreener()
-    candidates = screener.run(top_n=args.top, fast=args.fast)
+    screener              = StockScreener()
+    candidates, all_stocks = screener.run(top_n=args.top, fast=args.fast)
 
     if not candidates:
         print("  No candidates found. Try running again or use --fast mode.")
         sys.exit(1)
 
-    # ── Analyze tracked symbols not already in top picks ──────────────────────
-    candidate_syms = {c["symbol"] for c in candidates}
+    # ── Analyze tracked symbols not already in any analyzed stock ─────────────
+    candidate_syms = {c["symbol"] for c in all_stocks}
     extra_syms     = [sym for sym in active_trades if sym not in candidate_syms]
     extra_data     = screener.analyze_extra_symbols(extra_syms)
 
@@ -190,6 +190,7 @@ def main():
         REPORT_FILE,
         active_trades_meta=active_trades,
         active_trades_data=extra_data,
+        all_stocks=all_stocks,
     )
     abs_path = os.path.abspath(out)
     print(f"  Report saved: {abs_path}")

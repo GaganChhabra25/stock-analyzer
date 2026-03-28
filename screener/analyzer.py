@@ -432,7 +432,14 @@ class StockScreener:
 
     # ── Public ────────────────────────────────────────────────────────────────
 
-    def run(self, top_n: int = 8, fast: bool = False) -> list:
+    def run(self, top_n: int = 8, fast: bool = False) -> tuple:
+        """
+        Returns (top_candidates, all_candidates).
+        top_candidates — top_n by probability (for detailed report cards).
+        all_candidates — every stock that passed the liquidity filter
+                         (used to populate SCREENER_DATA so any NSE stock
+                          added to Active Trades has live probability/CMP).
+        """
         symbols  = get_symbols()
         if fast:
             symbols = symbols[:60]          # quick mode
@@ -453,7 +460,7 @@ class StockScreener:
         candidates.sort(key=lambda x: x["probability"], reverse=True)
         top = candidates[:top_n]
         print(f"  Top {len(top)} candidates selected.\n")
-        return top
+        return top, candidates
 
     # ── Batch download ────────────────────────────────────────────────────────
 
