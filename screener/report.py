@@ -641,7 +641,7 @@ function renderSearchDropdown(q) {
       + '<span class="ssd-name">' + (r.name || '') + '</span>'
       + '</div>'
       + '<div class="ssd-right">'
-      + cmpStr ? '<span class="ssd-cmp">' + cmpStr + '</span>' : ''
+      + (cmpStr ? '<span class="ssd-cmp">' + cmpStr + '</span>' : '')
       + probStr
       + '<span class="ssd-sector">' + (r.sector || '') + '</span>'
       + '</div>'
