@@ -30,14 +30,13 @@ app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 app.permanent_session_lifetime = timedelta(days=7)
 
-# ── Allowed emails: env var takes precedence over config.py ───────────────────
+# ── Allowed emails: union of env var + config.py ──────────────────────────────
 
+from config import ALLOWED_EMAILS as _cfg_emails  # type: ignore
+ALLOWED_EMAILS = {e.lower() for e in _cfg_emails}
 _env_emails = os.environ.get("ALLOWED_EMAILS", "")
 if _env_emails:
-    ALLOWED_EMAILS = {e.strip().lower() for e in _env_emails.split(",") if e.strip()}
-else:
-    from config import ALLOWED_EMAILS  # type: ignore
-    ALLOWED_EMAILS = {e.lower() for e in ALLOWED_EMAILS}
+    ALLOWED_EMAILS |= {e.strip().lower() for e in _env_emails.split(",") if e.strip()}
 
 # ── Google OAuth ──────────────────────────────────────────────────────────────
 
@@ -169,6 +168,58 @@ def logout():
     return redirect(url_for("login"))
 
 
+_SCREENER_SYNC_SCRIPT = """
+<script>
+/* Cross-device active-trades sync — injected by Flask */
+(function () {
+  var SK = 'screener_active_trades';
+  function _ls() {
+    try { return JSON.parse(localStorage.getItem(SK) || '{}'); } catch(e) { return {}; }
+  }
+  function _post(trades) {
+    fetch('/api/ui-trades', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(trades)
+    }).catch(function () {});
+  }
+  /* Wrap saveActiveTrades so every UI action also syncs to server */
+  if (typeof saveActiveTrades === 'function') {
+    var _orig = saveActiveTrades;
+    saveActiveTrades = function (t) { _orig(t); _post(t); };
+  }
+  /* On page load: pull server state, merge, re-render */
+  document.addEventListener('DOMContentLoaded', function () {
+    fetch('/api/ui-trades')
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .catch(function () { return {}; })
+      .then(function (sv) {
+        var local  = _ls();
+        var merged = Object.assign({}, local, sv);
+        var lLen   = Object.keys(local).length;
+        var mLen   = Object.keys(merged).length;
+        if (mLen > lLen) {
+          /* Server had trades this device didn't — update localStorage */
+          try { localStorage.setItem(SK, JSON.stringify(merged)); } catch(e) {}
+          if (typeof renderActiveTrades === 'function') renderActiveTrades();
+          Object.keys(merged).forEach(function (sym) {
+            var cb  = document.getElementById('cb_'  + sym);
+            var lbl = document.getElementById('tl_'  + sym);
+            if (cb)  cb.checked = true;
+            if (lbl) lbl.style.display = 'block';
+          });
+        }
+        if (mLen > Object.keys(sv).length) {
+          /* This device had trades the server didn't — push up */
+          _post(merged);
+        }
+      });
+  });
+})();
+</script>
+"""
+
+
 @app.route("/reports/<name>")
 @login_required
 def serve_report(name):
@@ -178,6 +229,10 @@ def serve_report(name):
     path = BASE_DIR / "reports" / name
     if not path.exists():
         abort(404)
+    if name == "screener_report.html":
+        html = path.read_text(encoding="utf-8")
+        html = html.replace("</body>", _SCREENER_SYNC_SCRIPT + "</body>", 1)
+        return html, 200, {"Content-Type": "text/html; charset=utf-8"}
     return send_file(path)
 
 
