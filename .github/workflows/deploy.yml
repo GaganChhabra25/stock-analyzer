@@ -23,6 +23,7 @@ jobs:
             cd ~/stock-analyzer
             git pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
             if [ ! -d venv ]; then
+              sudo apt-get install -y python3-venv -q
               python3 -m venv venv
             fi
             venv/bin/pip install -r requirements.txt -q
