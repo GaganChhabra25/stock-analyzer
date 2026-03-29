@@ -1,14 +1,16 @@
 """
 PostgreSQL persistence layer — market predictions and outcomes.
 
-Gracefully no-ops when DATABASE_URL is not set, so the screener
-continues to work without a database (e.g. on Oracle Cloud server).
+Fully automatic — tables and views are created on first run.
+No manual schema setup needed.
 
-Tables written:
+Gracefully no-ops when DATABASE_URL is not set (Oracle Cloud keeps working).
+
+Tables:
   market_predictions  — one row per prediction per screener run
   market_outcomes     — actual result after each expiry (written once)
 
-Views (read-only, created by schema.sql):
+Views (auto-created):
   v_model_accuracy    — directional accuracy per instrument / week
   v_signal_importance — which signals correlate most with outcomes
   v_prob_calibration  — does stated probability match actual win rate
@@ -32,6 +34,7 @@ except ImportError:
     _PSYCOPG2_OK = False
 
 _DB_URL: str = os.environ.get("DATABASE_URL", "")
+_schema_ready: bool = False          # auto-init on first save
 
 
 def is_available() -> bool:
@@ -69,19 +72,21 @@ def _get_conn():
                 pass
 
 
-# ── Schema init ────────────────────────────────────────────────────────────────
+# ── Schema init (automatic on first save) ─────────────────────────────────────
 
 def init_schema() -> bool:
     """
-    Ensure tables exist.  Safe to call on every run — uses IF NOT EXISTS.
-    Returns True if successful, False if DB unavailable or error.
-    Preferred: run schema.sql once in pgAdmin instead.
+    Creates tables + analytical views if they don't exist.
+    Called automatically before the first save — no manual setup needed.
+    Safe to call repeatedly (all statements use IF NOT EXISTS / OR REPLACE).
     """
     with _get_conn() as conn:
         if conn is None:
             return False
         try:
             cur = conn.cursor()
+
+            # ── Tables ────────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS market_predictions (
                     id              BIGSERIAL      PRIMARY KEY,
@@ -130,6 +135,118 @@ def init_schema() -> bool:
                         COALESCE(week_num, -1), prediction_type
                     );
             """)
+
+            # ── Analytical views ──────────────────────────────────────────────
+            cur.execute("""
+                CREATE OR REPLACE VIEW v_model_accuracy AS
+                SELECT
+                    p.instrument,
+                    p.prediction_type,
+                    p.week_num,
+                    COUNT(*) AS total_predictions,
+                    SUM(CASE WHEN p.direction = o.actual_direction THEN 1 ELSE 0 END) AS correct,
+                    ROUND(
+                        100.0 * SUM(CASE WHEN p.direction = o.actual_direction THEN 1 ELSE 0 END)
+                              / NULLIF(COUNT(*), 0), 1) AS accuracy_pct,
+                    ROUND(AVG(p.probability), 1) AS avg_predicted_prob,
+                    ROUND(AVG(CASE WHEN p.direction = o.actual_direction THEN p.probability END), 1)
+                        AS avg_prob_when_correct,
+                    MIN(p.run_date) AS first_run,
+                    MAX(p.run_date) AS latest_run
+                FROM market_predictions p
+                JOIN market_outcomes o
+                    ON  p.instrument              = o.instrument
+                    AND p.expiry_date             = o.expiry_date
+                    AND COALESCE(p.week_num, -1)  = COALESCE(o.week_num, -1)
+                    AND p.prediction_type         = o.prediction_type
+                WHERE p.run_date = (
+                    SELECT MAX(p2.run_date) FROM market_predictions p2
+                    WHERE p2.instrument             = p.instrument
+                    AND   p2.expiry_date            = p.expiry_date
+                    AND   COALESCE(p2.week_num, -1) = COALESCE(p.week_num, -1)
+                    AND   p2.prediction_type        = p.prediction_type
+                    AND   p2.run_date              <= p.expiry_date
+                )
+                GROUP BY p.instrument, p.prediction_type, p.week_num
+                ORDER BY p.instrument, p.prediction_type, p.week_num;
+            """)
+
+            cur.execute("""
+                CREATE OR REPLACE VIEW v_signal_importance AS
+                WITH resolved AS (
+                    SELECT
+                        p.instrument,
+                        p.prediction_type,
+                        CASE WHEN p.direction = o.actual_direction THEN 1.0 ELSE 0.0 END AS correct,
+                        CASE WHEN p.direction='UP' THEN  p.tech_signal     ELSE -p.tech_signal     END AS tech_aligned,
+                        CASE WHEN p.direction='UP' THEN  p.vix_signal      ELSE -p.vix_signal      END AS vix_aligned,
+                        CASE WHEN p.direction='UP' THEN  p.global_signal   ELSE -p.global_signal   END AS global_aligned,
+                        CASE WHEN p.direction='UP' THEN  p.fii_signal      ELSE -p.fii_signal      END AS fii_aligned,
+                        CASE WHEN p.direction='UP' THEN  p.seasonal_signal ELSE -p.seasonal_signal END AS seasonal_aligned,
+                        CASE WHEN p.direction='UP' THEN  p.pcr_value - 1   ELSE  1 - p.pcr_value   END AS pcr_aligned,
+                        CASE WHEN p.direction='UP' THEN (p.hist_wr-50)/50  ELSE -(p.hist_wr-50)/50 END AS histwr_aligned
+                    FROM market_predictions p
+                    JOIN market_outcomes o
+                        ON  p.instrument             = o.instrument
+                        AND p.expiry_date            = o.expiry_date
+                        AND COALESCE(p.week_num, -1) = COALESCE(o.week_num, -1)
+                        AND p.prediction_type        = o.prediction_type
+                    WHERE p.run_date = (
+                        SELECT MAX(p2.run_date) FROM market_predictions p2
+                        WHERE p2.instrument             = p.instrument
+                        AND   p2.expiry_date            = p.expiry_date
+                        AND   COALESCE(p2.week_num, -1) = COALESCE(p.week_num, -1)
+                        AND   p2.prediction_type        = p.prediction_type
+                        AND   p2.run_date              <= p.expiry_date
+                    )
+                )
+                SELECT
+                    r.instrument,
+                    r.prediction_type,
+                    COUNT(*) AS samples,
+                    ROUND(CORR(r.tech_aligned,     r.correct)::NUMERIC, 3) AS tech_corr,
+                    ROUND(CORR(r.vix_aligned,      r.correct)::NUMERIC, 3) AS vix_corr,
+                    ROUND(CORR(r.global_aligned,   r.correct)::NUMERIC, 3) AS global_corr,
+                    ROUND(CORR(r.fii_aligned,      r.correct)::NUMERIC, 3) AS fii_corr,
+                    ROUND(CORR(r.seasonal_aligned, r.correct)::NUMERIC, 3) AS seasonal_corr,
+                    ROUND(CORR(r.pcr_aligned,      r.correct)::NUMERIC, 3) AS pcr_corr,
+                    ROUND(CORR(r.histwr_aligned,   r.correct)::NUMERIC, 3) AS hist_wr_corr
+                FROM resolved r
+                GROUP BY r.instrument, r.prediction_type
+                HAVING COUNT(*) >= 5
+                ORDER BY r.instrument, r.prediction_type;
+            """)
+
+            cur.execute("""
+                CREATE OR REPLACE VIEW v_prob_calibration AS
+                SELECT
+                    p.instrument,
+                    p.prediction_type,
+                    FLOOR(p.probability / 5) * 5 AS prob_bucket,
+                    COUNT(*) AS predictions,
+                    SUM(CASE WHEN p.direction = o.actual_direction THEN 1 ELSE 0 END) AS correct,
+                    ROUND(
+                        100.0 * SUM(CASE WHEN p.direction = o.actual_direction THEN 1 ELSE 0 END)
+                              / NULLIF(COUNT(*), 0), 1) AS actual_accuracy_pct
+                FROM market_predictions p
+                JOIN market_outcomes o
+                    ON  p.instrument             = o.instrument
+                    AND p.expiry_date            = o.expiry_date
+                    AND COALESCE(p.week_num, -1) = COALESCE(o.week_num, -1)
+                    AND p.prediction_type        = o.prediction_type
+                WHERE p.run_date = (
+                    SELECT MAX(p2.run_date) FROM market_predictions p2
+                    WHERE p2.instrument             = p.instrument
+                    AND   p2.expiry_date            = p.expiry_date
+                    AND   COALESCE(p2.week_num, -1) = COALESCE(p.week_num, -1)
+                    AND   p2.prediction_type        = p.prediction_type
+                    AND   p2.run_date              <= p.expiry_date
+                )
+                GROUP BY p.instrument, p.prediction_type, FLOOR(p.probability / 5) * 5
+                HAVING COUNT(*) >= 3
+                ORDER BY p.instrument, p.prediction_type, prob_bucket;
+            """)
+
             cur.close()
             return True
         except Exception as exc:
@@ -181,10 +298,14 @@ def save_market_overview(overview: dict) -> int:
     - Future/current weeks → inserted as market_predictions
     - Past weeks with actual data → inserted as market_outcomes (skip if exists)
 
+    Schema is created automatically on the very first call.
     Returns the number of prediction rows inserted.
     """
+    global _schema_ready
     if not is_available() or not overview:
         return 0
+    if not _schema_ready:
+        _schema_ready = init_schema()
 
     INST_MAP = {
         "nifty":     "NIFTY",
