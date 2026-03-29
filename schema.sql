@@ -158,20 +158,20 @@ WITH resolved AS (
     )
 )
 SELECT
-    instrument,
-    prediction_type,
+    r.instrument,
+    r.prediction_type,
     COUNT(*)                                             AS samples,
-    ROUND(CORR(tech_aligned,     correct)::NUMERIC, 3)  AS tech_corr,
-    ROUND(CORR(vix_aligned,      correct)::NUMERIC, 3)  AS vix_corr,
-    ROUND(CORR(global_aligned,   correct)::NUMERIC, 3)  AS global_corr,
-    ROUND(CORR(fii_aligned,      correct)::NUMERIC, 3)  AS fii_corr,
-    ROUND(CORR(seasonal_aligned, correct)::NUMERIC, 3)  AS seasonal_corr,
-    ROUND(CORR(pcr_aligned,      correct)::NUMERIC, 3)  AS pcr_corr,
-    ROUND(CORR(histwr_aligned,   correct)::NUMERIC, 3)  AS hist_wr_corr
-FROM resolved
-GROUP BY instrument, prediction_type
+    ROUND(CORR(r.tech_aligned,     r.correct)::NUMERIC, 3)  AS tech_corr,
+    ROUND(CORR(r.vix_aligned,      r.correct)::NUMERIC, 3)  AS vix_corr,
+    ROUND(CORR(r.global_aligned,   r.correct)::NUMERIC, 3)  AS global_corr,
+    ROUND(CORR(r.fii_aligned,      r.correct)::NUMERIC, 3)  AS fii_corr,
+    ROUND(CORR(r.seasonal_aligned, r.correct)::NUMERIC, 3)  AS seasonal_corr,
+    ROUND(CORR(r.pcr_aligned,      r.correct)::NUMERIC, 3)  AS pcr_corr,
+    ROUND(CORR(r.histwr_aligned,   r.correct)::NUMERIC, 3)  AS hist_wr_corr
+FROM resolved r
+GROUP BY r.instrument, r.prediction_type
 HAVING COUNT(*) >= 5
-ORDER BY instrument, prediction_type;
+ORDER BY r.instrument, r.prediction_type;
 
 COMMENT ON VIEW v_signal_importance IS
     'Pearson correlation of each signal with correct directional outcome. '
@@ -184,9 +184,9 @@ COMMENT ON VIEW v_signal_importance IS
 
 CREATE OR REPLACE VIEW v_prob_calibration AS
 SELECT
-    instrument,
-    prediction_type,
-    FLOOR(probability / 5) * 5          AS prob_bucket,   -- 50, 55, 60, 65, 70, 75
+    p.instrument,
+    p.prediction_type,
+    FLOOR(p.probability / 5) * 5        AS prob_bucket,   -- 50, 55, 60, 65, 70, 75
     COUNT(*)                             AS predictions,
     SUM(CASE WHEN p.direction = o.actual_direction THEN 1 ELSE 0 END) AS correct,
     ROUND(
@@ -205,7 +205,7 @@ WHERE p.run_date = (
     AND p2.prediction_type = p.prediction_type
     AND p2.run_date <= p.expiry_date
 )
-GROUP BY instrument, prediction_type, prob_bucket
+GROUP BY p.instrument, p.prediction_type, FLOOR(p.probability / 5) * 5
 HAVING COUNT(*) >= 3
 ORDER BY instrument, prediction_type, prob_bucket;
 
