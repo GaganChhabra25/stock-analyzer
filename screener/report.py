@@ -1021,17 +1021,23 @@ function initPage() {
   });
 }
 
-// Init on page load — fetch server trades first for cross-device sync
+// Init on page load — bidirectional sync with server for cross-device consistency
 window.addEventListener('DOMContentLoaded', function() {
   fetch('/api/ui-trades')
     .then(function(r) { return r.ok ? r.json() : {}; })
     .catch(function() { return {}; })
     .then(function(serverTrades) {
-      if (serverTrades && Object.keys(serverTrades).length > 0) {
-        // Server wins: merge over local state so mobile gets laptop's trades
-        var local = getActiveTrades();
-        var merged = Object.assign({}, local, serverTrades);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      var local  = getActiveTrades();
+      // Merge: server wins on conflict (newer device's save wins over stale local)
+      var merged = Object.assign({}, local, serverTrades);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      // Always push merged state back so whichever device had more data wins
+      if (Object.keys(merged).length > 0) {
+        fetch('/api/ui-trades', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(merged)
+        }).catch(function() {});
       }
       initPage();
     });

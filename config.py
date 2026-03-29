@@ -65,5 +65,7 @@ HTML_REPORT_FILE      = "reports/portfolio_report.html"
 # ============================================================
 
 ALLOWED_EMAILS = [
-    "gagan.chhabra@gmail.com", "gc1133@gmail.com",   # ← replace with your Google email
+    "gagan.chhabra@gmail.com",
+    "gagan.chhabra1990@gmail.com",
+    "gc1133@gmail.com",
 ]
