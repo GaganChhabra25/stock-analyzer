@@ -453,7 +453,7 @@ def generate_html_report(stock_results: list, etf_results: list, mf_results: lis
 
 <!-- Header -->
 <div class="header">
-  <h1>📊 Portfolio Analysis Report</h1>
+  <h1>📊 Portfolio Analysis Report v2</h1>
   <div class="subtitle">Generated on {ts} &nbsp;|&nbsp; Goal: ₹6 Crore in 15 Years @ 15% CAGR &nbsp;|&nbsp; NSE / BSE Holdings</div>
   <div style="margin-top:12px">
     <a href="screener_report.html" target="_blank" style="
