@@ -504,34 +504,51 @@ td { padding: 10px 13px; vertical-align: middle; }
 /* ── Market Overview (Nifty / Crude / NatGas) ── */
 .mkt-overview { margin-bottom: 28px; }
 .mkt-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
-@media (max-width: 900px) { .mkt-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .mkt-grid { grid-template-columns: 1fr; } }
 .mkt-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; overflow: hidden; }
 .mkt-card-head {
   padding: 12px 16px 10px; border-bottom: 1px solid #21262d;
-  display: flex; justify-content: space-between; align-items: flex-start;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
 }
-.mkt-card-title { font-size: 13px; font-weight: 800; color: #e6edf3; }
+.mkt-card-title { font-size: 14px; font-weight: 800; color: #e6edf3; }
 .mkt-card-note  { font-size: 10px; color: #8b949e; margin-top: 2px; }
-.mkt-cmp        { font-size: 20px; font-weight: 700; color: #58a6ff; }
-.mkt-expiry-wrap { text-align: right; }
-.mkt-expiry-date { font-size: 11px; font-weight: 700; color: #e6edf3; }
-.mkt-expiry-dte  { font-size: 10px; margin-top: 2px; font-weight: 700; border-radius: 6px; padding: 2px 7px; display: inline-block; }
-.mkt-dte-ok   { background: rgba(86,211,100,0.12); color: #56d364; }
-.mkt-dte-warn { background: rgba(210,153,34,0.12); color: #d29922; }
-.mkt-dte-hot  { background: rgba(248,81,73,0.12);  color: #f85149; }
-.mkt-levels { display: flex; gap: 8px; padding: 8px 16px 4px; }
-.mkt-lvl { flex: 1; text-align: center; background: #0d1117; border-radius: 8px; padding: 6px 4px; }
-.mkt-lvl-label { font-size: 9px; color: #8b949e; font-weight: 600; letter-spacing: 0.5px; }
-.mkt-lvl-val   { font-size: 12px; font-weight: 700; margin-top: 2px; }
-.mkt-tbl { width: 100%; border-collapse: collapse; font-size: 11px; margin: 4px 0 0; }
-.mkt-tbl th { padding: 4px 8px; color: #8b949e; font-weight: 600; text-align: right; border-bottom: 1px solid #21262d; }
-.mkt-tbl th:first-child { text-align: left; }
-.mkt-tbl td { padding: 4px 8px; text-align: right; border-bottom: 1px solid rgba(48,54,61,0.5); }
-.mkt-tbl td:first-child { text-align: left; color: #8b949e; }
-.mkt-bull { color: #56d364; }
-.mkt-bear { color: #f85149; }
-.mkt-hi   { color: #56d364; font-weight: 700; }
-.mkt-lo   { color: #f85149; font-weight: 700; }
+.mkt-cmp        { font-size: 22px; font-weight: 700; color: #58a6ff; white-space: nowrap; }
+/* Monthly summary strip */
+.mkt-monthly {
+  padding: 10px 16px 6px; border-bottom: 1px solid #21262d;
+  background: rgba(13,17,23,0.5);
+}
+.mkt-monthly-row {
+  display: flex; justify-content: space-between; align-items: center;
+  flex-wrap: wrap; gap: 6px;
+}
+.mkt-sec-label   { font-size: 9px; font-weight: 700; letter-spacing: 0.8px; color: #d29922; }
+.mkt-expiry-info { font-size: 10px; color: #8b949e; }
+.mkt-range-row   { margin-top: 4px; font-size: 10px; color: #8b949e; }
+/* Weekly table */
+.mkt-week-tbl { width: 100%; border-collapse: collapse; font-size: 11px; }
+.mkt-week-tbl th {
+  padding: 5px 8px; color: #8b949e; font-weight: 600; font-size: 10px;
+  border-bottom: 1px solid #21262d; text-align: left; background: #0d1117;
+}
+.mkt-week-tbl td { padding: 6px 8px; border-bottom: 1px solid rgba(48,54,61,0.4); vertical-align: middle; }
+.mkt-week-tbl tr:last-child td { border-bottom: none; }
+.mkt-current-row { background: rgba(88,166,255,0.06) !important; }
+.mkt-past-row    { opacity: 0.55; }
+.mkt-monthly-badge {
+  font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 4px;
+  background: rgba(210,153,34,0.15); color: #d29922;
+  border: 1px solid rgba(210,153,34,0.3); margin-left: 4px; vertical-align: middle;
+}
+.mkt-week-label { font-size: 11px; font-weight: 700; color: #e6edf3; }
+.mkt-date-range { font-size: 10px; color: #8b949e; margin-top: 1px; }
+.mkt-prob-bar {
+  width: 50px; height: 3px; background: #21262d; border-radius: 99px;
+  margin-top: 3px; overflow: hidden;
+}
+.mkt-dte-ok   { color: #56d364; }
+.mkt-dte-warn { color: #d29922; }
+.mkt-dte-hot  { color: #f85149; }
 
 /* ── Print ── */
 @media print {
@@ -1425,99 +1442,145 @@ def _next_month_table_rows(candidates: list) -> str:
 # ── Market Overview section ───────────────────────────────────────────────────
 
 def _market_overview_html(data: dict) -> str:
-    """Build the Market Overview HTML panel (Nifty 50, Crude Oil, Nat Gas)."""
+    """Build the Market Overview panel: weekly schedule + monthly prediction per instrument."""
     if not data:
         return ""
 
-    def _dte_class(days):
+    def _p(val, unit="\u20b9"):
+        """Format price — no decimal for large values, 2dp for small."""
+        if val is None:
+            return "\u2014"
+        if val >= 10000:
+            return f"{unit}{val:,.0f}"
+        if val >= 100:
+            return f"{unit}{val:,.1f}"
+        return f"{unit}{val:.2f}"
+
+    def _dte_cls(days):
         if days <= 5:  return "mkt-dte-hot"
         if days <= 10: return "mkt-dte-warn"
         return "mkt-dte-ok"
 
-    def _fmt(val, unit="₹"):
-        if val is None:
-            return "—"
-        if val >= 1000:
-            return f"{unit}{val:,.2f}"
-        return f"{unit}{val:.2f}"
-
     def _card(inst: dict) -> str:
-        weekly = inst.get("weekly", [])
-        unit   = inst.get("unit", "₹")
-        dte    = inst["days_to_expiry"]
+        if inst.get("error"):
+            return f"""<div class="mkt-card" style="padding:20px;color:#8b949e">
+  <strong>{inst['name']}</strong><br>
+  <span style="font-size:11px">Data unavailable</span></div>"""
 
-        # Key levels from all weekly data
-        all_highs = [w["high"] for w in weekly if w.get("high")]
-        all_lows  = [w["low"]  for w in weekly if w.get("low")]
-        resistance = max(all_highs) if all_highs else None
-        support    = min(all_lows)  if all_lows  else None
+        unit     = inst.get("unit", "\u20b9")
+        schedule = inst.get("weekly_schedule", [])
+        monthly  = inst.get("monthly", {})
 
-        levels_html = ""
-        if resistance or support:
-            levels_html = f"""
-    <div class="mkt-levels">
-      <div class="mkt-lvl">
-        <div class="mkt-lvl-label">5-WK RESISTANCE</div>
-        <div class="mkt-lvl-val mkt-hi">{_fmt(resistance, unit)}</div>
-      </div>
-      <div class="mkt-lvl">
-        <div class="mkt-lvl-label">5-WK SUPPORT</div>
-        <div class="mkt-lvl-val mkt-lo">{_fmt(support, unit)}</div>
-      </div>
-    </div>"""
+        # ── Monthly summary strip ──────────────────────────────────────────────
+        m_dir  = monthly.get("direction", "\u2014")
+        m_prob = monthly.get("probability", 0)
+        m_exp  = monthly.get("expected_price")
+        m_dte  = monthly.get("days_to_expiry", 0)
+        m_date = monthly.get("expiry_date", "\u2014")
+        m_col  = "#56d364" if m_dir == "UP" else "#f85149"
+        m_arr  = "\u25b2" if m_dir == "UP" else "\u25bc"
+        m_bull = monthly.get("bull_target")
+        m_bear = monthly.get("bear_target")
+        m_hwr  = monthly.get("hist_wr", 0)
 
-        # Weekly candle table rows
-        table_rows = ""
-        for w in weekly:
-            bull     = w.get("bull", True)
-            pct      = w.get("pct", 0)
-            pct_cls  = "mkt-bull" if bull else "mkt-bear"
-            pct_sign = "+" if pct >= 0 else ""
-            is_hi    = all_highs and w["high"] == resistance
-            is_lo    = all_lows  and w["low"]  == support
-            hi_cls   = "mkt-hi" if is_hi else ""
-            lo_cls   = "mkt-lo" if is_lo else ""
-            table_rows += f"""<tr>
-          <td>{w['week']}</td>
-          <td>{_fmt(w['open'], unit)}</td>
-          <td class="{hi_cls}">{_fmt(w['high'], unit)}</td>
-          <td class="{lo_cls}">{_fmt(w['low'],  unit)}</td>
-          <td style="font-weight:700">{_fmt(w['close'], unit)}</td>
-          <td class="{pct_cls}" style="font-weight:700">{pct_sign}{pct:.1f}%</td>
-        </tr>"""
+        monthly_html = f"""<div class="mkt-monthly">
+  <div class="mkt-monthly-row">
+    <div>
+      <span class="mkt-sec-label">MONTHLY OUTLOOK</span>
+      <span class="mkt-expiry-info"> &nbsp;&middot;&nbsp; Expiry {m_date}
+        <span class="{_dte_cls(m_dte)}" style="font-weight:700"> ({m_dte}d)</span>
+      </span>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="color:{m_col};font-weight:800;font-size:13px">{m_arr} {m_dir}</span>
+      <strong style="color:{m_col};font-size:13px">{m_prob:.0f}%</strong>
+      <span style="color:#8b949e;font-size:11px">Target:
+        <strong style="color:{m_col}">{_p(m_exp, unit)}</strong>
+      </span>
+    </div>
+  </div>
+  <div class="mkt-range-row">
+    Bull: <strong style="color:#56d364">{_p(m_bull, unit)}</strong>
+    &nbsp;&nbsp;
+    Bear: <strong style="color:#f85149">{_p(m_bear, unit)}</strong>
+    &nbsp;&nbsp;
+    Hist win-rate: <strong>{m_hwr:.0f}%</strong>
+  </div>
+</div>"""
+
+        # ── Weekly schedule table ──────────────────────────────────────────────
+        week_rows = ""
+        for w in schedule:
+            is_past    = w.get("is_past", False)
+            is_current = w.get("is_current", False)
+            is_monthly = w.get("is_monthly_expiry", False)
+            row_cls    = "mkt-past-row" if is_past else ("mkt-current-row" if is_current else "")
+
+            monthly_badge = (' <span class="mkt-monthly-badge">Monthly</span>'
+                             if is_monthly else "")
+
+            if is_past:
+                a_dir  = w.get("actual_dir", "\u2014")
+                a_pct  = w.get("actual_pct", 0) or 0
+                a_cl   = w.get("actual_close")
+                a_col  = "#56d364" if a_dir == "UP" else ("#f85149" if a_dir == "DOWN" else "#8b949e")
+                a_arr  = "\u25b2" if a_dir == "UP" else ("\u25bc" if a_dir == "DOWN" else "\u2014")
+                sign   = "+" if a_pct >= 0 else ""
+                dir_td = f'<span style="color:{a_col};font-weight:700">{a_arr} {a_dir}</span>'
+                pb_td  = f'<span style="color:#8b949e;font-size:10px">{sign}{a_pct:.1f}%</span>'
+                tgt_td = f'<span style="color:{a_col}">{_p(a_cl, unit)}</span>'
+            else:
+                d_col  = "#56d364" if w["direction"] == "UP" else "#f85149"
+                d_arr  = "\u25b2" if w["direction"] == "UP" else "\u25bc"
+                prob   = w["probability"]
+                fw     = "800" if is_current else "700"
+                dir_td = f'<span style="color:{d_col};font-weight:{fw}">{d_arr} {w["direction"]}</span>'
+                pb_td  = (f'<strong style="color:{d_col}">{prob:.0f}%</strong>'
+                          f'<div class="mkt-prob-bar">'
+                          f'<div style="width:{prob}%;height:100%;background:{d_col};border-radius:99px"></div>'
+                          f'</div>')
+                tgt_td = f'<strong style="color:{d_col}">{_p(w["target"], unit)}</strong>'
+
+            wr_td = f'<span style="color:#8b949e;font-size:10px">{w["hist_wr"]:.0f}%</span>'
+
+            week_rows += f"""<tr class="{row_cls}">
+        <td>
+          <div class="mkt-week-label">{w['label']}{monthly_badge}</div>
+          <div class="mkt-date-range">{w['date_from']} \u2013 {w['date_to']}</div>
+        </td>
+        <td style="font-size:10px;color:#8b949e">{w['expiry_date']}</td>
+        <td>{dir_td}</td>
+        <td>{pb_td}</td>
+        <td>{tgt_td}</td>
+        <td>{wr_td}</td>
+      </tr>"""
 
         table_html = ""
-        if table_rows:
-            table_html = f"""
-    <table class="mkt-tbl">
-      <thead><tr>
-        <th>Week</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>%</th>
-      </tr></thead>
-      <tbody>{table_rows}</tbody>
-    </table>"""
+        if week_rows:
+            table_html = f"""<table class="mkt-week-tbl">
+  <thead><tr>
+    <th>Week</th><th>Expiry</th><th>Direction</th>
+    <th>Probability</th><th>Expected Price</th><th>Hist WR</th>
+  </tr></thead>
+  <tbody>{week_rows}</tbody>
+</table>"""
 
-        dte_label = f"{dte}d to expiry" if dte > 0 else "Expiry today!"
         return f"""<div class="mkt-card">
   <div class="mkt-card-head">
     <div>
       <div class="mkt-card-title">{inst['name']}</div>
-      <div class="mkt-card-note">{inst.get('note','')}</div>
-      <div class="mkt-cmp">{_fmt(inst.get('cmp'), unit)}</div>
+      <div class="mkt-card-note">{inst.get('note', '')}</div>
     </div>
-    <div class="mkt-expiry-wrap">
-      <div style="font-size:9px;color:#8b949e;margin-bottom:3px">CURRENT EXPIRY</div>
-      <div class="mkt-expiry-date">{inst['expiry']}</div>
-      <div class="mkt-expiry-dte {_dte_class(dte)}">{dte_label}</div>
-    </div>
+    <div class="mkt-cmp">{_p(inst.get('cmp'), unit)}</div>
   </div>
-  {levels_html}
+  {monthly_html}
   {table_html}
 </div>"""
 
     cards = "".join(_card(data[k]) for k in ("nifty", "crude_oil", "nat_gas") if k in data)
     return f"""
   <!-- Market Overview: Nifty 50 / MCX Crude Oil / MCX Natural Gas -->
-  <div class="sec-title">📈 Market Overview — Weekly Levels &amp; Expiry</div>
+  <div class="sec-title">\U0001f4c8 Market Overview \u2014 Weekly &amp; Monthly Outlook</div>
   <div class="mkt-overview">
     <div class="mkt-grid">{cards}</div>
   </div>"""
