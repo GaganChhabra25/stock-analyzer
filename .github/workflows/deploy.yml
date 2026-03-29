@@ -14,16 +14,19 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: GH_PAT
           script: |
             set -e
             if [ ! -d ~/stock-analyzer ]; then
-              GIT_TERMINAL_PROMPT=0 git clone https://github.com/GaganChhabra25/stock-analyzer.git ~/stock-analyzer
+              git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git ~/stock-analyzer
             fi
             cd ~/stock-analyzer
-            git pull
+            git pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
             if [ ! -d venv ]; then
               python3 -m venv venv
             fi
             venv/bin/pip install -r requirements.txt -q
             sudo systemctl restart stock-analyzer
             echo "Deployed successfully at $(date)"
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
