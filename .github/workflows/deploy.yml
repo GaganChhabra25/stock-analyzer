@@ -15,8 +15,15 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
+            set -e
+            if [ ! -d ~/stock-analyzer ]; then
+              git clone https://github.com/${{ secrets.GITHUB_REPO }} ~/stock-analyzer
+            fi
             cd ~/stock-analyzer
             git pull
+            if [ ! -d venv ]; then
+              python3 -m venv venv
+            fi
             venv/bin/pip install -r requirements.txt -q
             sudo systemctl restart stock-analyzer
             echo "Deployed successfully at $(date)"
