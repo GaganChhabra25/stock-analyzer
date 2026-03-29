@@ -29,6 +29,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 from screener.analyzer        import StockScreener
 from screener.report          import generate_screener_report
 from screener.market_overview import fetch_market_overview
+from screener.db              import save_market_overview, is_available as db_available
 
 
 REPORT_FILE         = "reports/screener_report.html"
@@ -197,6 +198,14 @@ def main():
     except Exception as e:
         print(f"  Market overview fetch failed: {e}")
         mkt_overview = {}
+
+    # ── Persist predictions + outcomes to PostgreSQL ───────────────────────────
+    if db_available() and mkt_overview:
+        try:
+            n_saved = save_market_overview(mkt_overview)
+            print(f"  DB: saved {n_saved} prediction(s) to PostgreSQL.")
+        except Exception as e:
+            print(f"  DB: save failed — {e}")
 
     # ── Generate HTML report ───────────────────────────────────────────────────
     print(f"\n  Generating HTML report…")
