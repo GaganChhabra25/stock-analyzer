@@ -26,8 +26,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from screener.analyzer import StockScreener
-from screener.report   import generate_screener_report
+from screener.analyzer        import StockScreener
+from screener.report          import generate_screener_report
+from screener.market_overview import fetch_market_overview
 
 
 REPORT_FILE         = "reports/screener_report.html"
@@ -183,6 +184,20 @@ def main():
                 f"  {dir_str:12s}  Prob: {c['probability']:.0f}%{pnl_str}{flip}"
             )
 
+    # ── Fetch market overview (Nifty / Crude / NatGas) ────────────────────────
+    print(f"  Fetching market overview (Nifty 50, MCX Crude, MCX NatGas)…")
+    try:
+        mkt_overview = fetch_market_overview()
+        n50_cmp = mkt_overview["nifty"].get("cmp")
+        cr_cmp  = mkt_overview["crude_oil"].get("cmp")
+        ng_cmp  = mkt_overview["nat_gas"].get("cmp")
+        print(f"  Nifty 50: ₹{n50_cmp:,.2f}" if n50_cmp else "  Nifty 50: —")
+        print(f"  Crude Oil: ₹{cr_cmp:,.2f}/bbl" if cr_cmp else "  Crude Oil: —")
+        print(f"  Nat Gas:   ₹{ng_cmp:,.2f}/mmBtu" if ng_cmp else "  Nat Gas: —")
+    except Exception as e:
+        print(f"  Market overview fetch failed: {e}")
+        mkt_overview = {}
+
     # ── Generate HTML report ───────────────────────────────────────────────────
     print(f"\n  Generating HTML report…")
     out = generate_screener_report(
@@ -191,6 +206,7 @@ def main():
         active_trades_meta=active_trades,
         active_trades_data=extra_data,
         all_stocks=all_stocks,
+        market_overview=mkt_overview,
     )
     abs_path = os.path.abspath(out)
     print(f"  Report saved: {abs_path}")
