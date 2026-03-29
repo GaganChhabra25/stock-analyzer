@@ -426,6 +426,82 @@ Jobs run in the background — the dashboard polls for status and shows a live l
 
 ---
 
+## Server Deployment (Google Cloud / Any Ubuntu Server)
+
+### First-Time Setup
+
+Use the interactive deployment script — it sets everything up in one shot:
+
+```bash
+chmod +x deploy/deploy.sh
+./deploy/deploy.sh
+```
+
+It will ask for:
+- Server public IP or domain (e.g. `myapp.duckdns.org`)
+- Git repo URL (or leave blank if files are already on the server)
+- Google Client ID and Client Secret
+- Allowed emails (comma-separated)
+
+After running, your app will be live at `http://your-domain`.
+
+**Google OAuth setup for server deployment:**
+1. Go to Google Cloud Console → APIs & Services → Credentials → your OAuth Client
+2. Add under **Authorized JavaScript origins**: `http://your-domain`
+3. Add under **Authorized redirect URIs**: `http://your-domain/auth/callback`
+
+> Raw IP addresses are not accepted by Google OAuth — use a domain name.
+> Free option: [DuckDNS](https://duckdns.org) gives you a free `yourapp.duckdns.org` subdomain.
+
+### Deploying Updates
+
+After pushing new code to GitHub, run this on the server:
+
+```bash
+cd ~/stock-analyzer
+git pull
+venv/bin/pip install -r requirements.txt -q
+sudo systemctl restart stock-analyzer
+```
+
+Or use the shortcut update script:
+
+```bash
+~/update.sh
+```
+
+To create the update script (one time):
+```bash
+cat > ~/update.sh << 'EOF'
+cd ~/stock-analyzer
+git pull
+venv/bin/pip install -r requirements.txt -q
+sudo systemctl restart stock-analyzer
+echo "Done! App restarted."
+EOF
+chmod +x ~/update.sh
+```
+
+### Useful Server Commands
+
+```bash
+# Check app status
+sudo systemctl status stock-analyzer
+
+# View live logs
+sudo journalctl -u stock-analyzer -f
+tail -f ~/stock-analyzer/logs/error.log
+
+# Restart app
+sudo systemctl restart stock-analyzer
+
+# Update Google credentials in .env
+nano ~/stock-analyzer/.env
+sudo systemctl restart stock-analyzer
+```
+
+---
+
 ## Customising Goals
 
 Edit `config.py`:
