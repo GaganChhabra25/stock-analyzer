@@ -17,7 +17,7 @@ jobs:
           script: |
             set -e
             if [ ! -d ~/stock-analyzer ]; then
-              git clone https://github.com/${{ secrets.GITHUB_REPO }} ~/stock-analyzer
+              git clone https://github.com/GaganChhabra25/stock-analyzer.git ~/stock-analyzer
             fi
             cd ~/stock-analyzer
             git pull
