@@ -549,6 +549,43 @@ td { padding: 10px 13px; vertical-align: middle; }
 .mkt-dte-ok   { color: #56d364; }
 .mkt-dte-warn { color: #d29922; }
 .mkt-dte-hot  { color: #f85149; }
+.mkt-signals {
+  border-top: 1px solid #21262d;
+  margin-top: 10px;
+  padding-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.mkt-sig-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.mkt-sig-pill .sname { color: #8b949e; }
+.mkt-sig-pill .sval  { font-weight: 700; }
+.mkt-sig-pill.bull   { border-color: rgba(86,211,100,0.30); }
+.mkt-sig-pill.bear   { border-color: rgba(248,81,73,0.30); }
+.mkt-sig-pill.neut   { border-color: #30363d; }
+.mkt-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.mkt-meta-bar .mlabel { color: #8b949e; margin-right: 3px; }
+.mkt-meta-bar .mval   { font-weight: 700; }
 
 /* ── Print ── */
 @media print {
@@ -1565,6 +1602,106 @@ def _market_overview_html(data: dict) -> str:
   <tbody>{week_rows}</tbody>
 </table>"""
 
+        # ── Signal pills ──────────────────────────────────────────────────────
+        sigs  = inst.get("signals", {})
+        pills = ""
+
+        def _sig_pill(label: str, value, fmt_fn=None, bull_thresh=0.0, bear_thresh=0.0,
+                      invert=False, unit_str=""):
+            if value is None:
+                return ""
+            display = fmt_fn(value) if fmt_fn else str(value)
+            if isinstance(value, float):
+                if (value >= bull_thresh and not invert) or (value <= bear_thresh and invert):
+                    cls = "bull"
+                elif (value <= bear_thresh and not invert) or (value >= bull_thresh and invert):
+                    cls = "bear"
+                else:
+                    cls = "neut"
+            else:
+                cls = "neut"
+            return (f'<div class="mkt-sig-pill {cls}">'
+                    f'<span class="sname">{label}</span>'
+                    f'<span class="sval">{display}{unit_str}</span></div>')
+
+        # Tech signal
+        tech_val = sigs.get("tech")
+        if tech_val is not None:
+            tech_dir = "Bullish" if tech_val > 0.1 else ("Bearish" if tech_val < -0.1 else "Neutral")
+            pills += _sig_pill("Tech", float(tech_val),
+                                fmt_fn=lambda v: f"{v:+.2f} {tech_dir}",
+                                bull_thresh=0.1, bear_thresh=-0.1)
+
+        # VIX signal
+        vix_val = sigs.get("vix")
+        if vix_val is not None:
+            vix_dir = "Bullish" if vix_val > 0.1 else ("Bearish" if vix_val < -0.1 else "Neutral")
+            pills += _sig_pill("VIX signal", float(vix_val),
+                                fmt_fn=lambda v: f"{v:+.2f} {vix_dir}",
+                                bull_thresh=0.1, bear_thresh=-0.1)
+
+        # PCR value
+        pcr_val = sigs.get("pcr")
+        if pcr_val is not None:
+            pcr_cls = "bull" if pcr_val > 1.1 else ("bear" if pcr_val < 0.9 else "neut")
+            pills += (f'<div class="mkt-sig-pill {pcr_cls}">'
+                      f'<span class="sname">PCR</span>'
+                      f'<span class="sval">{pcr_val:.2f}</span></div>')
+
+        # Max Pain level
+        mp_val = sigs.get("max_pain")
+        cmp_v  = inst.get("cmp", 0) or 0
+        if mp_val is not None and cmp_v > 0:
+            diff_pct = (mp_val - cmp_v) / cmp_v * 100
+            mp_cls   = "bull" if diff_pct > 0.5 else ("bear" if diff_pct < -0.5 else "neut")
+            pills += (f'<div class="mkt-sig-pill {mp_cls}">'
+                      f'<span class="sname">Max Pain</span>'
+                      f'<span class="sval">{_p(mp_val, unit)} '
+                      f'({diff_pct:+.1f}%)</span></div>')
+
+        # ATM IV
+        iv_val = sigs.get("atm_iv")
+        if iv_val is not None:
+            pills += (f'<div class="mkt-sig-pill neut">'
+                      f'<span class="sname">ATM IV</span>'
+                      f'<span class="sval">{iv_val:.1f}%</span></div>')
+
+        # Support / Resistance from options OI
+        sup_val = sigs.get("support")
+        res_val = sigs.get("resistance")
+        if sup_val is not None:
+            pills += (f'<div class="mkt-sig-pill bull">'
+                      f'<span class="sname">Put OI Wall</span>'
+                      f'<span class="sval">{_p(sup_val, unit)}</span></div>')
+        if res_val is not None:
+            pills += (f'<div class="mkt-sig-pill bear">'
+                      f'<span class="sname">Call OI Wall</span>'
+                      f'<span class="sval">{_p(res_val, unit)}</span></div>')
+
+        # Global + FII
+        gl_val  = sigs.get("global")
+        fii_val = sigs.get("fii")
+        if gl_val is not None:
+            gl_dir = "↑" if gl_val > 0.05 else ("↓" if gl_val < -0.05 else "→")
+            pills += _sig_pill("Global", float(gl_val),
+                                fmt_fn=lambda v: f"{v:+.2f} {gl_dir}",
+                                bull_thresh=0.05, bear_thresh=-0.05)
+        if fii_val is not None and fii_val != 0.0:
+            fii_dir = "Buying" if fii_val > 0 else "Selling"
+            pills += (f'<div class="mkt-sig-pill {"bull" if fii_val > 0 else "bear"}">'
+                      f'<span class="sname">FII</span>'
+                      f'<span class="sval">{fii_dir} {abs(fii_val):.2f}</span></div>')
+
+        # Seasonal
+        seas_val = sigs.get("seasonal")
+        if seas_val is not None:
+            seas_dir = "Peak season" if seas_val > 0.2 else ("Off season" if seas_val < -0.2 else "Shoulder")
+            pills += (f'<div class="mkt-sig-pill {"bull" if seas_val > 0.1 else ("bear" if seas_val < -0.1 else "neut")}">'
+                      f'<span class="sname">Seasonal</span>'
+                      f'<span class="sval">{seas_dir}</span></div>')
+
+        signals_html = f'<div class="mkt-signals">{pills}</div>' if pills else ""
+
         return f"""<div class="mkt-card">
   <div class="mkt-card-head">
     <div>
@@ -1575,13 +1712,42 @@ def _market_overview_html(data: dict) -> str:
   </div>
   {monthly_html}
   {table_html}
+  {signals_html}
 </div>"""
+
+    # ── Meta-signals banner (shared signals for all instruments) ──────────────
+    meta = data.get("meta_signals", {})
+    meta_pills = ""
+    if meta:
+        def _mp(label, val, fmt=""):
+            if val is None: return ""
+            return f'<span><span class="mlabel">{label}</span><span class="mval">{val}{fmt}</span></span>'
+        vix_s  = meta.get("india_vix")
+        glo_s  = meta.get("global")
+        fii_s  = meta.get("fii")
+        pcr_s  = meta.get("pcr")
+        mp_s   = meta.get("max_pain")
+        iv_s   = meta.get("atm_iv")
+        sup_s  = meta.get("support")
+        res_s  = meta.get("resistance")
+        if vix_s  is not None: meta_pills += _mp("VIX signal:", f"{vix_s:+.2f}")
+        if glo_s  is not None: meta_pills += _mp("Global:", f"{glo_s:+.2f}")
+        if fii_s  is not None: meta_pills += _mp("FII:", f"{fii_s:+.2f}")
+        if pcr_s  is not None: meta_pills += _mp("Nifty PCR:", f"{pcr_s:.2f}")
+        if mp_s   is not None: meta_pills += _mp("Max Pain:", f"₹{mp_s:,.0f}")
+        if iv_s   is not None: meta_pills += _mp("ATM IV:", f"{iv_s:.1f}%")
+        if sup_s  is not None: meta_pills += _mp("PE wall:", f"₹{sup_s:,.0f}")
+        if res_s  is not None: meta_pills += _mp("CE wall:", f"₹{res_s:,.0f}")
+
+    meta_bar = (f'<div class="mkt-meta-bar">{meta_pills}</div>'
+                if meta_pills else "")
 
     cards = "".join(_card(data[k]) for k in ("nifty", "crude_oil", "nat_gas") if k in data)
     return f"""
   <!-- Market Overview: Nifty 50 / MCX Crude Oil / MCX Natural Gas -->
   <div class="sec-title">\U0001f4c8 Market Overview \u2014 Weekly &amp; Monthly Outlook</div>
   <div class="mkt-overview">
+    {meta_bar}
     <div class="mkt-grid">{cards}</div>
   </div>"""
 
