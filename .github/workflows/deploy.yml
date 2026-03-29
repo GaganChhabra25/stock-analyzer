@@ -1,0 +1,22 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ~/stock-analyzer
+            git pull
+            venv/bin/pip install -r requirements.txt -q
+            sudo systemctl restart stock-analyzer
+            echo "Deployed successfully at $(date)"
