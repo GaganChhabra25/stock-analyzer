@@ -20,6 +20,11 @@ import sys
 import os
 import webbrowser
 from datetime import datetime
+from pathlib import Path
+
+# Load .env before anything else so DATABASE_URL is available
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
 
 # ── Stdout encoding fix for ₹ symbol on Windows ───────────────────────────────
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":

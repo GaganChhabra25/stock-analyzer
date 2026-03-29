@@ -33,13 +33,17 @@ try:
 except ImportError:
     _PSYCOPG2_OK = False
 
-_DB_URL: str = os.environ.get("DATABASE_URL", "")
 _schema_ready: bool = False          # auto-init on first save
+
+
+def _db_url() -> str:
+    """Read DATABASE_URL lazily so load_dotenv() order doesn't matter."""
+    return os.environ.get("DATABASE_URL", "")
 
 
 def is_available() -> bool:
     """True only when psycopg2 is installed AND DATABASE_URL is set."""
-    return _PSYCOPG2_OK and bool(_DB_URL)
+    return _PSYCOPG2_OK and bool(_db_url())
 
 
 # ── Connection helper ──────────────────────────────────────────────────────────
@@ -52,7 +56,7 @@ def _get_conn():
         return
     conn = None
     try:
-        conn = psycopg2.connect(_DB_URL)
+        conn = psycopg2.connect(_db_url())
         conn.autocommit = False
         yield conn
         conn.commit()
