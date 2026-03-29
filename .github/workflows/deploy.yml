@@ -18,18 +18,16 @@ jobs:
           script: |
             set -e
             DEPLOY_DIR=/home/gagan_chhabra1990/stock-analyzer
+            DEPLOY_USER=gagan_chhabra1990
             if [ ! -d $DEPLOY_DIR ]; then
-              git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git $DEPLOY_DIR
+              sudo -u $DEPLOY_USER git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git $DEPLOY_DIR
             fi
-            git config --global --add safe.directory $DEPLOY_DIR
-            cd $DEPLOY_DIR
-            git pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
-            if [ ! -f venv/bin/pip ]; then
+            sudo -u $DEPLOY_USER git -C $DEPLOY_DIR pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
+            if [ ! -f $DEPLOY_DIR/venv/bin/pip ]; then
               sudo apt-get install -y python3-venv -q
-              rm -rf venv
-              python3 -m venv venv
+              sudo -u $DEPLOY_USER python3 -m venv $DEPLOY_DIR/venv
             fi
-            venv/bin/pip install -r requirements.txt -q
+            sudo -u $DEPLOY_USER $DEPLOY_DIR/venv/bin/pip install -r $DEPLOY_DIR/requirements.txt -q
             sudo systemctl restart stock-analyzer
             echo "Deployed successfully at $(date)"
         env:
