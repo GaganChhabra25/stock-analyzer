@@ -535,6 +535,12 @@ function getActiveTrades() {
 
 function saveActiveTrades(trades) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(trades));
+  // Sync to server so all devices stay in sync
+  fetch('/api/ui-trades', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(trades)
+  }).catch(function() {});  // fire-and-forget; offline = no-op
 }
 
 function takeTrade(symbol, cb) {
@@ -996,8 +1002,7 @@ function syncPythonTrades() {
   if (changed) saveActiveTrades(trades);
 }
 
-// Init on page load
-window.addEventListener('DOMContentLoaded', function() {
+function initPage() {
   syncPythonTrades();
 
   var trades = getActiveTrades();
@@ -1014,6 +1019,22 @@ window.addEventListener('DOMContentLoaded', function() {
   document.getElementById('custom-price').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') addCustomTrade();
   });
+}
+
+// Init on page load — fetch server trades first for cross-device sync
+window.addEventListener('DOMContentLoaded', function() {
+  fetch('/api/ui-trades')
+    .then(function(r) { return r.ok ? r.json() : {}; })
+    .catch(function() { return {}; })
+    .then(function(serverTrades) {
+      if (serverTrades && Object.keys(serverTrades).length > 0) {
+        // Server wins: merge over local state so mobile gets laptop's trades
+        var local = getActiveTrades();
+        var merged = Object.assign({}, local, serverTrades);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      }
+      initPage();
+    });
 });
 """
 

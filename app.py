@@ -7,6 +7,7 @@ Run with gunicorn in production:
 
 import os
 import sys
+import json
 import threading
 import subprocess
 from datetime import datetime, timedelta
@@ -18,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
 from flask import (Flask, redirect, url_for, session, render_template,
-                   send_file, abort, jsonify)
+                   send_file, abort, jsonify, request)
 from authlib.integrations.flask_client import OAuth
 
 # ── Bootstrap ──────────────────────────────────────────────────────────────────
@@ -217,6 +218,31 @@ def job_status(job):
         info = dict(info)
         info["report"] = _report_info(report_map[job])
     return jsonify(info)
+
+
+# ── Active trades API (cross-device sync) ────────────────────────────────────
+
+_UI_TRADES_FILE = BASE_DIR / "data" / "ui_active_trades.json"
+
+
+@app.route("/api/ui-trades", methods=["GET"])
+@login_required
+def get_ui_trades():
+    if _UI_TRADES_FILE.exists():
+        with open(_UI_TRADES_FILE, "r", encoding="utf-8") as f:
+            return jsonify(json.load(f))
+    return jsonify({})
+
+
+@app.route("/api/ui-trades", methods=["POST"])
+@login_required
+def save_ui_trades():
+    data = request.get_json(silent=True)
+    if data is None or not isinstance(data, dict):
+        abort(400)
+    with open(_UI_TRADES_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return jsonify({"ok": True})
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
