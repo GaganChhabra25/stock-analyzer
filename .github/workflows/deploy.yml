@@ -17,10 +17,11 @@ jobs:
           envs: GH_PAT
           script: |
             set -e
-            if [ ! -d ~/stock-analyzer ]; then
-              git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git ~/stock-analyzer
+            DEPLOY_DIR=/home/gagan_chhabra1990/stock-analyzer
+            if [ ! -d $DEPLOY_DIR ]; then
+              git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git $DEPLOY_DIR
             fi
-            cd ~/stock-analyzer
+            cd $DEPLOY_DIR
             git pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
             if [ ! -f venv/bin/pip ]; then
               sudo apt-get install -y python3-venv -q
