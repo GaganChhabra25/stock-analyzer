@@ -53,12 +53,12 @@ except ImportError:
 # ── Signal weights ─────────────────────────────────────────────────────────────
 
 _NIFTY_W: Dict[str, float] = {
-    "hist_wr":  0.15,   # historical week-of-month win rate
-    "tech":     0.20,   # RSI + MACD + Bollinger Bands + SMA + ADX
-    "vix":      0.22,   # India VIX level + trend (critical for Nifty)
-    "pcr":      0.22,   # Put-Call Ratio — options market intelligence
-    "max_pain": 0.12,   # Max pain gravitational pull near expiry
-    "global":   0.06,   # S&P 500 + Nikkei 225 sentiment
+    "hist_wr":  0.10,   # historical week-of-month win rate
+    "tech":     0.18,   # RSI + MACD + Bollinger Bands + SMA + ADX
+    "vix":      0.18,   # India VIX level + trend
+    "pcr":      0.28,   # Put-Call Ratio — most reliable options intelligence for Nifty
+    "max_pain": 0.18,   # Max pain gravitational pull (very reliable near expiry)
+    "global":   0.05,   # S&P 500 + Nikkei 225 sentiment
     "fii":      0.03,   # FII net cash flow (noisy, low weight)
 }
 
@@ -736,6 +736,7 @@ def _weekly_schedule(
     w_atr: float,
     recent_momentum: float,
     nse_opts: dict,
+    monthly_exp_move: float = 0.0,   # pre-computed monthly expected move for consistency
 ) -> List[dict]:
     today       = date.today()
     year, month = monthly_exp.year, monthly_exp.month
@@ -774,10 +775,14 @@ def _weekly_schedule(
 
         direction, probability = _multi_signal_prob(sigs, weights, time_decay=decay)
 
-        # Expected move: prefer options IV when available (Nifty), else ATR
+        # Expected move: for monthly expiry week use the same monthly_exp_move
+        # so weekly and monthly targets are always consistent.
+        # For other weeks: prefer ATM IV, fall back to scaled ATR.
         dte      = max(1, (exp_date - today).days)
         exp_move = 0.0
-        if nse_opts.get("atm_iv"):
+        if is_monthly and monthly_exp_move > 0:
+            exp_move = monthly_exp_move
+        elif nse_opts.get("atm_iv"):
             exp_move = _options_expected_move(cmp, nse_opts["atm_iv"], dte)
         if exp_move <= 0:
             exp_move = w_atr * math.sqrt(week_num)
@@ -869,6 +874,7 @@ def _monthly_prediction(
         "bull_target":    bull_target,
         "bear_target":    bear_target,
         "hist_wr":        m_wr,
+        "_exp_move":      round(m_move, 2),   # internal — passed to weekly schedule
     }
 
 
@@ -922,11 +928,16 @@ def _analyze_instrument(
     if "pcr" in weights and "pcr" in nse_opts:
         signals_base["pcr"] = _pcr_to_signal(nse_opts["pcr"])
 
+    # Compute monthly prediction first so we can use its expected move
+    # in the weekly schedule — ensures last-week and monthly targets match.
+    monthly  = _monthly_prediction(df, cmp, signals_base, weights, monthly_exp, nse_opts)
+    m_move   = monthly.pop("_exp_move", 0.0)   # extract internal field, don't expose in output
+
     schedule = _weekly_schedule(
         df, cmp, signals_base, weights,
         expiry_wd, monthly_exp, weekly_wr, w_atr, recent_mom, nse_opts,
+        monthly_exp_move=m_move,
     )
-    monthly = _monthly_prediction(df, cmp, signals_base, weights, monthly_exp, nse_opts)
 
     # Assemble signal display metadata for the report
     signals_display = {k: round(v, 2) for k, v in signals_base.items()}
@@ -996,12 +1007,12 @@ def fetch_market_overview() -> dict:
         nse_opts=nse_opts,
     )
     crude = _analyze_instrument(
-        ticker="BZ=F", name="MCX Crude Oil", fx_mult=usd_inr,
+        ticker="CL=F", name="MCX Crude Oil", fx_mult=usd_inr,
         expiry_wd=4,
         monthly_expiry_fn=_mcx_crude_expiry,
-        note=f"MCX • Monthly expiry: ~20th • Brent × ₹{usd_inr:.1f}",
+        note=f"MCX • Monthly expiry: ~20th • WTI × ₹{usd_inr:.1f}",
         weights=_CRUDE_W,
-        vix_sig=vix_sig * 0.50,   # VIX less relevant for crude
+        vix_sig=vix_sig * 0.50,
         global_sig=global_sig,
         commodity_type="crude",
     )
