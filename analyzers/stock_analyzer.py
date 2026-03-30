@@ -2,14 +2,28 @@
 Analyzes NSE/BSE direct-equity stocks using yfinance.
 Scores: Fundamentals (50%) + Valuation (30%) + Momentum (20%).
 For ETFs: uses pre-known price from Zerodha CSV and gives category-based advice.
+
+Uses YFinanceProvider by default; inject a custom StockDataProvider for testing:
+
+    mock_provider = MockProvider(...)
+    analyzer = StockAnalyzer(provider=mock_provider)
 """
 
+import logging
+from typing import Optional
+
 import numpy as np
-import yfinance as yf
+
 from config import STOCK_THRESHOLDS, SCORE_WEIGHTS, GOALS
+from core.constants import SCORE_GREAT, SCORE_GOOD, SCORE_WARN, SCORE_BAD, SCORE_DEFAULT_NEUTRAL
+from core.interfaces import StockDataProvider
+from core.models import StockResult
+
+logger = logging.getLogger(__name__)
 
 
-# ── ETF advice map ───────────────────────────────────────────────────────────
+# ── ETF advice map ────────────────────────────────────────────────────────────
+
 ETF_ADVICE = {
     "Broad Market": (
         "ADD MORE",
@@ -67,61 +81,52 @@ ETF_ADVICE = {
 
 
 class StockAnalyzer:
-    def __init__(self):
+    """
+    Analyzes individual stock and ETF holdings.
+
+    Args:
+        provider: Optional StockDataProvider. Defaults to YFinanceProvider.
+                  Pass a mock in tests to avoid real network calls.
+    """
+
+    def __init__(self, provider: Optional[StockDataProvider] = None):
         self.t = STOCK_THRESHOLDS
         self.w = SCORE_WEIGHTS
 
-    # ── ETF analysis (no yfinance needed) ───────────────────────────────────
+        if provider is None:
+            from providers.yfinance_provider import YFinanceProvider
+            provider = YFinanceProvider()
+        self._provider = provider
+
+    # ── ETF analysis (no data provider needed) ────────────────────────────────
 
     def analyze_etf(self, symbol: str, quantity: float, avg_cost: float,
                     ltp: float, current_value: float, pnl: float,
-                    etf_name: str, etf_category: str) -> dict:
+                    etf_name: str, etf_category: str) -> StockResult:
         gain_loss_pct = round((ltp / avg_cost - 1) * 100, 2) if avg_cost else None
         investment    = round(quantity * avg_cost, 2)
         action, reason = ETF_ADVICE.get(
             etf_category,
             ("HOLD", "ETF — hold as part of diversified portfolio."),
         )
-        return {
-            "symbol":            symbol,
-            "name":              etf_name,
-            "quantity":          quantity,
-            "avg_cost":          avg_cost,
-            "current_price":     ltp,
-            "current_value":     round(current_value, 2),
-            "investment":        investment,
-            "gain_loss":         round(pnl, 2) if pnl is not None else round(current_value - investment, 2),
-            "gain_loss_pct":     gain_loss_pct,
-            "is_etf":            True,
-            "etf_category":      etf_category,
-            "pe":                None,
-            "roe":               None,
-            "debt_equity":       None,
-            "fundamentals_score": None,
-            "valuation_score":   None,
-            "momentum_score":    None,
-            "total_score":       None,
-            "action":            action,
-            "reason":            reason,
-            "key_metrics":       f"Category: {etf_category}",
-        }
+        return StockResult(
+            symbol          = symbol,
+            name            = etf_name,
+            quantity        = quantity,
+            avg_cost        = avg_cost,
+            current_price   = ltp,
+            current_value   = round(current_value, 2),
+            investment      = investment,
+            gain_loss       = round(pnl, 2) if pnl is not None else round(current_value - investment, 2),
+            gain_loss_pct   = gain_loss_pct,
+            is_etf          = True,
+            etf_category    = etf_category,
+            action          = action,
+            reason          = reason,
+            key_metrics     = f"Category: {etf_category}",
+        )
 
-    # ── Data fetch ───────────────────────────────────────────────────────────
-
-    def _fetch(self, symbol: str):
-        for suffix in [".NS", ".BO", ""]:
-            sym = symbol if symbol.upper().endswith((".NS", ".BO")) else symbol + suffix
-            try:
-                ticker = yf.Ticker(sym)
-                info   = ticker.info or {}
-                hist   = ticker.history(period="1y")
-                if not hist.empty:
-                    return ticker, info, hist
-            except Exception:
-                continue
-        return None, {}, None
-
-    # ── Scoring ──────────────────────────────────────────────────────────────
+    # ── Scoring ───────────────────────────────────────────────────────────────
 
     def _score_fundamentals(self, info: dict) -> float:
         score, total = 0, 0
@@ -159,7 +164,7 @@ class StockAnalyzer:
             elif cr >= self.t["min_current_ratio"] * 1.5: score += 15
             elif cr >= self.t["min_current_ratio"]:        score += 8
 
-        return (score / total * 100) if total else 50.0
+        return (score / total * 100) if total else SCORE_DEFAULT_NEUTRAL
 
     def _score_valuation(self, info: dict) -> float:
         score, total = 0, 0
@@ -188,11 +193,11 @@ class StockAnalyzer:
             elif ev <= 25: score += 10
             elif ev <= 35: score += 4
 
-        return (score / total * 100) if total else 50.0
+        return (score / total * 100) if total else SCORE_DEFAULT_NEUTRAL
 
     def _score_momentum(self, hist) -> float:
         if hist is None or hist.empty:
-            return 50.0
+            return SCORE_DEFAULT_NEUTRAL
         close = hist["Close"]
         score = 0
 
@@ -227,22 +232,22 @@ class StockAnalyzer:
 
         return min(float(score), 100.0)
 
-    # ── Recommendation ───────────────────────────────────────────────────────
+    # ── Recommendation ────────────────────────────────────────────────────────
 
     @staticmethod
-    def _recommend(total_score: float, gain_loss_pct: float) -> tuple:
-        if total_score >= 72:
+    def _recommend(total_score: float, gain_loss_pct: Optional[float]):
+        if total_score >= SCORE_GREAT:
             action = "ADD MORE"
             reason = "Strong fundamentals + good valuation. Good for 15-year goal."
-        elif total_score >= 58:
+        elif total_score >= SCORE_GOOD:
             action = "HOLD"
             reason = "Solid stock. Continue holding; review after next earnings."
-        elif total_score >= 42:
+        elif total_score >= SCORE_WARN:
             action = "HOLD"
             reason = "Moderate signals. Watch quarterly results before adding more."
             if gain_loss_pct is not None and gain_loss_pct > 50:
                 reason += " Consider partial profit booking."
-        elif total_score >= 28:
+        elif total_score >= SCORE_BAD:
             action = "EXIT"
             reason = "Weak fundamentals or expensive. Exit and redeploy."
         else:
@@ -250,53 +255,45 @@ class StockAnalyzer:
             reason = "Poor score across all parameters. Exit and reinvest in stronger holdings."
         return action, reason
 
-    # ── Public API ───────────────────────────────────────────────────────────
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def analyze(self, symbol: str, quantity: float, avg_cost: float,
-                ltp: float = None, current_value_csv: float = None,
-                pnl_csv: float = None) -> dict:
+                ltp: Optional[float] = None,
+                current_value_csv: Optional[float] = None,
+                pnl_csv: Optional[float] = None) -> StockResult:
         """Analyze a direct equity stock. Uses LTP from CSV if provided."""
-        _, info, hist = self._fetch(symbol)
+        logger.debug("Analyzing %s", symbol)
+        info, hist = self._provider.fetch(symbol)
 
         investment = round(quantity * avg_cost, 2)
 
-        # Use CSV price if available, else fall back to yfinance
+        # Prefer CSV price; fall back to yfinance
         price = ltp
         if price is None:
             price = info.get("currentPrice") or info.get("regularMarketPrice")
             if price is None and hist is not None and not hist.empty:
                 price = float(hist["Close"].iloc[-1])
 
-        cur_val  = current_value_csv if current_value_csv else (round(float(price) * quantity, 2) if price else None)
+        cur_val  = current_value_csv or (round(float(price) * quantity, 2) if price else None)
         gain     = pnl_csv if pnl_csv is not None else (round(cur_val - investment, 2) if cur_val else None)
         gain_pct = round((float(price) / avg_cost - 1) * 100, 2) if price and avg_cost else None
 
-        result = {
-            "symbol":            symbol,
-            "name":              symbol,
-            "quantity":          quantity,
-            "avg_cost":          avg_cost,
-            "current_price":     round(float(price), 2) if price else None,
-            "current_value":     cur_val,
-            "investment":        investment,
-            "gain_loss":         gain,
-            "gain_loss_pct":     gain_pct,
-            "is_etf":            False,
-            "etf_category":      None,
-            "pe":                None,
-            "roe":               None,
-            "debt_equity":       None,
-            "fundamentals_score": None,
-            "valuation_score":   None,
-            "momentum_score":    None,
-            "total_score":       None,
-            "action":            "HOLD",
-            "reason":            "Could not fetch fundamentals from yfinance.",
-            "key_metrics":       "",
-        }
-
+        # Default result when no data available
         if not info and (hist is None or hist.empty):
-            return result
+            logger.warning("No data for %s — defaulting to HOLD", symbol)
+            return StockResult(
+                symbol        = symbol,
+                name          = symbol,
+                quantity      = quantity,
+                avg_cost      = avg_cost,
+                current_price = round(float(price), 2) if price else None,
+                current_value = cur_val,
+                investment    = investment,
+                gain_loss     = gain,
+                gain_loss_pct = gain_pct,
+                action        = "HOLD",
+                reason        = "Could not fetch fundamentals from yfinance.",
+            )
 
         f = self._score_fundamentals(info)
         v = self._score_valuation(info)
@@ -306,19 +303,34 @@ class StockAnalyzer:
         roe_raw = info.get("returnOnEquity")
         de_raw  = info.get("debtToEquity")
 
-        result["pe"]               = round(float(info.get("trailingPE") or 0), 1)
-        result["roe"]              = round(float(roe_raw or 0) * 100, 1)
-        result["debt_equity"]      = round(float(de_raw or 0) / 100 if (de_raw or 0) > 3 else float(de_raw or 0), 2)
-        result["fundamentals_score"] = round(f, 1)
-        result["valuation_score"]  = round(v, 1)
-        result["momentum_score"]   = round(m, 1)
-        result["total_score"]      = round(total, 1)
-        result["key_metrics"]      = (
-            f"PE={result['pe']}  ROE={result['roe']}%  D/E={result['debt_equity']}  "
-            f"[F={f:.0f} V={v:.0f} M={m:.0f}]"
-        )
-
         action, reason = self._recommend(total, gain_pct)
-        result["action"] = action
-        result["reason"] = reason
-        return result
+
+        return StockResult(
+            symbol             = symbol,
+            name               = symbol,
+            quantity           = quantity,
+            avg_cost           = avg_cost,
+            current_price      = round(float(price), 2) if price else None,
+            current_value      = cur_val,
+            investment         = investment,
+            gain_loss          = gain,
+            gain_loss_pct      = gain_pct,
+            is_etf             = False,
+            pe                 = round(float(info.get("trailingPE") or 0), 1),
+            roe                = round(float(roe_raw or 0) * 100, 1),
+            debt_equity        = round(
+                float(de_raw or 0) / 100 if (de_raw or 0) > 3 else float(de_raw or 0), 2
+            ),
+            fundamentals_score = round(f, 1),
+            valuation_score    = round(v, 1),
+            momentum_score     = round(m, 1),
+            total_score        = round(total, 1),
+            key_metrics        = (
+                f"PE={round(float(info.get('trailingPE') or 0), 1)}  "
+                f"ROE={round(float(roe_raw or 0) * 100, 1)}%  "
+                f"D/E={round(float(de_raw or 0) / 100 if (de_raw or 0) > 3 else float(de_raw or 0), 2)}  "
+                f"[F={f:.0f} V={v:.0f} M={m:.0f}]"
+            ),
+            action = action,
+            reason = reason,
+        )

@@ -5,56 +5,23 @@ Generates a beautiful, self-contained HTML report — no external dependencies.
 import os
 from datetime import datetime
 
+from utils.formatters import (
+    format_currency_html,
+    format_pct,
+    format_action_badge,
+    format_score_ring,
+    format_pnl_cell,
+)
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Module-level aliases for local readability ────────────────────────────────
+# These keep the rest of this file's template code concise while delegating
+# the actual formatting logic to the shared formatters module.
 
-def _cr(val, plain=False) -> str:
-    try:
-        val = float(val)
-    except (TypeError, ValueError):
-        return "N/A"
-    if plain:
-        if val >= 1e7:   return f"₹{val/1e7:.2f} Cr"
-        if val >= 1e5:   return f"₹{val/1e5:.2f} L"
-        return f"₹{val:,.0f}"
-    if val >= 1e7:   return f"₹{val/1e7:.2f}&nbsp;Cr"
-    if val >= 1e5:   return f"₹{val/1e5:.2f}&nbsp;L"
-    return f"₹{val:,.0f}"
-
-
-def _pct(val) -> str:
-    if val is None: return "—"
-    sign = "+" if val >= 0 else ""
-    return f"{sign}{val:.1f}%"
-
-
-def _action_badge(action: str) -> str:
-    a = action.upper().strip()
-    if a == "EXIT":
-        return '<span class="badge sell">✕ EXIT</span>'
-    elif a == "ADD MORE":
-        return '<span class="badge add">↑ ADD MORE</span>'
-    else:
-        return '<span class="badge hold">● HOLD</span>'
-
-
-def _score_ring(score, is_etf=False) -> str:
-    if score is None or is_etf:
-        return '<div class="score-ring etf"><span>ETF</span></div>'
-    s = float(score)
-    if s >= 72:   cls = "great"
-    elif s >= 58: cls = "good"
-    elif s >= 42: cls = "warn"
-    elif s >= 28: cls = "bad"
-    else:         cls = "ugly"
-    return f'<div class="score-ring {cls}"><span>{s:.0f}</span></div>'
-
-
-def _pnl_cell(val) -> str:
-    if val is None: return "<td>—</td>"
-    cls = "pos" if val >= 0 else "neg"
-    sign = "+" if val >= 0 else ""
-    return f'<td class="{cls}">{sign}{val:.1f}%</td>'
+_cr          = format_currency_html
+_pct         = format_pct
+_action_badge = format_action_badge
+_score_ring  = format_score_ring
+_pnl_cell    = format_pnl_cell
 
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -333,29 +300,27 @@ td {
 def _stock_rows(results: list) -> str:
     rows = []
     for r in results:
-        km = r.get("key_metrics", "")
-        # Parse metrics into chips
         chips_html = ""
-        if km and r.get("pe") is not None:
+        if r.key_metrics and r.pe is not None:
             parts = [
-                f'<span class="chip">PE {r["pe"]}</span>',
-                f'<span class="chip">ROE {r["roe"]}%</span>',
-                f'<span class="chip">D/E {r["debt_equity"]}</span>',
+                f'<span class="chip">PE {r.pe}</span>',
+                f'<span class="chip">ROE {r.roe}%</span>',
+                f'<span class="chip">D/E {r.debt_equity}</span>',
             ]
             chips_html = f'<div class="metrics">{"".join(parts)}</div>'
 
-        reason_short = r.get("reason", "")[:90]
+        reason_short = (r.reason or "")[:90]
 
         rows.append(f"""
         <tr>
-          <td>{_score_ring(r.get("total_score"), r.get("is_etf", False))}</td>
-          <td><strong>{r['symbol']}</strong></td>
-          <td>{r['quantity']}</td>
-          <td>{_cr(r['avg_cost'])}</td>
-          <td>{_cr(r.get('current_price'))}</td>
-          <td>{_cr(r.get('current_value'))}</td>
-          {_pnl_cell(r.get('gain_loss_pct'))}
-          <td>{_action_badge(r['action'])}</td>
+          <td>{_score_ring(r.total_score, r.is_etf)}</td>
+          <td><strong>{r.symbol}</strong></td>
+          <td>{r.quantity}</td>
+          <td>{_cr(r.avg_cost)}</td>
+          <td>{_cr(r.current_price)}</td>
+          <td>{_cr(r.current_value)}</td>
+          {_pnl_cell(r.gain_loss_pct)}
+          <td>{_action_badge(r.action)}</td>
           <td>{chips_html}<div style="font-size:10px;color:#718096;margin-top:3px">{reason_short}</div></td>
         </tr>""")
     return "\n".join(rows)
@@ -367,14 +332,14 @@ def _etf_rows(results: list) -> str:
         rows.append(f"""
         <tr>
           <td>{_score_ring(None, True)}</td>
-          <td><strong>{r['symbol']}</strong></td>
-          <td style="font-size:11px;color:#4a5568">{r.get('name','')}</td>
-          <td>{r['quantity']}</td>
-          <td>{_cr(r.get('current_price'))}</td>
-          <td>{_cr(r.get('current_value'))}</td>
-          {_pnl_cell(r.get('gain_loss_pct'))}
-          <td><span style="font-size:11px;color:#553c9a;background:#faf5ff;padding:2px 8px;border-radius:4px">{r.get('etf_category','')}</span></td>
-          <td>{_action_badge(r['action'])}</td>
+          <td><strong>{r.symbol}</strong></td>
+          <td style="font-size:11px;color:#4a5568">{r.name or ''}</td>
+          <td>{r.quantity}</td>
+          <td>{_cr(r.current_price)}</td>
+          <td>{_cr(r.current_value)}</td>
+          {_pnl_cell(r.gain_loss_pct)}
+          <td><span style="font-size:11px;color:#553c9a;background:#faf5ff;padding:2px 8px;border-radius:4px">{r.etf_category or ''}</span></td>
+          <td>{_action_badge(r.action)}</td>
         </tr>""")
     return "\n".join(rows)
 
@@ -384,54 +349,58 @@ def _mf_rows(results: list) -> str:
         return '<tr><td colspan="10" style="text-align:center;padding:20px;color:#718096">No Mutual Fund data loaded. Add your MF holdings to data/mf_holdings.csv</td></tr>'
     rows = []
     for r in results:
-        r1 = f"{r['return_1yr']:+.1f}%" if r.get("return_1yr") is not None else "—"
-        r3 = f"{r['return_3yr']:+.1f}%" if r.get("return_3yr") is not None else "—"
-        r5 = f"{r['return_5yr']:+.1f}%" if r.get("return_5yr") is not None else "—"
-        cur_val = r.get('current_value') or 0
-        sip_val = int(r.get('monthly_sip') or 0)
+        r1 = f"{r.return_1yr:+.1f}%" if r.return_1yr is not None else "—"
+        r3 = f"{r.return_3yr:+.1f}%" if r.return_3yr is not None else "—"
+        r5 = f"{r.return_5yr:+.1f}%" if r.return_5yr is not None else "—"
+        cur_val = r.current_value or 0
+        sip_val = int(r.monthly_sip or 0)
         rows.append(f"""
         <tr data-curval="{cur_val}">
-          <td><strong style="font-size:12px">{r['fund_name'][:45]}</strong>
-              <div style="font-size:10px;color:#718096;margin-top:2px">{r.get('category','')}</div></td>
-          <td>{_cr(r.get('invested'))}</td>
-          <td>{_cr(r.get('current_value'))}</td>
-          {_pnl_cell(r.get('gain_loss_pct'))}
-          <td class="{'pos' if r.get('return_1yr') and r['return_1yr']>=12 else 'neg' if r.get('return_1yr') and r['return_1yr']<8 else ''}">{r1}</td>
-          <td class="{'pos' if r.get('return_3yr') and r['return_3yr']>=12 else 'neg' if r.get('return_3yr') and r['return_3yr']<8 else ''}">{r3}</td>
-          <td class="{'pos' if r.get('return_5yr') and r['return_5yr']>=12 else 'neg' if r.get('return_5yr') and r['return_5yr']<8 else ''}">{r5}</td>
+          <td><strong style="font-size:12px">{r.fund_name[:45]}</strong>
+              <div style="font-size:10px;color:#718096;margin-top:2px">{r.category or ''}</div></td>
+          <td>{_cr(r.invested)}</td>
+          <td>{_cr(r.current_value)}</td>
+          {_pnl_cell(r.gain_loss_pct)}
+          <td class="{'pos' if r.return_1yr and r.return_1yr>=12 else 'neg' if r.return_1yr and r.return_1yr<8 else ''}">{r1}</td>
+          <td class="{'pos' if r.return_3yr and r.return_3yr>=12 else 'neg' if r.return_3yr and r.return_3yr<8 else ''}">{r3}</td>
+          <td class="{'pos' if r.return_5yr and r.return_5yr>=12 else 'neg' if r.return_5yr and r.return_5yr<8 else ''}">{r5}</td>
           <td><input class="sip-input" type="number" value="{sip_val}" min="0" step="500" title="Edit monthly SIP for this fund"></td>
           <td class="proj-td">—</td>
-          <td>{_action_badge(r['action'])}</td>
+          <td>{_action_badge(r.action)}</td>
         </tr>""")
     return "\n".join(rows)
 
 
 def generate_html_report(stock_results: list, etf_results: list, mf_results: list,
-                         summary: dict, projection: dict, warnings: list,
+                         summary, projection: dict, warnings: list,
                          output_file: str):
-
+    """
+    Args:
+        summary:    PortfolioSummary dataclass instance.
+        projection: dict from corpus_calculator.project_corpus().
+    """
     ts       = datetime.now().strftime("%d %b %Y, %I:%M %p")
-    total    = summary["total_value"]
-    invested = summary["total_invested"]
+    total    = summary.total_value
+    invested = summary.total_invested
     pnl      = total - invested
     pnl_pct  = (pnl / invested * 100) if invested else 0
-    mf_sip   = summary.get("monthly_sip", 0)
+    mf_sip   = summary.monthly_sip
 
-    stocks_invested = summary.get("stocks_invested", 0)
-    stocks_value    = summary.get("stocks_value", 0)
-    stocks_pl       = summary.get("stocks_pl", 0)
-    stocks_pl_pct   = summary.get("stocks_pl_pct", 0)
-    mf_invested     = summary.get("mf_invested", 0)
-    mf_value        = summary.get("mf_value", 0)
-    mf_pl           = summary.get("mf_pl", 0)
-    mf_pl_pct       = summary.get("mf_pl_pct", 0)
+    stocks_invested = summary.stocks_invested
+    stocks_value    = summary.stocks_value
+    stocks_pl       = summary.stocks_pl
+    stocks_pl_pct   = summary.stocks_pl_pct
+    mf_invested     = summary.mf_invested
+    mf_value        = summary.mf_value
+    mf_pl           = summary.mf_pl
+    mf_pl_pct       = summary.mf_pl_pct
 
     prog_pct = min(100, projection["total_projected"] / projection["target_corpus"] * 100)
 
     # Count actions
-    exit_count = sum(1 for r in stock_results if r["action"] == "EXIT")
-    add_count  = sum(1 for r in stock_results if r["action"] == "ADD MORE")
-    hold_count = sum(1 for r in stock_results if r["action"] == "HOLD")
+    exit_count = sum(1 for r in stock_results if r.action == "EXIT")
+    add_count  = sum(1 for r in stock_results if r.action == "ADD MORE")
+    hold_count = sum(1 for r in stock_results if r.action == "HOLD")
 
     warnings_html = "".join(
         f'<div class="warn-item"><span class="wi">⚠</span><span>{w}</span></div>'
@@ -485,7 +454,7 @@ def generate_html_report(stock_results: list, etf_results: list, mf_results: lis
   <div class="card teal">
     <div class="label">Current Value</div>
     <div class="value">{_cr(stocks_value, True)}</div>
-    <div class="sub">{summary.get('stocks_pct', 0):.1f}% of portfolio</div>
+    <div class="sub">{summary.stocks_pct:.1f}% of portfolio</div>
   </div>
   <div class="card {'green' if stocks_pl >= 0 else 'red'}">
     <div class="label">P&amp;L</div>
@@ -516,7 +485,7 @@ def generate_html_report(stock_results: list, etf_results: list, mf_results: lis
   <div class="card teal">
     <div class="label">Current Value</div>
     <div class="value">{_cr(mf_value, True)}</div>
-    <div class="sub">{summary.get('mf_pct', 0):.1f}% of portfolio</div>
+    <div class="sub">{summary.mf_pct:.1f}% of portfolio</div>
   </div>
   <div class="card {'green' if mf_pl >= 0 else 'red'}">
     <div class="label">P&amp;L</div>

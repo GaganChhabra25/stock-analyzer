@@ -15,11 +15,15 @@ if sys.platform == "win32":
     except (AttributeError, Exception):
         pass
 
+import logging
 import os
+
 from colorama import Fore, Style, init as colorama_init
 colorama_init(autoreset=True)
 
 import pandas as pd
+
+from logging_config import configure_logging
 from config import GOALS, ZERODHA_HOLDINGS_FILE, MF_HOLDINGS_FILE, REPORT_OUTPUT_FILE, HTML_REPORT_FILE
 from utils.data_loader import load_zerodha_holdings, load_mf_holdings
 from analyzers.stock_analyzer import StockAnalyzer
@@ -27,6 +31,9 @@ from analyzers.mf_analyzer import MFAnalyzer
 from analyzers.portfolio_analyzer import PortfolioAnalyzer
 from utils.report_generator import generate_full_report
 from utils.html_report import generate_html_report
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 
 def _header():
@@ -48,12 +55,13 @@ def run(stocks_only=False, mf_only=False, save_report=True):
             holdings = load_zerodha_holdings(ZERODHA_HOLDINGS_FILE)
         except FileNotFoundError as e:
             print(f"{Fore.RED}{e}{Style.RESET_ALL}")
+            logger.error("Holdings file not found: %s", e)
             holdings = None
 
         if holdings is not None and not holdings.empty:
             analyzer = StockAnalyzer()
-            etf_df   = holdings[holdings["Is_ETF"]  == True]
-            stk_df   = holdings[holdings["Is_ETF"]  == False]
+            etf_df   = holdings[holdings["Is_ETF"] == True]
+            stk_df   = holdings[holdings["Is_ETF"] == False]
 
             # -- ETFs (no yfinance needed)
             print(f"{Fore.WHITE}Processing {len(etf_df)} ETFs …{Style.RESET_ALL}")
@@ -62,9 +70,9 @@ def run(stocks_only=False, mf_only=False, save_report=True):
                     symbol        = row["Symbol"],
                     quantity      = float(row["Quantity"]),
                     avg_cost      = float(row["Avg_Cost"]),
-                    ltp           = float(row["LTP"]) if row["LTP"] is not None else 0,
+                    ltp           = float(row["LTP"])           if row["LTP"] is not None           else 0,
                     current_value = float(row["Current_Value"]) if row["Current_Value"] is not None else 0,
-                    pnl           = float(row["PnL"]) if row["PnL"] is not None else 0,
+                    pnl           = float(row["PnL"])           if row["PnL"] is not None           else 0,
                     etf_name      = row["ETF_Name"],
                     etf_category  = row["ETF_Category"],
                 )
@@ -85,10 +93,10 @@ def run(stocks_only=False, mf_only=False, save_report=True):
                     pnl_csv           = float(row["PnL"])           if row["PnL"] is not None           else None,
                 )
                 stock_results.append(res)
-                color = (Fore.GREEN  if res["action"] == "ADD MORE"
-                         else Fore.RED    if res["action"] == "EXIT"
+                color = (Fore.GREEN if res.action == "ADD MORE"
+                         else Fore.RED   if res.action == "EXIT"
                          else Fore.CYAN)
-                print(f"{color}{res['action']}{Style.RESET_ALL}  score={res.get('total_score','N/A')}")
+                print(f"{color}{res.action}{Style.RESET_ALL}  score={res.total_score or 'N/A'}")
         else:
             print(f"{Fore.YELLOW}No stock holdings loaded.{Style.RESET_ALL}")
 
@@ -98,6 +106,7 @@ def run(stocks_only=False, mf_only=False, save_report=True):
             mf_holdings = load_mf_holdings(MF_HOLDINGS_FILE)
         except FileNotFoundError as e:
             print(f"{Fore.YELLOW}No MF file found ({e}). Skipping MF analysis.{Style.RESET_ALL}")
+            logger.warning("MF holdings file not found: %s", e)
             mf_holdings = None
 
         if mf_holdings is not None and not mf_holdings.empty:
@@ -115,23 +124,23 @@ def run(stocks_only=False, mf_only=False, save_report=True):
                     total_units       = float(row["Total_Units"]),
                     avg_purchase_nav  = float(row["Avg_Purchase_NAV"]),
                     expense_ratio     = float(row.get("Expense_Ratio", 0) or 0),
-                    current_nav_csv   = float(row["Current_NAV"])    if "Current_NAV"    in row and pd.notna(row.get("Current_NAV"))    else None,
-                    current_value_csv = float(row["Current_Value"])  if "Current_Value"  in row and pd.notna(row.get("Current_Value"))  else None,
-                    pnl_csv           = float(row["PnL"])            if "PnL"            in row and pd.notna(row.get("PnL"))            else None,
+                    current_nav_csv   = float(row["Current_NAV"])   if "Current_NAV"   in row and pd.notna(row.get("Current_NAV"))   else None,
+                    current_value_csv = float(row["Current_Value"]) if "Current_Value" in row and pd.notna(row.get("Current_Value")) else None,
+                    pnl_csv           = float(row["PnL"])           if "PnL"           in row and pd.notna(row.get("PnL"))           else None,
                     category_hint     = row.get("Category", None),
                 )
                 mf_results.append(res)
-                color = (Fore.GREEN  if res["action"] == "ADD MORE"
-                         else Fore.RED    if res["action"] == "EXIT"
+                color = (Fore.GREEN if res.action == "ADD MORE"
+                         else Fore.RED   if res.action == "EXIT"
                          else Fore.CYAN)
-                print(f"{color}{res['action']}{Style.RESET_ALL}")
+                print(f"{color}{res.action}{Style.RESET_ALL}")
 
     # ── Portfolio aggregation ─────────────────────────────────────────────────
     all_equity = stock_results + etf_results
-    pa       = PortfolioAnalyzer(all_equity, mf_results)
-    summary  = pa.summary()
-    proj     = pa.projection()
-    warnings = pa.allocation_warnings()
+    pa         = PortfolioAnalyzer(all_equity, mf_results)
+    summary    = pa.summary()
+    proj       = pa.projection()
+    warnings   = pa.allocation_warnings()
 
     # ── Reports ───────────────────────────────────────────────────────────────
     generate_full_report(
