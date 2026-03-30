@@ -245,6 +245,37 @@ td { padding: 10px 13px; vertical-align: middle; }
 .align-yes { background: rgba(86,211,100,0.15); color: #56d364; }
 .align-no  { background: rgba(248,81,73,0.15);  color: #f85149; }
 
+/* ── Key levels & options selling panel ── */
+.levels-panel {
+  margin: 14px 0; padding: 14px 16px;
+  background: #0d1117; border: 1px solid #30363d;
+  border-radius: 10px;
+}
+.levels-title {
+  font-size: 11px; font-weight: 700; color: #8b949e;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
+}
+.swing-zones {
+  display: flex; gap: 16px; flex-wrap: wrap;
+  margin: 10px 0; font-size: 11px;
+}
+.sz-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sz-label { font-weight: 600; min-width: 170px; }
+.sz-val   { color: #e6edf3; }
+.opt-rec {
+  margin-top: 12px; padding: 10px 14px;
+  border: 1px solid #30363d; border-radius: 8px;
+  font-size: 11px; line-height: 1.6;
+}
+.opt-rec-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 6px;
+}
+.opt-strategy  { font-size: 13px; font-weight: 700; }
+.opt-confidence{ font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+.opt-levels    { margin-bottom: 4px; font-size: 12px; }
+.opt-logic     { color: #8b949e; font-size: 10px; }
+
 /* ── Top summary bar ── */
 .top-bar {
   display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 22px;
@@ -1230,6 +1261,122 @@ def _month_pred_block(c: dict) -> str:
     </div>"""
 
 
+# ── Key levels + options block ────────────────────────────────────────────────
+
+def _levels_block(c: dict) -> str:
+    """Render weekly/monthly pivot levels and options selling recommendation."""
+    lvl = c.get("levels")
+    if not lvl:
+        return ""
+
+    w   = lvl.get("weekly")  or {}
+    m   = lvl.get("monthly") or {}
+    sw  = lvl.get("swings")  or {}
+    opt = lvl.get("options_rec") or {}
+
+    def _p(val):
+        return f"₹{val:,.2f}" if val else "—"
+
+    # Weekly pivot row
+    w_rows = ""
+    if w:
+        w_rows = f"""
+        <tr>
+          <td style="color:#58a6ff;font-weight:700">Weekly ({w.get('label','')})</td>
+          <td style="color:#f85149">{_p(w.get('s3'))} / {_p(w.get('s2'))} / {_p(w.get('s1'))}</td>
+          <td style="color:#8b949e">{_p(w.get('bc'))} – {_p(w.get('pp'))} – {_p(w.get('tc'))}</td>
+          <td style="color:#56d364">{_p(w.get('r1'))} / {_p(w.get('r2'))} / {_p(w.get('r3'))}</td>
+          <td style="color:#d29922">{w.get('cpr_width',0):.2f}%</td>
+        </tr>"""
+
+    # Monthly pivot row
+    m_rows = ""
+    if m:
+        m_rows = f"""
+        <tr>
+          <td style="color:#d29922;font-weight:700">Monthly ({m.get('label','')})</td>
+          <td style="color:#f85149">{_p(m.get('s3'))} / {_p(m.get('s2'))} / {_p(m.get('s1'))}</td>
+          <td style="color:#8b949e">{_p(m.get('bc'))} – {_p(m.get('pp'))} – {_p(m.get('tc'))}</td>
+          <td style="color:#56d364">{_p(m.get('r1'))} / {_p(m.get('r2'))} / {_p(m.get('r3'))}</td>
+          <td style="color:#d29922">{m.get('cpr_width',0):.2f}%</td>
+        </tr>"""
+
+    # Swing zones
+    res_zones = " | ".join(
+        f"₹{z['level']:,.2f} ({z['touches']}T)" for z in sw.get("resistance", [])
+    ) or "—"
+    sup_zones = " | ".join(
+        f"₹{z['level']:,.2f} ({z['touches']}T)" for z in sw.get("support", [])
+    ) or "—"
+
+    # Options recommendation
+    strategy   = opt.get("strategy", "—")
+    confidence = opt.get("confidence", "—")
+    logic      = opt.get("logic", "")
+    opt_color  = opt.get("color", "#8b949e")
+    conf_color = {"HIGH": "#56d364", "MEDIUM": "#d29922", "LOW": "#f85149"}.get(confidence, "#8b949e")
+
+    if strategy == "Sell PUT":
+        opt_detail = (
+            f"<span style='color:#56d364'>Sell PUT ≤ ₹{opt.get('monthly_put_sell',0):,.2f}</span>"
+            f" &nbsp;|&nbsp; SL if breaks ₹{opt.get('monthly_s2',0):,.2f}"
+            f"<br><small style='color:#8b949e'>Weekly: sell PUT ≤ ₹{opt.get('weekly_put_sell',0):,.2f}</small>"
+        )
+    elif strategy == "Sell CALL":
+        opt_detail = (
+            f"<span style='color:#f85149'>Sell CALL ≥ ₹{opt.get('monthly_call_sell',0):,.2f}</span>"
+            f" &nbsp;|&nbsp; SL if breaks ₹{opt.get('monthly_r2',0):,.2f}"
+            f"<br><small style='color:#8b949e'>Weekly: sell CALL ≥ ₹{opt.get('weekly_call_sell',0):,.2f}</small>"
+        )
+    else:
+        opt_detail = (
+            f"<span style='color:#f85149'>Sell CALL ≥ ₹{opt.get('monthly_r2',0):,.2f}</span>"
+            f" &nbsp;+&nbsp; "
+            f"<span style='color:#56d364'>Sell PUT ≤ ₹{opt.get('monthly_s2',0):,.2f}</span>"
+        )
+
+    return f"""
+    <div class="levels-panel">
+      <div class="levels-title">📐 Key Levels &amp; Options Selling Zones</div>
+
+      <!-- Pivot table -->
+      <div class="bt-scroll">
+        <table class="mini-table">
+          <thead><tr>
+            <th>Timeframe</th>
+            <th style="color:#f85149">Support (S3/S2/S1)</th>
+            <th>CPR (BC – PP – TC)</th>
+            <th style="color:#56d364">Resistance (R1/R2/R3)</th>
+            <th>CPR Width</th>
+          </tr></thead>
+          <tbody>{w_rows}{m_rows}</tbody>
+        </table>
+      </div>
+
+      <!-- Swing zones -->
+      <div class="swing-zones">
+        <div class="sz-row">
+          <span class="sz-label" style="color:#f85149">▼ Swing Support zones</span>
+          <span class="sz-val">{sup_zones}</span>
+        </div>
+        <div class="sz-row">
+          <span class="sz-label" style="color:#56d364">▲ Swing Resistance zones</span>
+          <span class="sz-val">{res_zones}</span>
+        </div>
+      </div>
+
+      <!-- Options recommendation -->
+      <div class="opt-rec" style="border-color:{opt_color}30;background:{opt_color}0d">
+        <div class="opt-rec-header">
+          <span class="opt-strategy" style="color:{opt_color}">⚡ {strategy}</span>
+          <span class="opt-confidence" style="color:{conf_color}">Confidence: {confidence}</span>
+        </div>
+        <div class="opt-levels">{opt_detail}</div>
+        <div class="opt-logic">{logic}</div>
+      </div>
+    </div>"""
+
+
 # ── Card builder ──────────────────────────────────────────────────────────────
 
 def _build_card(c: dict, idx: int, tracked: bool = False) -> str:
@@ -1317,6 +1464,9 @@ def _build_card(c: dict, idx: int, tracked: bool = False) -> str:
 
     <!-- Month predictions -->
     {_month_pred_block(c)}
+
+    <!-- Key levels & options selling -->
+    {_levels_block(c)}
 
     <!-- Toggle for details -->
     <button class="detail-toggle" id="btn_{detail_id}" onclick="toggleDetail('{detail_id}')">

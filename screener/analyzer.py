@@ -29,6 +29,7 @@ from screener.predictions import (
     current_month_prediction,
     next_month_prediction,
 )
+from screener.levels import calc_key_levels
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,9 @@ class StockScreener:
             cur_month  = current_month_prediction(close, daily_std, norm_score)
             next_month = next_month_prediction(close, direction, norm_score, monthly_vol)
 
+            # ── Key S/R levels + options selling recommendation ────────────
+            key_levels = calc_key_levels(hist, direction, probability, atr_pct)
+
             meta = get_meta(symbol)
 
             return {
@@ -205,6 +209,7 @@ class StockScreener:
                 "backtest":        bt,
                 "cur_month":       cur_month,
                 "next_month":      next_month,
+                "levels":          key_levels,
             }
         except Exception as exc:
             logger.debug("Analysis failed for %s: %s", symbol, exc)
