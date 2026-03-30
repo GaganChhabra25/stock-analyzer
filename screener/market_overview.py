@@ -41,6 +41,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from screener.levels import calc_key_levels
+
 try:
     import requests as _req
     _REQUESTS_OK = True
@@ -935,6 +937,15 @@ def _analyze_instrument(
         if k in nse_opts:
             signals_display[k] = nse_opts[k]
 
+    # ── Key S/R levels + options recommendation ────────────────────────────────
+    m_direction  = monthly.get("direction", "UP")
+    m_prob       = monthly.get("probability", 65.0)
+    atr_pct_val  = round(w_atr / cmp * 100, 2) if cmp > 0 else 1.5
+    try:
+        key_levels = calc_key_levels(df, m_direction, m_prob, atr_pct_val)
+    except Exception:
+        key_levels = {}
+
     return {
         "name":            name,
         "cmp":             cmp,
@@ -943,6 +954,7 @@ def _analyze_instrument(
         "weekly_schedule": schedule,
         "monthly":         monthly,
         "signals":         signals_display,
+        "levels":          key_levels,
         "error":           False,
     }
 

@@ -1852,6 +1852,15 @@ def _market_overview_html(data: dict) -> str:
 
         signals_html = f'<div class="mkt-signals">{pills}</div>' if pills else ""
 
+        # ── Pivot levels for this instrument ──────────────────────────────────
+        inst_levels_html = _levels_block({
+            "levels":    inst.get("levels", {}),
+            "cmp":       inst.get("cmp", 0),
+            "direction": inst.get("monthly", {}).get("direction", "UP"),
+            "probability": inst.get("monthly", {}).get("probability", 65),
+            "monthly_vol": 0,
+        })
+
         return f"""<div class="mkt-card">
   <div class="mkt-card-head">
     <div>
@@ -1863,6 +1872,7 @@ def _market_overview_html(data: dict) -> str:
   {monthly_html}
   {table_html}
   {signals_html}
+  {inst_levels_html}
 </div>"""
 
     # ── Meta-signals banner (shared signals for all instruments) ──────────────
