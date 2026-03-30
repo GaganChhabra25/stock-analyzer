@@ -30,3 +30,7 @@ env/
 
 # Logs
 logs/*.log
+
+# Deployment scripts with embedded credentials
+deploy/gcp_remote_setup.ps1
+deploy/gcp_remote_setup.sh
