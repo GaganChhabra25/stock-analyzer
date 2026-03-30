@@ -176,6 +176,62 @@ def logout():
     return redirect(url_for("login"))
 
 
+# ── Kite Connect OAuth routes ──────────────────────────────────────────────────
+
+@app.route("/kite/login")
+@login_required
+def kite_login():
+    """Redirect to Zerodha login page to authorize Kite Connect."""
+    from options.kite_auth import get_login_url
+    return redirect(get_login_url())
+
+
+@app.route("/kite/callback")
+def kite_callback():
+    """
+    Zerodha redirects here after login with ?request_token=XXX.
+    Exchange it for an access token and store in DB.
+    """
+    request_token = request.args.get("request_token")
+    status        = request.args.get("status")
+
+    if status != "success" or not request_token:
+        return "Kite authorization failed or was cancelled.", 400
+
+    try:
+        from options.kite_auth import generate_access_token
+        generate_access_token(request_token)
+        return redirect(url_for("kite_status"))
+    except Exception as exc:
+        return f"Failed to generate access token: {exc}", 500
+
+
+@app.route("/kite/status")
+@login_required
+def kite_status():
+    """Show Kite Connect authorization status."""
+    from options.kite_auth import get_kite, get_login_url
+    kite = get_kite()
+    if kite:
+        try:
+            profile = kite.profile()
+            name    = profile.get("user_name", "Unknown")
+            return (
+                f"<h2>Kite Connected</h2>"
+                f"<p>Authorized as: <strong>{name}</strong></p>"
+                f"<p>Options data collection is active today.</p>"
+                f"<p><a href='{url_for('index')}'>Back to dashboard</a></p>"
+            )
+        except Exception:
+            pass
+    login_url = get_login_url()
+    return (
+        f"<h2>Kite Not Authorized</h2>"
+        f"<p>Click below to authorize Kite Connect for today:</p>"
+        f"<p><a href='{login_url}'>Authorize Kite Connect</a></p>"
+    )
+
+
 _SCREENER_SYNC_SCRIPT = """
 <script>
 /* Cross-device active-trades sync — injected by Flask */

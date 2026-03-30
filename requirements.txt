@@ -16,3 +16,6 @@ gunicorn>=21.2.0
 
 # Database
 psycopg2-binary>=2.9.9
+
+# Options data collection
+kiteconnect>=5.0.0
