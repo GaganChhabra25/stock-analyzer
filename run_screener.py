@@ -31,10 +31,11 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from screener.analyzer        import StockScreener
-from screener.report          import generate_screener_report
-from screener.market_overview import fetch_market_overview
-from screener.db              import save_market_overview, is_available as db_available
+from screener.analyzer           import StockScreener
+from screener.report             import generate_screener_report
+from screener.market_overview    import fetch_market_overview
+from screener.db                 import save_market_overview, get_accuracy_summary, is_available as db_available
+from screener.telegram_notifier  import send_predictions, send_error, is_configured as tg_configured
 
 
 REPORT_FILE         = "reports/screener_report.html"
@@ -205,12 +206,26 @@ def main():
         mkt_overview = {}
 
     # ── Persist predictions + outcomes to PostgreSQL ───────────────────────────
+    accuracy_rows: list = []
     if db_available() and mkt_overview:
         try:
             n_saved = save_market_overview(mkt_overview)
             print(f"  DB: saved {n_saved} prediction(s) to PostgreSQL.")
+            accuracy_rows = get_accuracy_summary()
         except Exception as e:
             print(f"  DB: save failed — {e}")
+
+    # ── Send Telegram alert ────────────────────────────────────────────────────
+    if tg_configured() and mkt_overview:
+        try:
+            ok = send_predictions(mkt_overview, accuracy_rows)
+            print(f"  Telegram: alert {'sent ✓' if ok else 'failed ✗'}")
+        except Exception as e:
+            print(f"  Telegram: send failed — {e}")
+            try:
+                send_error("run_screener.py", str(e))
+            except Exception:
+                pass
 
     # ── Generate HTML report ───────────────────────────────────────────────────
     print(f"\n  Generating HTML report…")

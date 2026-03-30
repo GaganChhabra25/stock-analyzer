@@ -142,12 +142,26 @@ if [ -f "$APP_DIR/.env" ]; then
     fi
 fi
 
+# Back up existing .env so we can restore DB/Telegram vars after overwrite
+[ -f "$APP_DIR/.env" ] && cp "$APP_DIR/.env" "$APP_DIR/.env.bak" || true
+
 cat > "$APP_DIR/.env" <<EOF
 FLASK_SECRET_KEY=$FLASK_SECRET
 GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 ALLOWED_EMAILS=$ALLOWED_EMAILS
 EOF
+
+# Preserve DATABASE_URL and Telegram vars across redeploys
+for KEY in DATABASE_URL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
+    EXISTING_VAL=$(grep -E "^${KEY}=" "$APP_DIR/.env.bak" 2>/dev/null | cut -d= -f2- || true)
+    if [ -n "$EXISTING_VAL" ]; then
+        echo "${KEY}=${EXISTING_VAL}" >> "$APP_DIR/.env"
+        info "Preserved $KEY from previous .env"
+    fi
+done
+rm -f "$APP_DIR/.env.bak"
+
 chmod 600 "$APP_DIR/.env"
 success ".env written."
 
