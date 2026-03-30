@@ -33,6 +33,9 @@ app.permanent_session_lifetime = timedelta(days=7)
 # ── Allowed emails: union of env var + config.py ──────────────────────────────
 
 from config import ALLOWED_EMAILS as _cfg_emails  # type: ignore
+from screener.db import (get_accuracy_summary, get_signal_importance,
+                         get_recent_predictions, is_available as db_available,
+                         _get_conn)
 ALLOWED_EMAILS = {e.lower() for e in _cfg_emails}
 _env_emails = os.environ.get("ALLOWED_EMAILS", "")
 if _env_emails:
@@ -298,6 +301,101 @@ def save_ui_trades():
     with open(_UI_TRADES_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     return jsonify({"ok": True})
+
+
+# ── Insights helpers ──────────────────────────────────────────────────────────
+
+def _get_insights() -> dict:
+    """Fetch all data needed for the insights page from PostgreSQL."""
+    empty = {
+        "available": False,
+        "summary": {},
+        "predictions": [],
+        "outcomes": [],
+        "accuracy": [],
+        "signals": [],
+    }
+    if not db_available():
+        return empty
+
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return empty
+            import psycopg2.extras
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            # Summary counts
+            cur.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM market_predictions)  AS total_predictions,
+                    (SELECT COUNT(*) FROM market_outcomes)      AS total_outcomes,
+                    (SELECT COUNT(DISTINCT instrument)
+                     FROM market_predictions)                   AS instruments,
+                    (SELECT MIN(run_date) FROM market_predictions) AS tracking_since
+            """)
+            summary = dict(cur.fetchone() or {})
+
+            # Latest unique predictions per expiry (most recent run_date wins)
+            cur.execute("""
+                SELECT DISTINCT ON (instrument, expiry_date, prediction_type)
+                    instrument, prediction_type, expiry_date, direction,
+                    probability, cmp, hist_wr, pcr_value, tech_signal,
+                    vix_signal, global_signal, run_date
+                FROM market_predictions
+                WHERE expiry_date >= CURRENT_DATE
+                ORDER BY instrument, expiry_date, prediction_type, run_date DESC
+            """)
+            predictions = [dict(r) for r in cur.fetchall()]
+
+            # Outcomes joined with original prediction
+            cur.execute("""
+                SELECT
+                    o.instrument, o.expiry_date, o.prediction_type,
+                    o.actual_direction, o.actual_close, o.actual_pct,
+                    o.recorded_at::date AS recorded_date,
+                    p.direction AS predicted_direction,
+                    p.probability,
+                    p.cmp AS predicted_cmp,
+                    (p.direction = o.actual_direction) AS was_correct
+                FROM market_outcomes o
+                JOIN LATERAL (
+                    SELECT direction, probability, cmp
+                    FROM market_predictions p2
+                    WHERE p2.instrument     = o.instrument
+                      AND p2.expiry_date    = o.expiry_date
+                      AND p2.prediction_type = o.prediction_type
+                    ORDER BY run_date DESC LIMIT 1
+                ) p ON true
+                ORDER BY o.expiry_date DESC
+                LIMIT 30
+            """)
+            outcomes = [dict(r) for r in cur.fetchall()]
+
+            cur.close()
+
+        accuracy = get_accuracy_summary()
+        signals  = get_signal_importance()
+
+        return {
+            "available":   True,
+            "summary":     summary,
+            "predictions": predictions,
+            "outcomes":    outcomes,
+            "accuracy":    accuracy,
+            "signals":     signals,
+        }
+    except Exception as exc:
+        return {**empty, "available": True, "error": str(exc)}
+
+
+# ── Insights route ─────────────────────────────────────────────────────────────
+
+@app.route("/insights")
+@login_required
+def insights():
+    data = _get_insights()
+    return render_template("insights.html", user=session["user"], data=data)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DB Insights — Stock Analyzer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+
+/* Header */
+.header { background: linear-gradient(135deg, #1a365d 0%, #2d6a4f 100%); padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-logo { font-size: 24px; }
+.header-title { font-size: 18px; font-weight: 700; color: #fff; }
+.header-sub { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.nav-btn { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.85); padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; }
+.nav-btn:hover { background: rgba(255,255,255,0.2); }
+.nav-btn.active { background: rgba(31,111,235,0.3); border-color: rgba(88,166,255,0.5); color: #58a6ff; }
+
+/* Layout */
+.main { padding: 36px 40px; max-width: 1100px; margin: 0 auto; }
+.page-title { font-size: 22px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
+.page-sub { font-size: 13px; color: #8b949e; margin-bottom: 32px; }
+
+/* Summary cards */
+.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 36px; }
+@media (max-width: 720px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
+.stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; text-align: center; }
+.stat-value { font-size: 32px; font-weight: 700; color: #f0f6fc; line-height: 1; margin-bottom: 6px; }
+.stat-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* Sections */
+.section { margin-bottom: 40px; }
+.section-title { font-size: 15px; font-weight: 700; color: #f0f6fc; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.section-title .badge { font-size: 10px; background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 8px; border-radius: 99px; font-weight: 500; }
+
+/* Tables */
+.tbl-wrap { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead { background: #21262d; }
+th { padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+td { padding: 11px 16px; border-top: 1px solid #21262d; white-space: nowrap; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+
+/* Direction badges */
+.dir { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.dir-up   { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.dir-down { background: rgba(248,81,73,0.15);  color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+
+/* Correct / wrong */
+.badge-ok  { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3);  padding: 2px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.badge-err { background: rgba(248,81,73,0.15);  color: #f85149; border: 1px solid rgba(248,81,73,0.3);  padding: 2px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+
+/* Prob bar */
+.prob-wrap { display: flex; align-items: center; gap: 8px; }
+.prob-bar { flex: 1; min-width: 80px; height: 5px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.prob-fill { height: 100%; border-radius: 3px; }
+.prob-fill-down { background: #f85149; }
+.prob-fill-up   { background: #3fb950; }
+.prob-num { font-size: 12px; font-weight: 700; color: #f0f6fc; min-width: 36px; }
+
+/* Accuracy bar */
+.acc-wrap { display: flex; align-items: center; gap: 8px; }
+.acc-bar { flex: 1; min-width: 80px; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.acc-fill { height: 100%; border-radius: 3px; }
+.acc-good { background: #3fb950; }
+.acc-ok   { background: #e3b341; }
+.acc-weak { background: #f85149; }
+.acc-num  { font-size: 12px; font-weight: 700; min-width: 40px; }
+.acc-good-txt { color: #3fb950; }
+.acc-ok-txt   { color: #e3b341; }
+.acc-weak-txt { color: #f85149; }
+
+/* Corr cell */
+.corr-pos { color: #3fb950; font-weight: 700; }
+.corr-neg { color: #f85149; font-weight: 700; }
+.corr-neu { color: #8b949e; }
+
+/* Empty / error state */
+.empty { text-align: center; padding: 60px 20px; color: #484f58; }
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+.empty-msg { font-size: 14px; }
+.empty-sub { font-size: 12px; margin-top: 6px; color: #30363d; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo">📊</div>
+    <div>
+      <div class="header-title">Stock Analyzer</div>
+      <div class="header-sub">Prediction Intelligence</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <a href="/" class="nav-btn">Dashboard</a>
+    <a href="/insights" class="nav-btn active">DB Insights</a>
+    <a href="/logout" class="nav-btn">Sign Out</a>
+  </div>
+</div>
+
+<div class="main">
+
+  <div class="page-title">DB Insights</div>
+  <div class="page-sub">Prediction logger — accuracy builds over time as expiries resolve</div>
+
+  {% if not data.available %}
+  <div class="empty">
+    <div class="empty-icon">🔌</div>
+    <div class="empty-msg">PostgreSQL not connected</div>
+    <div class="empty-sub">Set DATABASE_URL in .env and restart the app</div>
+  </div>
+  {% elif data.get('error') %}
+  <div class="empty">
+    <div class="empty-icon">⚠️</div>
+    <div class="empty-msg">DB error: {{ data.error }}</div>
+  </div>
+  {% else %}
+
+  <!-- Summary -->
+  <div class="summary-grid">
+    <div class="stat-card">
+      <div class="stat-value">{{ data.summary.get('total_predictions', 0) }}</div>
+      <div class="stat-label">Total Predictions</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ data.summary.get('total_outcomes', 0) }}</div>
+      <div class="stat-label">Outcomes Resolved</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">{{ data.summary.get('instruments', 0) }}</div>
+      <div class="stat-label">Instruments Tracked</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="font-size:16px; padding-top:8px;">
+        {{ data.summary.get('tracking_since', '—') }}
+      </div>
+      <div class="stat-label">Tracking Since</div>
+    </div>
+  </div>
+
+  <!-- Active Predictions -->
+  <div class="section">
+    <div class="section-title">
+      Active Predictions
+      <span class="badge">{{ data.predictions | length }} upcoming expiries</span>
+    </div>
+    {% if data.predictions %}
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Instrument</th>
+            <th>Type</th>
+            <th>Expiry</th>
+            <th>Direction</th>
+            <th>Probability</th>
+            <th>CMP</th>
+            <th>PCR</th>
+            <th>Tech</th>
+            <th>VIX</th>
+            <th>Hist WR</th>
+            <th>Run Date</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in data.predictions %}
+          <tr>
+            <td style="font-weight:700; color:#f0f6fc;">{{ p.instrument }}</td>
+            <td style="color:#8b949e; font-size:11px;">{{ p.prediction_type }}</td>
+            <td>{{ p.expiry_date }}</td>
+            <td>
+              {% if p.direction == 'UP' %}
+                <span class="dir dir-up">▲ UP</span>
+              {% else %}
+                <span class="dir dir-down">▼ DOWN</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="prob-wrap">
+                <div class="prob-bar">
+                  <div class="prob-fill {% if p.direction == 'DOWN' %}prob-fill-down{% else %}prob-fill-up{% endif %}"
+                       style="width:{{ p.probability }}%"></div>
+                </div>
+                <span class="prob-num">{{ p.probability }}%</span>
+              </div>
+            </td>
+            <td>{{ "₹{:,.0f}".format(p.cmp) if p.cmp else '—' }}</td>
+            <td>{{ "%.2f"|format(p.pcr_value) if p.pcr_value else '—' }}</td>
+            <td class="{% if p.tech_signal and p.tech_signal > 0.05 %}corr-pos{% elif p.tech_signal and p.tech_signal < -0.05 %}corr-neg{% else %}corr-neu{% endif %}">
+              {{ "%.2f"|format(p.tech_signal) if p.tech_signal is not none else '—' }}
+            </td>
+            <td class="{% if p.vix_signal and p.vix_signal > 0.05 %}corr-pos{% elif p.vix_signal and p.vix_signal < -0.05 %}corr-neg{% else %}corr-neu{% endif %}">
+              {{ "%.2f"|format(p.vix_signal) if p.vix_signal is not none else '—' }}
+            </td>
+            <td>{{ "%.0f%%"|format(p.hist_wr) if p.hist_wr else '—' }}</td>
+            <td style="color:#8b949e; font-size:11px;">{{ p.run_date }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="empty-icon">📭</div>
+      <div class="empty-msg">No active predictions yet</div>
+      <div class="empty-sub">Run the screener to log predictions</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Outcomes -->
+  <div class="section">
+    <div class="section-title">
+      Resolved Outcomes
+      <span class="badge">{{ data.outcomes | length }} results</span>
+    </div>
+    {% if data.outcomes %}
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Instrument</th>
+            <th>Type</th>
+            <th>Expiry</th>
+            <th>Predicted</th>
+            <th>Probability</th>
+            <th>Actual</th>
+            <th>Move</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in data.outcomes %}
+          <tr>
+            <td style="font-weight:700; color:#f0f6fc;">{{ o.instrument }}</td>
+            <td style="color:#8b949e; font-size:11px;">{{ o.prediction_type }}</td>
+            <td>{{ o.expiry_date }}</td>
+            <td>
+              {% if o.predicted_direction == 'UP' %}
+                <span class="dir dir-up">▲ UP</span>
+              {% else %}
+                <span class="dir dir-down">▼ DOWN</span>
+              {% endif %}
+            </td>
+            <td style="font-weight:600;">{{ o.probability }}%</td>
+            <td>
+              {% if o.actual_direction == 'UP' %}
+                <span class="dir dir-up">▲ UP</span>
+              {% else %}
+                <span class="dir dir-down">▼ DOWN</span>
+              {% endif %}
+            </td>
+            <td class="{% if o.actual_pct and o.actual_pct > 0 %}corr-pos{% elif o.actual_pct and o.actual_pct < 0 %}corr-neg{% else %}corr-neu{% endif %}">
+              {% if o.actual_pct is not none %}
+                {{ "%+.2f%%"|format(o.actual_pct) }}
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if o.was_correct %}
+                <span class="badge-ok">✓ Correct</span>
+              {% else %}
+                <span class="badge-err">✗ Wrong</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="empty-icon">⏳</div>
+      <div class="empty-msg">No outcomes yet</div>
+      <div class="empty-sub">Outcomes are recorded automatically after each expiry passes</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Model Accuracy -->
+  <div class="section">
+    <div class="section-title">
+      Model Accuracy
+      <span class="badge">updates after each expiry</span>
+    </div>
+    {% if data.accuracy %}
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Instrument</th>
+            <th>Type</th>
+            <th>Accuracy</th>
+            <th>Correct / Total</th>
+            <th>Avg Predicted Prob</th>
+            <th>First Run</th>
+            <th>Latest Run</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in data.accuracy %}
+          {% set acc = r.accuracy_pct | float %}
+          <tr>
+            <td style="font-weight:700; color:#f0f6fc;">{{ r.instrument }}</td>
+            <td style="color:#8b949e; font-size:11px;">{{ r.prediction_type }}</td>
+            <td>
+              <div class="acc-wrap">
+                <div class="acc-bar">
+                  <div class="acc-fill {% if acc >= 62 %}acc-good{% elif acc >= 55 %}acc-ok{% else %}acc-weak{% endif %}"
+                       style="width:{{ acc }}%"></div>
+                </div>
+                <span class="acc-num {% if acc >= 62 %}acc-good-txt{% elif acc >= 55 %}acc-ok-txt{% else %}acc-weak-txt{% endif %}">
+                  {{ acc }}%
+                </span>
+              </div>
+            </td>
+            <td>{{ r.correct }} / {{ r.total_predictions }}</td>
+            <td>{{ r.avg_predicted_prob }}%</td>
+            <td style="color:#8b949e; font-size:11px;">{{ r.first_run }}</td>
+            <td style="color:#8b949e; font-size:11px;">{{ r.latest_run }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="empty-icon">📈</div>
+      <div class="empty-msg">Accuracy stats appear after 5+ resolved predictions</div>
+      <div class="empty-sub">Keep the screener running — this populates over 2-3 weeks</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Signal Correlation -->
+  <div class="section">
+    <div class="section-title">
+      Signal Importance
+      <span class="badge">correlation with correct predictions</span>
+    </div>
+    {% if data.signals %}
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Instrument</th>
+            <th>Type</th>
+            <th>Samples</th>
+            <th>Tech</th>
+            <th>VIX</th>
+            <th>PCR</th>
+            <th>Global</th>
+            <th>FII</th>
+            <th>Hist WR</th>
+            <th>Seasonal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in data.signals %}
+          <tr>
+            <td style="font-weight:700; color:#f0f6fc;">{{ s.instrument }}</td>
+            <td style="color:#8b949e; font-size:11px;">{{ s.prediction_type }}</td>
+            <td>{{ s.samples }}</td>
+            {% for col in ['tech_corr','vix_corr','pcr_corr','global_corr','fii_corr','hist_wr_corr','seasonal_corr'] %}
+              {% set v = s.get(col) %}
+              <td class="{% if v and v|float > 0.1 %}corr-pos{% elif v and v|float < -0.1 %}corr-neg{% else %}corr-neu{% endif %}">
+                {{ "%.3f"|format(v|float) if v is not none else '—' }}
+              </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div style="font-size:11px; color:#484f58; margin-top:10px; padding: 0 4px;">
+      Positive = signal aligned with correct predictions &nbsp;|&nbsp;
+      Green ≥ 0.10 &nbsp;|&nbsp; Red ≤ -0.10 &nbsp;|&nbsp; Needs 5+ samples per instrument
+    </div>
+    {% else %}
+    <div class="empty">
+      <div class="empty-icon">🔬</div>
+      <div class="empty-msg">Signal analysis appears after 5+ resolved predictions per instrument</div>
+      <div class="empty-sub">This will tell you which signals (PCR, VIX, Tech) are actually working</div>
+    </div>
+    {% endif %}
+
+  {% endif %}
+  </div>
+
+</div>
+</body>
+</html>
