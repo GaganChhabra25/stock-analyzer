@@ -245,6 +245,50 @@ td { padding: 10px 13px; vertical-align: middle; }
 .align-yes { background: rgba(86,211,100,0.15); color: #56d364; }
 .align-no  { background: rgba(248,81,73,0.15);  color: #f85149; }
 
+/* ── Monthly expiry block ── */
+.mo-block {
+  margin: 12px 0; padding: 12px 14px;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
+}
+.mo-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.mo-label  { font-size: 10px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; }
+.mo-dir-prob { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mo-dir    { font-size: 15px; font-weight: 800; }
+.mo-prob   { font-size: 15px; font-weight: 800; }
+.mo-target { font-size: 11px; color: #8b949e; }
+.mo-hwr    { font-size: 10px; color: #8b949e; }
+.mo-prob-bar-track { height: 5px; background: #21262d; border-radius: 99px; margin-bottom: 12px; overflow: hidden; }
+
+/* ── Price range bar ── */
+.rbar-wrap   { margin-top: 4px; }
+.rbar-labels { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; margin-bottom: 4px; }
+.rbar-track  { display: flex; align-items: center; height: 8px; background: #21262d; border-radius: 99px; overflow: visible; position: relative; }
+.rbar-fill-bear { height: 100%; background: rgba(248,81,73,0.35); border-radius: 99px 0 0 99px; }
+.rbar-fill-bull { height: 100%; background: rgba(86,211,100,0.35); border-radius: 0 99px 99px 0; flex: 1; }
+.rbar-dot   { width: 12px; height: 12px; border-radius: 50%; background: #e6edf3; border: 2px solid #0d1117; flex-shrink: 0; z-index: 1; }
+.rbar-hint  { display: flex; justify-content: space-between; font-size: 9px; color: #8b949e; margin-top: 3px; }
+
+/* ── Weekly expiry pills (Nifty) ── */
+.wk-section { margin: 12px 0; }
+.wk-section-label { font-size: 10px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px; }
+.wk-pills-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.wk-pill {
+  flex: 1; min-width: 100px; max-width: 160px;
+  background: #161b22; border: 1px solid #30363d;
+  border-radius: 10px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.wk-pill.wk-current { border-color: #58a6ff; box-shadow: 0 0 0 1px #58a6ff30; }
+.wk-pill.wk-past    { opacity: 0.6; }
+.wk-pill-top   { display: flex; justify-content: space-between; align-items: center; }
+.wk-exp        { font-size: 10px; color: #8b949e; }
+.wk-monthly-badge { font-size: 8px; background: rgba(210,153,34,0.2); color: #d29922; padding: 1px 4px; border-radius: 3px; font-weight: 700; }
+.wk-pill-dir   { font-size: 13px; font-weight: 800; }
+.wk-pill-prob-bar { height: 4px; background: #21262d; border-radius: 99px; overflow: hidden; }
+.wk-pill-prob  { font-size: 12px; font-weight: 700; }
+.wk-pill-price { font-size: 11px; font-weight: 600; }
+.wk-pill-pct   { font-size: 10px; }
+
 /* ── Key levels & options selling panel ── */
 .levels-panel {
   margin: 14px 0; padding: 14px 16px;
@@ -1648,6 +1692,99 @@ def _market_overview_html(data: dict) -> str:
         if days <= 10: return "mkt-dte-warn"
         return "mkt-dte-ok"
 
+    def _range_bar(bear: float, bull: float, cmp: float, unit: str) -> str:
+        """Horizontal price range bar: bear ──●── bull with CMP dot."""
+        if not bear or not bull or bear >= bull:
+            return ""
+        span  = bull - bear
+        pos   = max(0, min(100, (cmp - bear) / span * 100))
+        return f"""<div class="rbar-wrap">
+  <div class="rbar-labels">
+    <span style="color:#f85149">{_p(bear, unit)}</span>
+    <span style="color:#8b949e;font-size:10px">CMP {_p(cmp, unit)}</span>
+    <span style="color:#56d364">{_p(bull, unit)}</span>
+  </div>
+  <div class="rbar-track">
+    <div class="rbar-fill-bear" style="width:{pos:.1f}%"></div>
+    <div class="rbar-dot"></div>
+    <div class="rbar-fill-bull" style="width:{100-pos:.1f}%"></div>
+  </div>
+  <div class="rbar-hint">
+    <span style="color:#f85149">▼ Bear target</span>
+    <span style="color:#56d364">▲ Bull target</span>
+  </div>
+</div>"""
+
+    def _sig_pills(inst: dict, unit: str) -> str:
+        """Compact signal pills row — PCR, VIX, Max Pain, ATM IV, Global, FII, Seasonal."""
+        sigs  = inst.get("signals", {})
+        cmp_v = inst.get("cmp", 0) or 0
+        pills = ""
+
+        def _pill(label, val, cls, display):
+            return (f'<div class="mkt-sig-pill {cls}">'
+                    f'<span class="sname">{label}</span>'
+                    f'<span class="sval">{display}</span></div>')
+
+        tech_val = sigs.get("tech")
+        if tech_val is not None:
+            td = "Bullish" if tech_val > 0.1 else ("Bearish" if tech_val < -0.1 else "Neutral")
+            tc = "bull" if tech_val > 0.1 else ("bear" if tech_val < -0.1 else "neut")
+            pills += _pill("Tech", tech_val, tc, f"{tech_val:+.2f} {td}")
+
+        pcr_val = sigs.get("pcr")
+        if pcr_val is not None:
+            pills += _pill("PCR", pcr_val,
+                           "bull" if pcr_val > 1.1 else ("bear" if pcr_val < 0.9 else "neut"),
+                           f"{pcr_val:.2f}")
+
+        mp_val = sigs.get("max_pain")
+        if mp_val is not None and cmp_v > 0:
+            diff  = (mp_val - cmp_v) / cmp_v * 100
+            pills += _pill("Max Pain", diff,
+                           "bull" if diff > 0.5 else ("bear" if diff < -0.5 else "neut"),
+                           f"{_p(mp_val, unit)} ({diff:+.1f}%)")
+
+        iv_val = sigs.get("atm_iv")
+        if iv_val is not None:
+            pills += _pill("ATM IV", 0, "neut", f"{iv_val:.1f}%")
+
+        sup_val = sigs.get("support")
+        res_val = sigs.get("resistance")
+        if sup_val:
+            pills += _pill("Put OI Wall", 0, "bull", _p(sup_val, unit))
+        if res_val:
+            pills += _pill("Call OI Wall", 0, "bear", _p(res_val, unit))
+
+        vix_val = sigs.get("vix")
+        if vix_val is not None:
+            vd = "Bullish" if vix_val > 0.1 else ("Bearish" if vix_val < -0.1 else "Neutral")
+            pills += _pill("VIX", vix_val,
+                           "bull" if vix_val > 0.1 else ("bear" if vix_val < -0.1 else "neut"),
+                           vd)
+
+        gl_val = sigs.get("global")
+        if gl_val is not None:
+            gd = "\u2191" if gl_val > 0.05 else ("\u2193" if gl_val < -0.05 else "\u2192")
+            pills += _pill("Global", gl_val,
+                           "bull" if gl_val > 0.05 else ("bear" if gl_val < -0.05 else "neut"),
+                           f"{gl_val:+.2f} {gd}")
+
+        fii_val = sigs.get("fii")
+        if fii_val is not None and fii_val != 0.0:
+            pills += _pill("FII", fii_val,
+                           "bull" if fii_val > 0 else "bear",
+                           f"{'Buying' if fii_val > 0 else 'Selling'} {abs(fii_val):.2f}")
+
+        seas_val = sigs.get("seasonal")
+        if seas_val is not None:
+            sd = "Peak" if seas_val > 0.2 else ("Off-season" if seas_val < -0.2 else "Shoulder")
+            pills += _pill("Seasonal", seas_val,
+                           "bull" if seas_val > 0.1 else ("bear" if seas_val < -0.1 else "neut"),
+                           sd)
+
+        return f'<div class="mkt-signals">{pills}</div>' if pills else ""
+
     def _card(inst: dict) -> str:
         if inst.get("error"):
             return f"""<div class="mkt-card" style="padding:20px;color:#8b949e">
@@ -1655,224 +1792,101 @@ def _market_overview_html(data: dict) -> str:
   <span style="font-size:11px">Data unavailable</span></div>"""
 
         unit     = inst.get("unit", "\u20b9")
+        cmp_v    = inst.get("cmp", 0) or 0
         schedule = inst.get("weekly_schedule", [])
         monthly  = inst.get("monthly", {})
+        name     = inst["name"]
+        is_nifty = "Nifty" in name
 
-        # ── Monthly summary strip ──────────────────────────────────────────────
         m_dir  = monthly.get("direction", "\u2014")
         m_prob = monthly.get("probability", 0)
-        m_exp  = monthly.get("expected_price")
         m_dte  = monthly.get("days_to_expiry", 0)
         m_date = monthly.get("expiry_date", "\u2014")
         m_col  = "#56d364" if m_dir == "UP" else "#f85149"
         m_arr  = "\u25b2" if m_dir == "UP" else "\u25bc"
-        m_bull = monthly.get("bull_target")
-        m_bear = monthly.get("bear_target")
+        m_bull = monthly.get("bull_target") or 0
+        m_bear = monthly.get("bear_target") or 0
         m_hwr  = monthly.get("hist_wr", 0)
+        m_exp  = monthly.get("expected_price") or 0
 
-        monthly_html = f"""<div class="mkt-monthly">
-  <div class="mkt-monthly-row">
-    <div>
-      <span class="mkt-sec-label">MONTHLY OUTLOOK</span>
-      <span class="mkt-expiry-info"> &nbsp;&middot;&nbsp; Expiry {m_date}
-        <span class="{_dte_cls(m_dte)}" style="font-weight:700"> ({m_dte}d)</span>
-      </span>
-    </div>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <span style="color:{m_col};font-weight:800;font-size:13px">{m_arr} {m_dir}</span>
-      <strong style="color:{m_col};font-size:13px">{m_prob:.0f}%</strong>
-      <span style="color:#8b949e;font-size:11px">Target:
-        <strong style="color:{m_col}">{_p(m_exp, unit)}</strong>
-      </span>
+        # ── Monthly expiry block (all instruments) ─────────────────────────────
+        monthly_block = f"""
+<div class="mo-block">
+  <div class="mo-header">
+    <div class="mo-label">MONTHLY EXPIRY &nbsp;<span class="{_dte_cls(m_dte)}">{m_date} &nbsp;·&nbsp; {m_dte}d left</span></div>
+    <div class="mo-dir-prob">
+      <span class="mo-dir" style="color:{m_col}">{m_arr} {m_dir}</span>
+      <span class="mo-prob" style="color:{m_col}">{m_prob:.0f}%</span>
+      <span class="mo-target" style="color:{m_col}">Target {_p(m_exp, unit)}</span>
+      <span class="mo-hwr">Hist WR {m_hwr:.0f}%</span>
     </div>
   </div>
-  <div class="mkt-range-row">
-    Bull: <strong style="color:#56d364">{_p(m_bull, unit)}</strong>
-    &nbsp;&nbsp;
-    Bear: <strong style="color:#f85149">{_p(m_bear, unit)}</strong>
-    &nbsp;&nbsp;
-    Hist win-rate: <strong>{m_hwr:.0f}%</strong>
+  <div class="mo-prob-bar-track">
+    <div style="width:{m_prob:.0f}%;height:100%;background:{m_col};border-radius:99px;transition:width 0.4s"></div>
   </div>
+  {_range_bar(m_bear, m_bull, cmp_v, unit)}
 </div>"""
 
-        # ── Weekly schedule table ──────────────────────────────────────────────
-        week_rows = ""
-        for w in schedule:
-            is_past    = w.get("is_past", False)
-            is_current = w.get("is_current", False)
-            is_monthly = w.get("is_monthly_expiry", False)
-            row_cls    = "mkt-past-row" if is_past else ("mkt-current-row" if is_current else "")
+        # ── Weekly expiry pills (Nifty only) ───────────────────────────────────
+        weekly_block = ""
+        if is_nifty and schedule:
+            pills_html = ""
+            for w in schedule:
+                is_past    = w.get("is_past", False)
+                is_current = w.get("is_current", False)
+                is_monthly = w.get("is_monthly_expiry", False)
 
-            monthly_badge = (' <span class="mkt-monthly-badge">Monthly</span>'
-                             if is_monthly else "")
-
-            if is_past:
-                a_dir  = w.get("actual_dir", "\u2014")
-                a_pct  = w.get("actual_pct", 0) or 0
-                a_cl   = w.get("actual_close")
-                a_col  = "#56d364" if a_dir == "UP" else ("#f85149" if a_dir == "DOWN" else "#8b949e")
-                a_arr  = "\u25b2" if a_dir == "UP" else ("\u25bc" if a_dir == "DOWN" else "\u2014")
-                sign   = "+" if a_pct >= 0 else ""
-                dir_td = f'<span style="color:{a_col};font-weight:700">{a_arr} {a_dir}</span>'
-                pb_td  = f'<span style="color:#8b949e;font-size:10px">{sign}{a_pct:.1f}%</span>'
-                tgt_td = f'<span style="color:{a_col}">{_p(a_cl, unit)}</span>'
-            else:
-                d_col  = "#56d364" if w["direction"] == "UP" else "#f85149"
-                d_arr  = "\u25b2" if w["direction"] == "UP" else "\u25bc"
-                prob   = w["probability"]
-                fw     = "800" if is_current else "700"
-                dir_td = f'<span style="color:{d_col};font-weight:{fw}">{d_arr} {w["direction"]}</span>'
-                pb_td  = (f'<strong style="color:{d_col}">{prob:.0f}%</strong>'
-                          f'<div class="mkt-prob-bar">'
-                          f'<div style="width:{prob}%;height:100%;background:{d_col};border-radius:99px"></div>'
-                          f'</div>')
-                tgt_td = f'<strong style="color:{d_col}">{_p(w["target"], unit)}</strong>'
-
-            wr_td = f'<span style="color:#8b949e;font-size:10px">{w["hist_wr"]:.0f}%</span>'
-
-            week_rows += f"""<tr class="{row_cls}">
-        <td>
-          <div class="mkt-week-label">{w['label']}{monthly_badge}</div>
-          <div class="mkt-date-range">{w['date_from']} \u2013 {w['date_to']}</div>
-        </td>
-        <td style="font-size:10px;color:#8b949e">{w['expiry_date']}</td>
-        <td>{dir_td}</td>
-        <td>{pb_td}</td>
-        <td>{tgt_td}</td>
-        <td>{wr_td}</td>
-      </tr>"""
-
-        table_html = ""
-        if week_rows:
-            table_html = f"""<table class="mkt-week-tbl">
-  <thead><tr>
-    <th>Week</th><th>Expiry</th><th>Direction</th>
-    <th>Probability</th><th>Expected Price</th><th>Hist WR</th>
-  </tr></thead>
-  <tbody>{week_rows}</tbody>
-</table>"""
-
-        # ── Signal pills ──────────────────────────────────────────────────────
-        sigs  = inst.get("signals", {})
-        pills = ""
-
-        def _sig_pill(label: str, value, fmt_fn=None, bull_thresh=0.0, bear_thresh=0.0,
-                      invert=False, unit_str=""):
-            if value is None:
-                return ""
-            display = fmt_fn(value) if fmt_fn else str(value)
-            if isinstance(value, float):
-                if (value >= bull_thresh and not invert) or (value <= bear_thresh and invert):
-                    cls = "bull"
-                elif (value <= bear_thresh and not invert) or (value >= bull_thresh and invert):
-                    cls = "bear"
+                if is_past:
+                    a_dir = w.get("actual_dir", "—")
+                    a_pct = w.get("actual_pct") or 0
+                    a_cl  = w.get("actual_close")
+                    a_col = "#56d364" if a_dir == "UP" else ("#f85149" if a_dir == "DOWN" else "#8b949e")
+                    sign  = "+" if a_pct >= 0 else ""
+                    pills_html += f"""<div class="wk-pill wk-past">
+  <div class="wk-pill-top">
+    <span class="wk-exp">{w['expiry_date']}</span>
+    {'<span class="wk-monthly-badge">M</span>' if is_monthly else ''}
+  </div>
+  <div class="wk-pill-dir" style="color:{a_col}">{'▲' if a_dir=='UP' else '▼'} {a_dir}</div>
+  <div class="wk-pill-price" style="color:{a_col}">{_p(a_cl, unit)}</div>
+  <div class="wk-pill-pct" style="color:{a_col}">{sign}{a_pct:.1f}%</div>
+</div>"""
                 else:
-                    cls = "neut"
-            else:
-                cls = "neut"
-            return (f'<div class="mkt-sig-pill {cls}">'
-                    f'<span class="sname">{label}</span>'
-                    f'<span class="sval">{display}{unit_str}</span></div>')
+                    d_col = "#56d364" if w["direction"] == "UP" else "#f85149"
+                    prob  = w["probability"]
+                    cur_ring = " wk-current" if is_current else ""
+                    pills_html += f"""<div class="wk-pill{cur_ring}">
+  <div class="wk-pill-top">
+    <span class="wk-exp">{w['expiry_date']}</span>
+    {'<span class="wk-monthly-badge">M</span>' if is_monthly else ''}
+  </div>
+  <div class="wk-pill-dir" style="color:{d_col}">{'▲' if w['direction']=='UP' else '▼'} {w['direction']}</div>
+  <div class="wk-pill-prob-bar">
+    <div style="width:{prob:.0f}%;height:100%;background:{d_col};border-radius:99px"></div>
+  </div>
+  <div class="wk-pill-prob" style="color:{d_col}">{prob:.0f}%</div>
+  <div class="wk-pill-price" style="color:{d_col}">{_p(w['target'], unit)}</div>
+</div>"""
 
-        # Tech signal
-        tech_val = sigs.get("tech")
-        if tech_val is not None:
-            tech_dir = "Bullish" if tech_val > 0.1 else ("Bearish" if tech_val < -0.1 else "Neutral")
-            pills += _sig_pill("Tech", float(tech_val),
-                                fmt_fn=lambda v: f"{v:+.2f} {tech_dir}",
-                                bull_thresh=0.1, bear_thresh=-0.1)
+            weekly_block = f"""
+<div class="wk-section">
+  <div class="wk-section-label">WEEKLY EXPIRIES</div>
+  <div class="wk-pills-row">{pills_html}</div>
+</div>"""
 
-        # VIX signal
-        vix_val = sigs.get("vix")
-        if vix_val is not None:
-            vix_dir = "Bullish" if vix_val > 0.1 else ("Bearish" if vix_val < -0.1 else "Neutral")
-            pills += _sig_pill("VIX signal", float(vix_val),
-                                fmt_fn=lambda v: f"{v:+.2f} {vix_dir}",
-                                bull_thresh=0.1, bear_thresh=-0.1)
-
-        # PCR value
-        pcr_val = sigs.get("pcr")
-        if pcr_val is not None:
-            pcr_cls = "bull" if pcr_val > 1.1 else ("bear" if pcr_val < 0.9 else "neut")
-            pills += (f'<div class="mkt-sig-pill {pcr_cls}">'
-                      f'<span class="sname">PCR</span>'
-                      f'<span class="sval">{pcr_val:.2f}</span></div>')
-
-        # Max Pain level
-        mp_val = sigs.get("max_pain")
-        cmp_v  = inst.get("cmp", 0) or 0
-        if mp_val is not None and cmp_v > 0:
-            diff_pct = (mp_val - cmp_v) / cmp_v * 100
-            mp_cls   = "bull" if diff_pct > 0.5 else ("bear" if diff_pct < -0.5 else "neut")
-            pills += (f'<div class="mkt-sig-pill {mp_cls}">'
-                      f'<span class="sname">Max Pain</span>'
-                      f'<span class="sval">{_p(mp_val, unit)} '
-                      f'({diff_pct:+.1f}%)</span></div>')
-
-        # ATM IV
-        iv_val = sigs.get("atm_iv")
-        if iv_val is not None:
-            pills += (f'<div class="mkt-sig-pill neut">'
-                      f'<span class="sname">ATM IV</span>'
-                      f'<span class="sval">{iv_val:.1f}%</span></div>')
-
-        # Support / Resistance from options OI
-        sup_val = sigs.get("support")
-        res_val = sigs.get("resistance")
-        if sup_val is not None:
-            pills += (f'<div class="mkt-sig-pill bull">'
-                      f'<span class="sname">Put OI Wall</span>'
-                      f'<span class="sval">{_p(sup_val, unit)}</span></div>')
-        if res_val is not None:
-            pills += (f'<div class="mkt-sig-pill bear">'
-                      f'<span class="sname">Call OI Wall</span>'
-                      f'<span class="sval">{_p(res_val, unit)}</span></div>')
-
-        # Global + FII
-        gl_val  = sigs.get("global")
-        fii_val = sigs.get("fii")
-        if gl_val is not None:
-            gl_dir = "↑" if gl_val > 0.05 else ("↓" if gl_val < -0.05 else "→")
-            pills += _sig_pill("Global", float(gl_val),
-                                fmt_fn=lambda v: f"{v:+.2f} {gl_dir}",
-                                bull_thresh=0.05, bear_thresh=-0.05)
-        if fii_val is not None and fii_val != 0.0:
-            fii_dir = "Buying" if fii_val > 0 else "Selling"
-            pills += (f'<div class="mkt-sig-pill {"bull" if fii_val > 0 else "bear"}">'
-                      f'<span class="sname">FII</span>'
-                      f'<span class="sval">{fii_dir} {abs(fii_val):.2f}</span></div>')
-
-        # Seasonal
-        seas_val = sigs.get("seasonal")
-        if seas_val is not None:
-            seas_dir = "Peak season" if seas_val > 0.2 else ("Off season" if seas_val < -0.2 else "Shoulder")
-            pills += (f'<div class="mkt-sig-pill {"bull" if seas_val > 0.1 else ("bear" if seas_val < -0.1 else "neut")}">'
-                      f'<span class="sname">Seasonal</span>'
-                      f'<span class="sval">{seas_dir}</span></div>')
-
-        signals_html = f'<div class="mkt-signals">{pills}</div>' if pills else ""
-
-        # ── Pivot levels for this instrument ──────────────────────────────────
-        inst_levels_html = _levels_block({
-            "levels":    inst.get("levels", {}),
-            "cmp":       inst.get("cmp", 0),
-            "direction": inst.get("monthly", {}).get("direction", "UP"),
-            "probability": inst.get("monthly", {}).get("probability", 65),
-            "monthly_vol": 0,
-        })
+        signals_html = _sig_pills(inst, unit)
 
         return f"""<div class="mkt-card">
   <div class="mkt-card-head">
     <div>
-      <div class="mkt-card-title">{inst['name']}</div>
+      <div class="mkt-card-title">{name}</div>
       <div class="mkt-card-note">{inst.get('note', '')}</div>
     </div>
-    <div class="mkt-cmp">{_p(inst.get('cmp'), unit)}</div>
+    <div class="mkt-cmp">{_p(cmp_v, unit)}</div>
   </div>
-  {monthly_html}
-  {table_html}
+  {monthly_block}
+  {weekly_block}
   {signals_html}
-  {inst_levels_html}
 </div>"""
 
     # ── Meta-signals banner (shared signals for all instruments) ──────────────
