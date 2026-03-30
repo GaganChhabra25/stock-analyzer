@@ -27,17 +27,20 @@ jobs:
           envs: GH_PAT
           script: |
             set -e
-            DEPLOY_DIR=$HOME/stock-analyzer
-            if [ ! -d $DEPLOY_DIR ]; then
-              git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git $DEPLOY_DIR
+            DEPLOY_DIR=/home/stockapp/stock-analyzer
+            VENV=$DEPLOY_DIR/venv
+            # Fix DNS if needed
+            grep -q "8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+            # Pull latest code
+            if [ ! -d $DEPLOY_DIR/.git ]; then
+              sudo -u stockapp git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git $DEPLOY_DIR
+            else
+              sudo -u stockapp git -C $DEPLOY_DIR pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
             fi
-            git -C $DEPLOY_DIR pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
-            if [ ! -f $DEPLOY_DIR/venv/bin/pip ]; then
-              sudo apt-get install -y python3-venv -q
-              python3 -m venv $DEPLOY_DIR/venv
-            fi
-            $DEPLOY_DIR/venv/bin/pip install -r $DEPLOY_DIR/requirements.txt -q
-            sudo systemctl restart stock-analyzer
+            # Install dependencies
+            sudo -u stockapp $VENV/bin/pip install -r $DEPLOY_DIR/requirements.txt -q
+            # Restart app
+            systemctl restart stock-analyzer
             echo "Deployed successfully at $(date)"
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
