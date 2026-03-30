@@ -30,6 +30,10 @@ app = Flask(__name__)
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
 app.permanent_session_lifetime = timedelta(days=7)
 
+# Trust X-Forwarded-Proto from Nginx so url_for() generates https:// URLs
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
 # ── Allowed emails: union of env var + config.py ──────────────────────────────
 
 from config import ALLOWED_EMAILS as _cfg_emails  # type: ignore
