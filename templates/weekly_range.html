@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weekly Range — Nifty</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+
+/* ── Header ── */
+.header { background: linear-gradient(135deg, #1a1a3e 0%, #2d1b69 100%); padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-logo { font-size: 24px; }
+.header-title { font-size: 18px; font-weight: 700; color: #fff; }
+.header-sub { font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.nav-btn { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.85); padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+.nav-btn:hover { background: rgba(255,255,255,0.2); }
+.nav-btn.active { background: rgba(139,93,255,0.3); border-color: rgba(189,143,255,0.5); color: #bd8fff; }
+
+/* ── Main ── */
+.main { padding: 32px 40px; max-width: 1100px; margin: 0 auto; }
+@media (max-width: 700px) { .main { padding: 20px 16px; } .header { padding: 14px 16px; } }
+
+/* ── Top bar ── */
+.top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
+.page-title { font-size: 22px; font-weight: 700; color: #f0f6fc; }
+.page-sub { font-size: 13px; color: #8b949e; margin-top: 3px; }
+.run-btn { background: linear-gradient(135deg, #7c3aed, #4f46e5); border: none; color: #fff; padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: opacity 0.2s; }
+.run-btn:hover { opacity: 0.85; }
+.run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.spin { display: inline-block; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Auto-refresh badge ── */
+.refresh-info { font-size: 11px; color: #8b949e; display: flex; align-items: center; gap: 6px; }
+.dot-live { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; display: inline-block; animation: pulse 2s ease infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ── Status strip ── */
+.status-strip { font-size: 12px; padding: 8px 14px; border-radius: 7px; margin-bottom: 22px; display: none; }
+.status-strip.error { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.25); color: #f85149; display: block; }
+.status-strip.loading { background: rgba(56,139,253,0.1); border: 1px solid rgba(56,139,253,0.25); color: #58a6ff; display: block; }
+
+/* ── Cards grid ── */
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+@media (max-width: 800px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 18px 20px; }
+.card-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
+.card-value { font-size: 24px; font-weight: 700; color: #f0f6fc; line-height: 1.1; }
+.card-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
+.green { color: #3fb950; } .red { color: #f85149; } .yellow { color: #e3b341; } .blue { color: #58a6ff; }
+
+/* ── Range visualiser ── */
+.range-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px 28px; margin-bottom: 20px; }
+.range-title { font-size: 13px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 20px; }
+
+.range-bar-wrap { position: relative; margin-bottom: 14px; }
+.bar-labels { display: flex; justify-content: space-between; font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+.bar-outer { height: 20px; background: #21262d; border-radius: 10px; position: relative; overflow: visible; }
+.bar-fill { height: 100%; border-radius: 10px; background: linear-gradient(90deg, #f85149 0%, #e3b341 40%, #3fb950 60%, #f85149 100%); opacity: 0.7; position: absolute; }
+.bar-spot { position: absolute; top: -6px; width: 3px; height: 32px; background: #fff; border-radius: 2px; transform: translateX(-50%); }
+.bar-spot-label { position: absolute; top: 30px; transform: translateX(-50%); font-size: 10px; color: #fff; font-weight: 700; white-space: nowrap; }
+.bar-pain { position: absolute; top: -4px; width: 2px; height: 28px; background: #e3b341; border-radius: 2px; transform: translateX(-50%); }
+.bar-pain-label { position: absolute; top: 28px; transform: translateX(-50%); font-size: 10px; color: #e3b341; white-space: nowrap; }
+
+/* ── Levels row ── */
+.levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+@media (max-width: 600px) { .levels { grid-template-columns: 1fr; } }
+.level-card { background: #161b22; border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 4px; }
+.level-card.ce { border: 1px solid rgba(248,81,73,0.3); }
+.level-card.pe { border: 1px solid rgba(63,185,80,0.3); }
+.level-card.mp { border: 1px solid rgba(227,179,65,0.3); }
+.level-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+.level-label.ce { color: #f85149; } .level-label.pe { color: #3fb950; } .level-label.mp { color: #e3b341; }
+.level-val { font-size: 28px; font-weight: 700; color: #f0f6fc; }
+.level-desc { font-size: 11px; color: #8b949e; }
+
+/* ── Trade idea card ── */
+.trade-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 22px 28px; margin-bottom: 24px; }
+.trade-title { font-size: 13px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
+.trade-legs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) { .trade-legs { grid-template-columns: 1fr; } }
+.leg { border-radius: 8px; padding: 12px 16px; }
+.leg.buy  { background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.2); }
+.leg.sell { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.2); }
+.leg-action { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
+.leg.buy .leg-action { color: #3fb950; } .leg.sell .leg-action { color: #f85149; }
+.leg-strike { font-size: 20px; font-weight: 700; color: #f0f6fc; }
+.leg-type { font-size: 11px; color: #8b949e; }
+
+/* ── Historical ── */
+.hist-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+@media (max-width: 600px) { .hist-row { grid-template-columns: 1fr; } }
+
+/* ── Footer note ── */
+.footer-note { font-size: 11px; color: #8b949e; text-align: center; padding: 12px 0 24px; }
+
+/* ── Skeleton / placeholder ── */
+.skeleton { background: linear-gradient(90deg, #1c2128 25%, #21262d 50%, #1c2128 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 6px; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.skel-val { height: 28px; width: 70%; margin-bottom: 6px; }
+.skel-sub { height: 14px; width: 50%; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo">📊</div>
+    <div>
+      <div class="header-title">Stock Analyzer</div>
+      <div class="header-sub">Weekly Range Predictor</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <a href="/" class="nav-btn">Dashboard</a>
+    <a href="/nifty" class="nav-btn">Options Intel</a>
+    <a href="/weekly" class="nav-btn active">Weekly Range</a>
+    <a href="/insights" class="nav-btn">Insights</a>
+    <a href="/logout" class="nav-btn">Logout</a>
+  </div>
+</div>
+
+<!-- ── Main ── -->
+<div class="main">
+
+  <!-- Top bar -->
+  <div class="top-bar">
+    <div>
+      <div class="page-title">Weekly Expiry Range</div>
+      <div class="page-sub" id="page-sub">Fetching prediction…</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+      <div class="refresh-info" id="refresh-info" style="display:none;">
+        <span class="dot-live"></span> Auto-refresh in <span id="countdown">5:00</span>
+      </div>
+      <button class="run-btn" id="run-btn" onclick="runAnalysis()">
+        <span id="btn-icon">▶</span> Run Analysis
+      </button>
+    </div>
+  </div>
+
+  <!-- Status strip -->
+  <div class="status-strip" id="status-strip"></div>
+
+  <!-- ── Content (hidden until data loads) ── -->
+  <div id="content" style="display:none;">
+
+    <!-- Stat cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Nifty Spot</div>
+        <div class="card-value" id="c-spot">—</div>
+        <div class="card-sub" id="c-as-of">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">ATM IV</div>
+        <div class="card-value" id="c-iv">—</div>
+        <div class="card-sub" id="c-iv-sub">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">PCR</div>
+        <div class="card-value" id="c-pcr">—</div>
+        <div class="card-sub" id="c-bias">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">ATM Straddle</div>
+        <div class="card-value" id="c-straddle">—</div>
+        <div class="card-sub" id="c-move">—</div>
+      </div>
+    </div>
+
+    <!-- Range visualiser -->
+    <div class="range-card">
+      <div class="range-title">Predicted Range — <span id="rv-expiry">—</span> (DTE <span id="rv-dte">—</span>)</div>
+      <div class="range-bar-wrap" style="margin-bottom: 56px;">
+        <div class="bar-labels">
+          <span id="rv-lo">—</span>
+          <span style="font-weight:700; color:#f0f6fc; font-size:14px;" id="rv-range">—  –  —</span>
+          <span id="rv-hi">—</span>
+        </div>
+        <div class="bar-outer" id="bar-outer">
+          <div class="bar-fill" id="bar-fill" style="left:0; right:0;"></div>
+          <div class="bar-spot" id="bar-spot" style="left:50%;"><div class="bar-spot-label" id="spot-lbl">Spot</div></div>
+          <div class="bar-pain" id="bar-pain" style="left:50%;"><div class="bar-pain-label" id="pain-lbl">MaxPain</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Key levels -->
+    <div class="levels">
+      <div class="level-card pe">
+        <div class="level-label pe">PE Wall — Support</div>
+        <div class="level-val green" id="l-pe">—</div>
+        <div class="level-desc">Heaviest put OI — floor level</div>
+      </div>
+      <div class="level-card mp">
+        <div class="level-label mp">Max Pain</div>
+        <div class="level-val yellow" id="l-mp">—</div>
+        <div class="level-desc">Gravity centre — likely pin zone</div>
+      </div>
+      <div class="level-card ce">
+        <div class="level-label ce">CE Wall — Resistance</div>
+        <div class="level-val red" id="l-ce">—</div>
+        <div class="level-desc">Heaviest call OI — ceiling level</div>
+      </div>
+    </div>
+
+    <!-- Trade idea -->
+    <div class="trade-card">
+      <div class="trade-title">Iron Condor — Suggested Setup</div>
+      <div class="trade-legs">
+        <div class="leg buy">
+          <div class="leg-action">Buy</div>
+          <div class="leg-strike" id="t-buy-pe">—</div>
+          <div class="leg-type">PE (protection)</div>
+        </div>
+        <div class="leg sell">
+          <div class="leg-action">Sell</div>
+          <div class="leg-strike" id="t-sell-pe">—</div>
+          <div class="leg-type">PE (short leg)</div>
+        </div>
+        <div class="leg sell">
+          <div class="leg-action">Sell</div>
+          <div class="leg-strike" id="t-sell-ce">—</div>
+          <div class="leg-type">CE (short leg)</div>
+        </div>
+        <div class="leg buy">
+          <div class="leg-action">Buy</div>
+          <div class="leg-strike" id="t-buy-ce">—</div>
+          <div class="leg-type">CE (protection)</div>
+        </div>
+      </div>
+      <div style="margin-top:14px; font-size:11px; color:#8b949e;">
+        Short strikes = OI walls. Hedge = ±500 pts beyond. Max loss is capped.
+      </div>
+    </div>
+
+    <!-- Historical context -->
+    <div class="hist-row" id="hist-section" style="display:none;">
+      <div class="card">
+        <div class="card-label">Avg Weekly Range</div>
+        <div class="card-value blue" id="h-avg">—</div>
+        <div class="card-sub" id="h-weeks">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">75th %ile Range</div>
+        <div class="card-value blue" id="h-p75">—</div>
+        <div class="card-sub">75% of weeks are below this</div>
+      </div>
+      <div class="card">
+        <div class="card-label">This Week Width</div>
+        <div class="card-value" id="h-width">—</div>
+        <div class="card-sub" id="h-tag">—</div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+
+  <div class="footer-note" id="footer-note" style="display:none;">
+    Data from option_chain table — SQL-aggregated, no raw rows loaded.
+    Analysis runs in seconds. Auto-refreshes every 5 min during market hours.
+  </div>
+
+</div><!-- /main -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+var _timer = null;
+var _countdown = null;
+var _autoRefreshSecs = 5 * 60;  // 5 minutes
+
+function fmt(n, dec) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString('en-IN', {minimumFractionDigits: dec || 0, maximumFractionDigits: dec || 0});
+}
+
+// ── Run analysis ────────────────────────────────────────────────────────────
+function runAnalysis() {
+  var btn = document.getElementById('run-btn');
+  var icon = document.getElementById('btn-icon');
+  btn.disabled = true;
+  icon.textContent = '↻';
+  icon.classList.add('spin');
+
+  showStatus('loading', 'Querying database… (aggregating option_chain data)');
+  stopCountdown();
+
+  fetch('/api/weekly-range')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.error) { showStatus('error', d.error); return; }
+      renderData(d);
+      clearStatus();
+      startCountdown();
+    })
+    .catch(function(e) { showStatus('error', 'Network error: ' + e.message); })
+    .finally(function() {
+      btn.disabled = false;
+      icon.textContent = '▶';
+      icon.classList.remove('spin');
+    });
+}
+
+// ── Render ──────────────────────────────────────────────────────────────────
+function renderData(d) {
+  // Header
+  document.getElementById('page-sub').textContent =
+    'Expiry: ' + d.expiry + '  |  As of: ' + (d.as_of || 'N/A');
+
+  // Stat cards
+  document.getElementById('c-spot').textContent = fmt(d.spot, 2);
+  document.getElementById('c-as-of').textContent = d.as_of || '—';
+
+  document.getElementById('c-iv').textContent = (d.iv || '—') + '%';
+  document.getElementById('c-iv-sub').textContent = d.straddle
+    ? 'Straddle: ' + fmt(d.straddle) + ' pts'
+    : 'IV-based move: ±' + fmt(d.expected_move) + ' pts';
+
+  var pcr = d.pcr;
+  var pcrEl = document.getElementById('c-pcr');
+  pcrEl.textContent = pcr ? Number(pcr).toFixed(2) : '—';
+  pcrEl.className = 'card-value ' + (pcr > 1.2 ? 'green' : pcr < 0.8 ? 'red' : 'yellow');
+  document.getElementById('c-bias').textContent = d.bias || '—';
+
+  document.getElementById('c-straddle').textContent = d.straddle ? fmt(d.straddle) + ' pts' : '—';
+  document.getElementById('c-move').textContent = '±' + fmt(d.expected_move) + ' pts expected';
+
+  // Range bar
+  var lo = d.iv_range.lo, hi = d.iv_range.hi, spot = d.spot;
+  var pad = (hi - lo) * 0.15;
+  var barLo = lo - pad, barHi = hi + pad, span = barHi - barLo;
+
+  document.getElementById('rv-expiry').textContent = d.expiry;
+  document.getElementById('rv-dte').textContent = d.dte;
+  document.getElementById('rv-range').textContent = fmt(d.pred_range.lo) + '  –  ' + fmt(d.pred_range.hi);
+  document.getElementById('rv-lo').textContent = fmt(lo);
+  document.getElementById('rv-hi').textContent = fmt(hi);
+
+  var fillLeft  = ((d.pred_range.lo - barLo) / span * 100).toFixed(1) + '%';
+  var fillRight = ((barHi - d.pred_range.hi) / span * 100).toFixed(1) + '%';
+  var fill = document.getElementById('bar-fill');
+  fill.style.left  = fillLeft;
+  fill.style.right = fillRight;
+
+  var spotPct = ((spot - barLo) / span * 100).toFixed(1) + '%';
+  document.getElementById('bar-spot').style.left = spotPct;
+  document.getElementById('spot-lbl').textContent = fmt(spot, 0);
+
+  var painPct = ((d.max_pain - barLo) / span * 100).toFixed(1) + '%';
+  document.getElementById('bar-pain').style.left = painPct;
+  document.getElementById('pain-lbl').textContent = fmt(d.max_pain);
+
+  // Key levels
+  document.getElementById('l-pe').textContent = fmt(d.pe_wall);
+  document.getElementById('l-mp').textContent = fmt(d.max_pain);
+  document.getElementById('l-ce').textContent = fmt(d.ce_wall);
+
+  // Trade legs
+  var sellCE = d.ce_wall, sellPE = d.pe_wall;
+  var buyCE  = Math.round((sellCE + 500) / 50) * 50;
+  var buyPE  = Math.round((sellPE - 500) / 50) * 50;
+  document.getElementById('t-buy-pe').textContent  = fmt(buyPE);
+  document.getElementById('t-sell-pe').textContent = fmt(sellPE);
+  document.getElementById('t-sell-ce').textContent = fmt(sellCE);
+  document.getElementById('t-buy-ce').textContent  = fmt(buyCE);
+
+  // Historical
+  if (d.avg_weekly_range) {
+    document.getElementById('hist-section').style.display = 'grid';
+    document.getElementById('h-avg').textContent  = fmt(d.avg_weekly_range) + ' pts';
+    document.getElementById('h-p75').textContent  = fmt(d.p75_weekly_range) + ' pts';
+    var weeks = d.hist_weeks || 0;
+    document.getElementById('h-weeks').textContent = 'Based on ' + weeks + ' weeks';
+
+    var width = d.pred_range.hi - d.pred_range.lo;
+    document.getElementById('h-width').textContent = fmt(width) + ' pts';
+    var tag = width < d.avg_weekly_range ? 'LOW volatility week' : 'HIGH volatility week';
+    var tagEl = document.getElementById('h-tag');
+    tagEl.textContent = tag;
+    tagEl.className = 'card-sub ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
+    var wEl = document.getElementById('h-width');
+    wEl.className = 'card-value ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
+  }
+
+  document.getElementById('content').style.display = 'block';
+  document.getElementById('footer-note').style.display = 'block';
+}
+
+// ── Status strip ─────────────────────────────────────────────────────────────
+function showStatus(type, msg) {
+  var el = document.getElementById('status-strip');
+  el.className = 'status-strip ' + type;
+  el.textContent = msg;
+}
+function clearStatus() {
+  var el = document.getElementById('status-strip');
+  el.className = 'status-strip';
+  el.textContent = '';
+}
+
+// ── Auto-refresh countdown ────────────────────────────────────────────────────
+function isMarketHours() {
+  var now = new Date();
+  var day = now.getDay();  // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false;
+  // Convert UTC to IST (UTC+5:30)
+  var istOffset = 5.5 * 60;
+  var istMs = now.getTime() + (istOffset - now.getTimezoneOffset()) * 60000;
+  var ist = new Date(istMs);
+  var h = ist.getHours(), m = ist.getMinutes();
+  var mins = h * 60 + m;
+  return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30;
+}
+
+function startCountdown() {
+  if (!isMarketHours()) return;  // no auto-refresh outside market hours
+  document.getElementById('refresh-info').style.display = 'flex';
+  var remaining = _autoRefreshSecs;
+  function tick() {
+    remaining--;
+    var m = Math.floor(remaining / 60);
+    var s = remaining % 60;
+    document.getElementById('countdown').textContent =
+      m + ':' + (s < 10 ? '0' : '') + s;
+    if (remaining <= 0) {
+      stopCountdown();
+      runAnalysis();
+    } else {
+      _countdown = setTimeout(tick, 1000);
+    }
+  }
+  tick();
+}
+
+function stopCountdown() {
+  if (_countdown) clearTimeout(_countdown);
+  _countdown = null;
+  document.getElementById('refresh-info').style.display = 'none';
+}
+
+// ── Auto-run on page load ────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', function () {
+  runAnalysis();
+});
+</script>
+</body>
+</html>

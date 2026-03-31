@@ -496,6 +496,44 @@ def nifty_intelligence():
     return render_template("nifty_levels.html", user=session["user"], data=data)
 
 
+# ── Weekly Range Prediction ───────────────────────────────────────────────────
+
+@app.route("/weekly")
+@login_required
+def weekly_range():
+    return render_template("weekly_range.html", user=session["user"])
+
+
+@app.route("/api/weekly-range")
+@login_required
+def api_weekly_range():
+    """
+    Runs fetch_summary + compute_range entirely in SQL aggregation.
+    35L rows → ~13 numbers → JSON response. Never loads raw rows into Python.
+    """
+    from options.range_predict import fetch_summary, compute_range, _next_thursday
+    from datetime import date as _date, datetime as _dt
+
+    expiry_param = request.args.get("expiry")
+    if expiry_param:
+        try:
+            expiry = _dt.strptime(expiry_param, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid expiry date. Use YYYY-MM-DD"}), 400
+    else:
+        today  = _date.today()
+        expiry = today if today.weekday() == 3 else _next_thursday(today)
+
+    summary = fetch_summary(expiry)
+    if not summary:
+        return jsonify({"error": "DB unavailable or no data collected yet."}), 503
+
+    result = compute_range(summary, expiry)
+    # Make all values JSON-serialisable
+    return jsonify({k: (str(v) if hasattr(v, 'isoformat') else v)
+                    for k, v in result.items()})
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

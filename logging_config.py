@@ -1,4 +1,4 @@
-"""
+claude"""
 Centralised logging configuration.
 
 Call configure_logging() once at application startup (main.py, app.py,
