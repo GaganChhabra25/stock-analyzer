@@ -122,15 +122,38 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
     vix  = snap.get("vix")
     atm  = snap["atm"]
 
+    # ── Technical signals (Kite) ─────────────────────────────────────────────
+    from options.technicals import get_tech_signals
+    tech = get_tech_signals(instr)
+
     # ── Intraday 1σ move ──────────────────────────────────────────────────────
     # 1 trading day = 1/252 of a year
     sigma_pts = spot * (iv / 100.0) * math.sqrt(1.0 / 252.0)
 
-    # Sell at 1.5σ from spot (theoretical ~86% probability of staying inside)
-    dist = max(round(sigma_pts * 1.5 / step) * step, step * 4)
+    # Base distance = 1.5σ; skew away from trend direction
+    ce_mult = 1.5
+    pe_mult = 1.5
+    if tech.get("trend") == "BULLISH":
+        ce_mult = 1.7   # widen CE — uptrend, CE breach less likely
+        pe_mult = 1.4   # tighten PE — support stronger in uptrend
+    elif tech.get("trend") == "BEARISH":
+        ce_mult = 1.4
+        pe_mult = 1.7   # widen PE — downtrend, PE breach less likely
 
-    sell_ce = int(round((spot + dist) / step) * step)
-    sell_pe = int(round((spot - dist) / step) * step)
+    dist_ce = max(round(sigma_pts * ce_mult / step) * step, step * 4)
+    dist_pe = max(round(sigma_pts * pe_mult / step) * step, step * 4)
+
+    # PDH/PDL override: never sell CE below PDH or PE above PDL
+    pdh = tech.get("pdh")
+    pdl = tech.get("pdl")
+
+    sell_ce = int(round((spot + dist_ce) / step) * step)
+    sell_pe = int(round((spot - dist_pe) / step) * step)
+
+    if pdh and sell_ce < pdh:
+        sell_ce = int(round(pdh / step + 1) * step)   # push CE above PDH
+    if pdl and sell_pe > pdl:
+        sell_pe = int(round(pdl / step - 1) * step)   # push PE below PDL
 
     # ── Fetch live LTPs ───────────────────────────────────────────────────────
     ce_ltp = get_option_ltp(expiry, sell_ce, "CE", instr)
@@ -156,17 +179,67 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
     ce_sl = round(ce_ltp * 3.0, 1)   # exit CE if it triples
     pe_sl = round(pe_ltp * 3.0, 1)
 
-    # ── Probability ───────────────────────────────────────────────────────────
+    # ── Probability (base + tech adjustments) ────────────────────────────────
     prob = _sell_probability(iv, vix, pcr)
+
+    if tech:
+        # BB squeeze: breakout imminent → risky for sellers
+        if tech.get("bb_squeeze"):
+            prob -= 6
+        # RSI extremes: overbought/oversold → directional risk
+        rsi = tech.get("rsi15")
+        if rsi is not None:
+            if rsi > 72 or rsi < 28:
+                prob -= 4
+            elif 40 <= rsi <= 60:
+                prob += 3   # range-bound momentum
+        # VWAP and trend aligned → market is well-behaved
+        trend = tech.get("trend", "")
+        vwap_bias = tech.get("vwap_bias", "")
+        if (trend == "BULLISH" and vwap_bias == "ABOVE") or \
+           (trend == "BEARISH" and vwap_bias == "BELOW"):
+            prob += 3   # trending cleanly, range is well-defined
+        prob = round(max(50.0, min(89.0, prob)), 1)
 
     # ── Reasoning text ────────────────────────────────────────────────────────
     reasons = []
-    reasons.append(f"IV {iv:.1f}% → intraday 1σ = {int(sigma_pts)} pts, selling at ±{dist} pts OTM (1.5σ)")
+    reasons.append(
+        f"IV {iv:.1f}% → intraday 1σ = {int(sigma_pts)} pts │ "
+        f"CE at +{dist_ce} pts ({ce_mult}σ), PE at −{dist_pe} pts ({pe_mult}σ)"
+    )
     if vix:
-        reasons.append(f"VIX {vix:.1f} — {'calm market ✓' if vix < 15 else 'elevated volatility, widen SL'}")
+        reasons.append(f"VIX {vix:.1f} — {'calm ✓' if vix < 15 else 'elevated, widen SL'}")
     if pcr:
-        reasons.append(f"PCR {pcr:.2f} — {'balanced/range-bound ✓' if 0.85 <= pcr <= 1.2 else 'directional bias, watch delta'}")
-    reasons.append(f"59-day backtest: straddle sellers won 85% of days, avg edge ₹900/day")
+        reasons.append(f"PCR {pcr:.2f} — {'range-bound ✓' if 0.85 <= pcr <= 1.2 else 'directional bias'}")
+
+    # Tech reasons
+    if tech:
+        trend = tech.get("trend", "")
+        if trend:
+            reasons.append(
+                f"Trend: {trend} (EMA20 {tech['ema20']:,.0f}"
+                + (f" / EMA50 {tech['ema50']:,.0f}" if tech.get('ema50') else "")
+                + f") — {'CE side safer ✓' if trend == 'BULLISH' else 'PE side safer ✓' if trend == 'BEARISH' else 'neutral'}"
+            )
+        if tech.get("vwap"):
+            reasons.append(
+                f"VWAP {tech['vwap']:,.0f} — spot is {tech.get('vwap_bias','?').lower()} VWAP"
+                + (" ✓" if (trend == "BULLISH" and tech.get("vwap_bias") == "ABOVE")
+                        or (trend == "BEARISH" and tech.get("vwap_bias") == "BELOW") else "")
+            )
+        if tech.get("rsi15") is not None:
+            rsi = tech["rsi15"]
+            reasons.append(
+                f"RSI(14) 15-min: {rsi} — "
+                + ("⚠ overbought, CE risky" if rsi > 72 else
+                   "⚠ oversold, PE risky"   if rsi < 28 else
+                   "range-bound zone ✓")
+            )
+        if pdh and pdl:
+            reasons.append(f"PDH {pdh:,.0f} / PDL {pdl:,.0f} — strikes placed outside prev-day range")
+        if tech.get("bb_squeeze"):
+            reasons.append(f"⚠ Bollinger squeeze detected (width {tech['bb_width']:.1f}%) — breakout risk, reduce size")
+
     reasons.append("Hard exit 3:15 PM — no overnight hold")
 
     return {
@@ -200,6 +273,16 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
         "lot_size":      lot,
         "reasoning":     reasons,
         "hard_exit":     "15:15 IST",
+        "tech": {
+            "trend":      tech.get("trend"),
+            "vwap":       tech.get("vwap"),
+            "vwap_bias":  tech.get("vwap_bias"),
+            "rsi15":      tech.get("rsi15"),
+            "pdh":        tech.get("pdh"),
+            "pdl":        tech.get("pdl"),
+            "bb_squeeze": tech.get("bb_squeeze"),
+            "bb_width":   tech.get("bb_width"),
+        } if tech else {},
     }
 
 

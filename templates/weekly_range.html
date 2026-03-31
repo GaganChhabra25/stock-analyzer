@@ -342,6 +342,9 @@ table.trades-tbl tr:hover td { background: #1c2128; }
         </div>
       </div>
 
+      <!-- Tech signal badges -->
+      <div id="ss-tech-badges" style="display:none; margin-bottom:12px; display:flex; flex-wrap:wrap; gap:8px;"></div>
+
       <!-- Reasoning -->
       <div class="reason-box" id="ss-reasons"></div>
 
@@ -620,6 +623,25 @@ function renderSellSetup(d) {
   document.getElementById('ss-target').textContent    = '+' + d.target_pts + ' pts (₹' + fmt(d.target_inr) + ')';
   document.getElementById('ss-sl').textContent        = '-' + d.sl_pts + ' pts (₹' + fmt(d.sl_inr) + ')';
   document.getElementById('ss-maxprofit').textContent = '₹' + fmt(d.max_profit_inr) + ' / lot';
+
+  // Tech signal badges
+  var tb = document.getElementById('ss-tech-badges');
+  var t = d.tech || {};
+  if (t.trend) {
+    var badges = [];
+    var tcolor = t.trend === 'BULLISH' ? '#3fb950' : t.trend === 'BEARISH' ? '#f85149' : '#e3b341';
+    badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:#58a6ff;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">Trend: ' + t.trend + '</span>');
+    if (t.vwap_bias) badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:#58a6ff;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">VWAP: ' + t.vwap_bias + '</span>');
+    if (t.rsi15 != null) {
+      var rc = t.rsi15 > 72 ? '#f85149' : t.rsi15 < 28 ? '#f85149' : '#3fb950';
+      badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:' + rc + ';padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">RSI ' + t.rsi15 + '</span>');
+    }
+    if (t.bb_squeeze) badges.push('<span style="background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:#f85149;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">⚠ BB Squeeze</span>');
+    tb.innerHTML = badges.join('');
+    tb.style.display = 'flex';
+  } else {
+    tb.style.display = 'none';
+  }
 
   // Reasoning
   var box = document.getElementById('ss-reasons');
