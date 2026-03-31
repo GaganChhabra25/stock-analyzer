@@ -19,3 +19,4 @@ psycopg2-binary>=2.9.9
 
 # Options data collection
 kiteconnect>=5.0.0
+pyotp>=2.9.0
