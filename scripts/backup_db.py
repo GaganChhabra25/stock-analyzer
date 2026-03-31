@@ -1,46 +1,39 @@
 """
 Database Backup Script
 ──────────────────────
-Reads DATABASE_URL from .env, runs pg_dump, saves to D:\\Gagan\\database_backups
+Auto SSH tunnel (password-based) → pg_dump → D:\\Gagan\\database_backups
 
-Backups created:
-  1. Full database dump        → full/stock_analyzer_YYYYMMDD_HHMMSS.backup
-  2. option_chain table        → tables/option_chain_YYYYMMDD.backup
-  3. market_snapshot table     → tables/market_snapshot_YYYYMMDD.backup
-  4. intraday_trades table     → tables/intraday_trades_YYYYMMDD.backup
-
-Retention: keeps last 30 days, older files auto-deleted.
-
-Run:
-    python scripts/backup_db.py
-    python scripts/backup_db.py --tables-only   # skip full dump (faster)
-    python scripts/backup_db.py --full-only     # only full dump
+Usage:
+    python scripts/backup_db.py                  # full + all tables
+    python scripts/backup_db.py --full-only
+    python scripts/backup_db.py --tables-only
 """
 
-import os
-import re
-import sys
-import shutil
-import logging
-import argparse
-import subprocess
+import os, sys, logging, argparse, subprocess, getpass
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
+try:
+    from sshtunnel import SSHTunnelForwarder
+except ImportError:
+    print("Run once: pip install sshtunnel")
+    sys.exit(1)
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 
-BACKUP_ROOT  = Path(r"D:\Gagan\database_backups")
-PG_DUMP      = Path(r"C:\Program Files\PostgreSQL\13\bin\pg_dump.exe")
-ENV_FILE     = Path(__file__).parent.parent / ".env"
-KEEP_DAYS    = 30
+BACKUP_ROOT = Path(r"D:\Gagan\database_backups")
+PG_DUMP     = Path(r"C:\Program Files\PostgreSQL\13\bin\pg_dump.exe")
+ENV_FILE    = Path(__file__).parent.parent / ".env"
 
-IMPORTANT_TABLES = [
-    "option_chain",
-    "market_snapshot",
-    "intraday_trades",
-    "kite_tokens",
-]
+SSH_HOST    = "185.211.6.5"
+SSH_USER    = "root"
+SSH_PORT    = 22
+DB_PORT     = 5432        # PostgreSQL port on Contabo
+
+KEEP_DAYS   = 30
+
+TABLES = ["option_chain", "market_snapshot", "intraday_trades", "kite_tokens"]
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -50,192 +43,142 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+# Suppress noisy sshtunnel logs
+logging.getLogger("paramiko").setLevel(logging.WARNING)
+logging.getLogger("sshtunnel").setLevel(logging.WARNING)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _read_database_url() -> str:
-    """Parse DATABASE_URL from .env file."""
+def read_db_creds() -> dict:
     if not ENV_FILE.exists():
-        log.error(".env file not found at %s", ENV_FILE)
-        sys.exit(1)
-
+        log.error(".env not found: %s", ENV_FILE); sys.exit(1)
     for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith("DATABASE_URL="):
-            url = line.split("=", 1)[1].strip().strip('"').strip("'")
-            return url
-
-    log.error("DATABASE_URL not found in .env")
-    sys.exit(1)
-
-
-def _parse_url(url: str) -> dict:
-    """Parse postgresql://user:pass@host:port/dbname into parts."""
-    p = urlparse(url)
-    return {
-        "host":     p.hostname or "localhost",
-        "port":     str(p.port or 5432),
-        "user":     p.username or "postgres",
-        "password": p.password or "",
-        "dbname":   p.path.lstrip("/"),
-    }
+        if line.strip().startswith("DATABASE_URL="):
+            url = line.split("=", 1)[1].strip().strip('"\'')
+            p = urlparse(url)
+            return {
+                "user":     p.username or "postgres",
+                "password": p.password or "",
+                "dbname":   p.path.lstrip("/"),
+            }
+    log.error("DATABASE_URL not found in .env"); sys.exit(1)
 
 
-def _human_size(path: Path) -> str:
-    size = path.stat().st_size
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} GB"
+def human_size(path: Path) -> str:
+    n = path.stat().st_size
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024: return f"{n:.1f} {u}"
+        n /= 1024
+    return f"{n:.1f} GB"
 
 
-def _run_dump(args: list, env: dict, label: str, out_path: Path) -> bool:
-    """Run pg_dump subprocess. Returns True on success."""
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    log.info("Dumping %-35s → %s", label, out_path.name)
+def pg_dump(label: str, out: Path, extra: list, creds: dict, port: int) -> bool:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    log.info("Dumping %-34s → %s", label, out.name)
+    env = {**os.environ, "PGPASSWORD": creds["password"]}
+    cmd = [
+        str(PG_DUMP),
+        "-h", "127.0.0.1", "-p", str(port),
+        "-U", creds["user"],
+        "-F", "c", "-f", str(out),
+    ] + extra + [creds["dbname"]]
 
-    result = subprocess.run(
-        args,
-        env={**os.environ, **env},
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        log.error("FAILED: %s\n%s", label, result.stderr[:500])
-        if out_path.exists():
-            out_path.unlink()
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        log.error("  FAILED: %s", r.stderr.strip()[:300])
+        if out.exists(): out.unlink()
         return False
-
-    log.info("  Done  %-35s  %s", label, _human_size(out_path))
+    log.info("  OK     %-34s  %s", label, human_size(out))
     return True
 
 
-def _cleanup_old(folder: Path, keep_days: int):
-    """Delete .backup files older than keep_days."""
-    cutoff = datetime.now() - timedelta(days=keep_days)
-    deleted = 0
-    for f in folder.rglob("*.backup"):
+def cleanup_old():
+    cutoff, n = datetime.now() - timedelta(days=KEEP_DAYS), 0
+    for f in BACKUP_ROOT.rglob("*.backup"):
         if datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
-            f.unlink()
-            deleted += 1
-    if deleted:
-        log.info("Cleaned up %d old backup(s) (>%d days)", deleted, keep_days)
+            f.unlink(); n += 1
+    if n: log.info("Removed %d old backup(s)", n)
 
 
-# ── Core backup functions ─────────────────────────────────────────────────────
-
-def backup_full(creds: dict, stamp: str) -> bool:
-    """Full database dump in custom format (compressed, restorable)."""
-    out = BACKUP_ROOT / "full" / f"stock_analyzer_{stamp}.backup"
-    env = {"PGPASSWORD": creds["password"]}
-    args = [
-        str(PG_DUMP),
-        "-h", creds["host"],
-        "-p", creds["port"],
-        "-U", creds["user"],
-        "-F", "c",          # custom format (compressed)
-        "-f", str(out),
-        creds["dbname"],
-    ]
-    return _run_dump(args, env, "FULL DATABASE", out)
-
-
-def backup_table(creds: dict, table: str, date_str: str) -> bool:
-    """Single table dump — schema + data, custom format."""
-    out = BACKUP_ROOT / "tables" / f"{table}_{date_str}.backup"
-    env = {"PGPASSWORD": creds["password"]}
-    args = [
-        str(PG_DUMP),
-        "-h", creds["host"],
-        "-p", creds["port"],
-        "-U", creds["user"],
-        "-F", "c",
-        "-t", table,
-        "-f", str(out),
-        creds["dbname"],
-    ]
-    return _run_dump(args, env, f"table:{table}", out)
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="PostgreSQL backup script")
-    parser.add_argument("--tables-only", action="store_true",
-                        help="Skip full dump, only backup individual tables")
-    parser.add_argument("--full-only",   action="store_true",
-                        help="Only full dump, skip individual tables")
-    parser.add_argument("--port", type=str, default=None,
-                        help="Override DB port (e.g. 5433 when using SSH tunnel)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--full-only",   action="store_true")
+    parser.add_argument("--tables-only", action="store_true")
     args = parser.parse_args()
 
-    # Sanity checks
     if not PG_DUMP.exists():
-        log.error("pg_dump not found at %s", PG_DUMP)
-        log.error("Install PostgreSQL client tools from https://www.postgresql.org/download/windows/")
-        sys.exit(1)
+        log.error("pg_dump.exe not found: %s", PG_DUMP); sys.exit(1)
 
     BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-
-    url   = _read_database_url()
-    creds = _parse_url(url)
-
-    # Port override — used when SSH tunnel runs on a different port
-    if args.port:
-        creds["port"] = args.port
-        log.info("Port overridden to %s (SSH tunnel)", args.port)
-
-    now       = datetime.now()
-    stamp     = now.strftime("%Y%m%d_%H%M%S")   # e.g. 20260331_143022
-    date_str  = now.strftime("%Y%m%d")           # e.g. 20260331
+    creds    = read_db_creds()
+    now      = datetime.now()
+    stamp    = now.strftime("%Y%m%d_%H%M%S")
+    date_str = now.strftime("%Y%m%d")
 
     log.info("=" * 55)
-    log.info("DB Backup  →  %s", BACKUP_ROOT)
-    log.info("Database   :  %s @ %s:%s", creds["dbname"], creds["host"], creds["port"])
+    log.info("Stock Analyzer DB Backup")
+    log.info("Server      : %s@%s", SSH_USER, SSH_HOST)
+    log.info("Database    : %s", creds["dbname"])
+    log.info("Destination : %s", BACKUP_ROOT)
     log.info("=" * 55)
 
-    # SSH tunnel reminder if host is localhost
-    if creds["host"] in ("localhost", "127.0.0.1"):
-        log.info("NOTE: DATABASE_URL points to localhost.")
-        log.info("      If DB is on Contabo, make sure SSH tunnel is active:")
-        log.info("      ssh -L 5433:localhost:5432 user@CONTABO_IP -N")
-        log.info("")
+    # Ask SSH password once
+    ssh_pass = getpass.getpass(f"\nSSH password for {SSH_USER}@{SSH_HOST}: ")
+    print()
 
-    full_ok = False
-    table_results = []
+    # Open tunnel
+    log.info("Opening SSH tunnel...")
+    try:
+        tunnel = SSHTunnelForwarder(
+            (SSH_HOST, SSH_PORT),
+            ssh_username=SSH_USER,
+            ssh_password=ssh_pass,
+            remote_bind_address=("127.0.0.1", DB_PORT),
+        )
+        tunnel.start()
+    except Exception as e:
+        log.error("Tunnel failed: %s", e)
+        log.error("Check SSH credentials or server availability.")
+        sys.exit(1)
 
-    # Full dump
+    local_port = tunnel.local_bind_port
+    log.info("Tunnel ready on localhost:%d", local_port)
+
+    try:
+        full_ok    = True
+        tbl_ok     = 0
+        tbl_fail   = 0
+
+        if not args.tables_only:
+            out = BACKUP_ROOT / "full" / f"stock_analyzer_{stamp}.backup"
+            full_ok = pg_dump("FULL DATABASE", out, [], creds, local_port)
+
+        if not args.full_only:
+            for t in TABLES:
+                out = BACKUP_ROOT / "tables" / f"{t}_{date_str}.backup"
+                ok  = pg_dump(f"table: {t}", out, ["-t", t], creds, local_port)
+                tbl_ok += ok; tbl_fail += not ok
+
+    finally:
+        tunnel.stop()
+        log.info("SSH tunnel closed.")
+
+    cleanup_old()
+
+    total_mb = sum(f.stat().st_size for f in BACKUP_ROOT.rglob("*.backup")) / 1024 / 1024
+    log.info("=" * 55)
     if not args.tables_only:
-        full_ok = backup_full(creds, stamp)
-
-    # Table dumps
+        log.info("Full backup   : %s", "OK ✓" if full_ok else "FAILED ✗")
     if not args.full_only:
-        for table in IMPORTANT_TABLES:
-            table_results.append((table, backup_table(creds, table, date_str)))
-
-    # Cleanup old backups
-    _cleanup_old(BACKUP_ROOT, KEEP_DAYS)
-
-    # Summary
-    log.info("=" * 55)
-    table_ok   = sum(1 for _, s in table_results if s)
-    table_fail = len(table_results) - table_ok
-
-    if not args.tables_only:
-        log.info("Full backup   : %s", "OK" if full_ok else "FAILED")
-    if not args.full_only:
-        log.info("Table backups : %d OK  /  %d not found (may not exist yet)", table_ok, table_fail)
-
+        log.info("Table backups : %d OK  /  %d failed", tbl_ok, tbl_fail)
+    log.info("Total size    : %.1f MB", total_mb)
     log.info("Saved to      : %s", BACKUP_ROOT)
-    total = sum(f.stat().st_size for f in BACKUP_ROOT.rglob("*.backup"))
-    log.info("Total size    : %.1f MB", total / 1024 / 1024)
+    log.info("=" * 55)
 
-    # Exit with error only if full backup failed
     if not args.tables_only and not full_ok:
-        log.error("Full backup FAILED — check connection / SSH tunnel")
         sys.exit(1)
 
 
