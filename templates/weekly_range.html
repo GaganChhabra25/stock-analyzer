@@ -33,10 +33,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Auto-refresh badge ── */
-.refresh-info { font-size: 11px; color: #8b949e; display: flex; align-items: center; gap: 6px; }
-.dot-live { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; display: inline-block; animation: pulse 2s ease infinite; }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 /* ── Status strip ── */
 .status-strip { font-size: 12px; padding: 8px 14px; border-radius: 7px; margin-bottom: 22px; display: none; }
@@ -77,18 +73,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .level-val { font-size: 28px; font-weight: 700; color: #f0f6fc; }
 .level-desc { font-size: 11px; color: #8b949e; }
 
-/* ── Trade idea card ── */
-.trade-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 22px 28px; margin-bottom: 24px; }
-.trade-title { font-size: 13px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 16px; }
-.trade-legs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-@media (max-width: 600px) { .trade-legs { grid-template-columns: 1fr; } }
-.leg { border-radius: 8px; padding: 12px 16px; }
-.leg.buy  { background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.2); }
-.leg.sell { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.2); }
-.leg-action { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
-.leg.buy .leg-action { color: #3fb950; } .leg.sell .leg-action { color: #f85149; }
-.leg-strike { font-size: 20px; font-weight: 700; color: #f0f6fc; }
-.leg-type { font-size: 11px; color: #8b949e; }
 
 /* ── Historical ── */
 .hist-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
@@ -194,9 +178,6 @@ table.trades-tbl tr:hover td { background: #1c2128; }
       <div class="page-sub" id="page-sub">Fetching prediction…</div>
     </div>
     <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-      <div class="refresh-info" id="refresh-info" style="display:none;">
-        <span class="dot-live"></span> Auto-refresh in <span id="countdown">5:00</span>
-      </div>
       <button class="run-btn" id="run-btn" onclick="runAnalysis()">
         <span id="btn-icon">▶</span> Run Analysis
       </button>
@@ -266,36 +247,6 @@ table.trades-tbl tr:hover td { background: #1c2128; }
         <div class="level-label ce">CE Wall — Resistance</div>
         <div class="level-val red" id="l-ce">—</div>
         <div class="level-desc">Heaviest call OI — ceiling level</div>
-      </div>
-    </div>
-
-    <!-- Trade idea -->
-    <div class="trade-card">
-      <div class="trade-title">Iron Condor — Suggested Setup</div>
-      <div class="trade-legs">
-        <div class="leg buy">
-          <div class="leg-action">Buy</div>
-          <div class="leg-strike" id="t-buy-pe">—</div>
-          <div class="leg-type">PE (protection)</div>
-        </div>
-        <div class="leg sell">
-          <div class="leg-action">Sell</div>
-          <div class="leg-strike" id="t-sell-pe">—</div>
-          <div class="leg-type">PE (short leg)</div>
-        </div>
-        <div class="leg sell">
-          <div class="leg-action">Sell</div>
-          <div class="leg-strike" id="t-sell-ce">—</div>
-          <div class="leg-type">CE (short leg)</div>
-        </div>
-        <div class="leg buy">
-          <div class="leg-action">Buy</div>
-          <div class="leg-strike" id="t-buy-ce">—</div>
-          <div class="leg-type">CE (protection)</div>
-        </div>
-      </div>
-      <div style="margin-top:14px; font-size:11px; color:#8b949e;">
-        Short strikes = OI walls. Hedge = ±500 pts beyond. Max loss is capped.
       </div>
     </div>
 
@@ -434,8 +385,6 @@ table.trades-tbl tr:hover td { background: #1c2128; }
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 var _timer = null;
-var _countdown = null;
-var _autoRefreshSecs = 5 * 60;  // 5 minutes
 
 function fmt(n, dec) {
   if (n == null) return '—';
@@ -459,7 +408,6 @@ function runAnalysis() {
       if (d.error) { showStatus('error', d.error); return; }
       renderData(d);
       clearStatus();
-      startCountdown();
     })
     .catch(function(e) { showStatus('error', 'Network error: ' + e.message); })
     .finally(function() {
@@ -523,15 +471,6 @@ function renderData(d) {
   document.getElementById('l-mp').textContent = fmt(d.max_pain);
   document.getElementById('l-ce').textContent = fmt(d.ce_wall);
 
-  // Trade legs
-  var sellCE = d.ce_wall, sellPE = d.pe_wall;
-  var buyCE  = Math.round((sellCE + 500) / 50) * 50;
-  var buyPE  = Math.round((sellPE - 500) / 50) * 50;
-  document.getElementById('t-buy-pe').textContent  = fmt(buyPE);
-  document.getElementById('t-sell-pe').textContent = fmt(sellPE);
-  document.getElementById('t-sell-ce').textContent = fmt(sellCE);
-  document.getElementById('t-buy-ce').textContent  = fmt(buyCE);
-
   // Historical
   if (d.avg_weekly_range) {
     document.getElementById('hist-section').style.display = 'grid';
@@ -566,45 +505,6 @@ function clearStatus() {
   el.textContent = '';
 }
 
-// ── Auto-refresh countdown ────────────────────────────────────────────────────
-function isMarketHours() {
-  var now = new Date();
-  var day = now.getDay();  // 0=Sun, 6=Sat
-  if (day === 0 || day === 6) return false;
-  // Convert UTC to IST (UTC+5:30)
-  var istOffset = 5.5 * 60;
-  var istMs = now.getTime() + (istOffset - now.getTimezoneOffset()) * 60000;
-  var ist = new Date(istMs);
-  var h = ist.getHours(), m = ist.getMinutes();
-  var mins = h * 60 + m;
-  return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30;
-}
-
-function startCountdown() {
-  if (!isMarketHours()) return;  // no auto-refresh outside market hours
-  document.getElementById('refresh-info').style.display = 'flex';
-  var remaining = _autoRefreshSecs;
-  function tick() {
-    remaining--;
-    var m = Math.floor(remaining / 60);
-    var s = remaining % 60;
-    document.getElementById('countdown').textContent =
-      m + ':' + (s < 10 ? '0' : '') + s;
-    if (remaining <= 0) {
-      stopCountdown();
-      runAnalysis();
-    } else {
-      _countdown = setTimeout(tick, 1000);
-    }
-  }
-  tick();
-}
-
-function stopCountdown() {
-  if (_countdown) clearTimeout(_countdown);
-  _countdown = null;
-  document.getElementById('refresh-info').style.display = 'none';
-}
 
 // ── Auto-run on page load ────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', function () {
