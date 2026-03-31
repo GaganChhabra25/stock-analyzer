@@ -65,6 +65,35 @@ def days_to_expiry(expiry) -> float:
     return max(delta / 365.0, 1 / 365.0)
 
 
+def _notify_first_collection(ts: datetime, rows: int) -> None:
+    """Send Telegram only on the first successful collection of the day."""
+    from datetime import date
+    sentinel_file = Path(__file__).parent.parent / "data" / f"collected_{date.today()}.flag"
+    if sentinel_file.exists():
+        return  # Already notified today
+    sentinel_file.touch()
+
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+
+    msg = (
+        f"Options data collection started — {ts.strftime('%d-%b-%Y %I:%M %p')} IST\n"
+        f"Capturing NIFTY + BANKNIFTY option chains every minute.\n"
+        f"First batch: {rows} rows inserted."
+    )
+    try:
+        import requests as req
+        req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def collect_once():
     """Run one full collection cycle. Called every minute by cron."""
     if not is_market_open():
@@ -234,6 +263,9 @@ def collect_once():
             conn.commit()
 
     logger.info("Inserted %d option rows across %d symbols.", rows_inserted, len(SYMBOLS))
+
+    if rows_inserted > 0:
+        _notify_first_collection(ts, rows_inserted)
 
 
 if __name__ == "__main__":
