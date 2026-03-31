@@ -403,13 +403,16 @@ function runAnalysis() {
   stopCountdown();
 
   fetch('/api/weekly-range')
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'HTTP ' + r.status); });
+      return r.json();
+    })
     .then(function(d) {
       if (d.error) { showStatus('error', d.error); return; }
       renderData(d);
       clearStatus();
     })
-    .catch(function(e) { showStatus('error', 'Network error: ' + e.message); })
+    .catch(function(e) { showStatus('error', e.message || 'Request failed'); })
     .finally(function() {
       btn.disabled = false;
       icon.textContent = '▶';
@@ -528,7 +531,10 @@ function loadSellSetup() {
   showSetupStatus('loading', 'Loading sell setup…');
 
   fetch('/api/sell-setup')
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'HTTP ' + r.status); });
+      return r.json();
+    })
     .then(function(d) {
       if (d.error) { showSetupStatus('error', d.error); return; }
       _currentSetup = d;

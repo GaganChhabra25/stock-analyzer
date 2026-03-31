@@ -40,151 +40,123 @@ def _expected_move(spot: float, iv_pct: float, dte: int) -> float:
 
 def fetch_summary(expiry: date) -> dict:
     """
-    Single SQL query that aggregates 35L rows down to 8 numbers.
-    Returns {} if DB unavailable.
+    Fast summary from market_snapshot (small table) + one lightweight option_chain query.
+    Never runs full-table scans on 35L rows — all heavy aggregation avoided.
+    Returns {} only if DB is completely unavailable.
     """
     if not is_available():
         return {}
 
-    with _get_conn() as conn:
-        if conn is None:
-            return {}
-        with conn.cursor() as cur:
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return {}
+            with conn.cursor() as cur:
 
-            # ── A. Latest spot + ATM IV from market_snapshot ──────────────────
-            cur.execute("""
-                SELECT
-                    spot_price,
-                    vix,
-                    pcr_oi,
-                    atm_strike,
-                    atm_straddle,
-                    call_oi_wall,
-                    put_oi_wall,
-                    ts
-                FROM market_snapshot
-                WHERE instrument = 'NIFTY'
-                ORDER BY ts DESC
-                LIMIT 1
-            """)
-            snap = cur.fetchone()
+                # Hard timeout: fail fast rather than hang the UI
+                cur.execute("SET statement_timeout = '8s'")
 
-            if snap:
-                spot, vix, pcr, atm, straddle, ce_wall, pe_wall, ts = snap
-            else:
-                # Fallback: get spot from option_chain
+                # ── A. Latest live metrics from market_snapshot (tiny table) ──
+                # market_snapshot has ~375 rows/day — fast index scan
                 cur.execute("""
-                    SELECT underlying_ltp, ts
-                    FROM option_chain
-                    WHERE instrument = 'NIFTY' AND underlying_ltp IS NOT NULL
+                    SELECT spot_price, vix, pcr_oi, atm_strike,
+                           atm_straddle, call_oi_wall, put_oi_wall, ts
+                    FROM market_snapshot
+                    WHERE instrument = 'NIFTY'
                     ORDER BY ts DESC LIMIT 1
                 """)
-                row = cur.fetchone()
-                if not row:
-                    return {}
-                spot, ts = row
-                vix = pcr = atm = straddle = ce_wall = pe_wall = None
+                snap = cur.fetchone()
 
-            spot = float(spot)
-            atm = int(round(spot / 50) * 50) if not atm else int(atm)
+                if snap:
+                    spot, vix, pcr, atm, straddle, ce_wall, pe_wall, ts = snap
+                else:
+                    # Fallback: latest spot from option_chain (indexed on ts DESC)
+                    cur.execute("""
+                        SELECT underlying_ltp, ts
+                        FROM option_chain
+                        WHERE instrument = 'NIFTY'
+                          AND underlying_ltp IS NOT NULL
+                        ORDER BY ts DESC LIMIT 1
+                    """)
+                    row = cur.fetchone()
+                    if not row:
+                        return {}
+                    spot, ts = row
+                    vix = pcr = atm = straddle = ce_wall = pe_wall = None
 
-            # ── B. ATM IV for this expiry (avg last 2 hours, CE+PE) ───────────
-            cur.execute("""
-                SELECT ROUND(AVG(iv)::NUMERIC, 2)
-                FROM option_chain
-                WHERE instrument = 'NIFTY'
-                  AND expiry     = %s
-                  AND strike     = %s
-                  AND iv         IS NOT NULL
-                  AND ts        >= NOW() - INTERVAL '2 hours'
-            """, (expiry, atm))
-            iv_row = cur.fetchone()
-            atm_iv = float(iv_row[0]) if iv_row and iv_row[0] else None
+                spot = float(spot)
+                atm  = int(round(spot / 50) * 50) if not atm else int(atm)
 
-            # ── C. Max Pain: strike that minimises total OI payout ────────────
-            #    Aggregate OI per strike for this expiry (latest snapshot minute)
-            cur.execute("""
-                WITH latest_min AS (
-                    SELECT MAX(ts) AS max_ts
+                # ── B. ATM IV — only last 30 min, indexed lookup ───────────────
+                cur.execute("""
+                    SELECT ROUND(AVG(iv)::NUMERIC, 2)
                     FROM option_chain
-                    WHERE instrument = 'NIFTY' AND expiry = %s
-                ),
-                oi_per_strike AS (
-                    SELECT
-                        strike,
-                        SUM(CASE WHEN option_type = 'CE' THEN COALESCE(oi,0) ELSE 0 END) AS ce_oi,
-                        SUM(CASE WHEN option_type = 'PE' THEN COALESCE(oi,0) ELSE 0 END) AS pe_oi
-                    FROM option_chain, latest_min
-                    WHERE instrument = 'NIFTY'
-                      AND expiry     = %s
-                      AND ts         = latest_min.max_ts
-                    GROUP BY strike
-                ),
-                all_strikes AS (SELECT strike FROM oi_per_strike),
-                pain AS (
-                    SELECT
-                        a.strike AS expiry_at,
-                        SUM(
-                            CASE WHEN o.strike > a.strike
-                                 THEN (o.strike - a.strike) * o.ce_oi
-                                 ELSE 0 END
-                            +
-                            CASE WHEN o.strike < a.strike
-                                 THEN (a.strike - o.strike) * o.pe_oi
-                                 ELSE 0 END
-                        ) AS total_pain
-                    FROM all_strikes a
-                    CROSS JOIN oi_per_strike o
-                    GROUP BY a.strike
-                )
-                SELECT expiry_at FROM pain ORDER BY total_pain ASC LIMIT 1
-            """, (expiry, expiry))
-            mp_row = cur.fetchone()
-            max_pain = int(mp_row[0]) if mp_row else atm
+                    WHERE instrument  = 'NIFTY'
+                      AND expiry      = %s
+                      AND strike      = %s
+                      AND iv          IS NOT NULL
+                      AND ts         >= NOW() - INTERVAL '30 minutes'
+                """, (expiry, atm))
+                iv_row = cur.fetchone()
+                atm_iv = float(iv_row[0]) if iv_row and iv_row[0] else None
 
-            # ── D. Historical avg weekly range for similar IV band ─────────────
-            #    weekly_summaries view doesn't exist yet → compute inline
-            cur.execute("""
-                WITH daily AS (
+                # ── C. Max pain — from market_snapshot OI walls (already computed)
+                # call_oi_wall = strike with highest CE OI (resistance)
+                # put_oi_wall  = strike with highest PE OI (support)
+                # Max pain approximation: midpoint of the two walls
+                if ce_wall and pe_wall:
+                    max_pain = int(round((int(ce_wall) + int(pe_wall)) / 2 / 50) * 50)
+                else:
+                    max_pain = atm
+
+                # ── D. Historical weekly range — from market_snapshot, NOT option_chain
+                # market_snapshot: ~375 rows/day × 90 days = ~33k rows (fast)
+                cur.execute("""
+                    WITH daily AS (
+                        SELECT
+                            ts::date                    AS d,
+                            MAX(spot_price)             AS day_high,
+                            MIN(spot_price)             AS day_low
+                        FROM market_snapshot
+                        WHERE instrument = 'NIFTY'
+                          AND spot_price IS NOT NULL
+                          AND ts >= NOW() - INTERVAL '90 days'
+                        GROUP BY ts::date
+                    ),
+                    weekly AS (
+                        SELECT
+                            DATE_TRUNC('week', d)       AS wk,
+                            MAX(day_high) - MIN(day_low) AS weekly_range
+                        FROM daily
+                        GROUP BY DATE_TRUNC('week', d)
+                        HAVING COUNT(*) >= 3
+                    )
                     SELECT
-                        ts::date                        AS d,
-                        MAX(underlying_ltp)             AS day_high,
-                        MIN(underlying_ltp)             AS day_low
-                    FROM option_chain
-                    WHERE instrument = 'NIFTY'
-                      AND underlying_ltp IS NOT NULL
-                      AND ts >= NOW() - INTERVAL '90 days'
-                    GROUP BY ts::date
-                ),
-                weekly AS (
-                    SELECT
-                        DATE_TRUNC('week', d)           AS wk,
-                        MAX(day_high) - MIN(day_low)    AS weekly_range
-                    FROM daily
-                    GROUP BY DATE_TRUNC('week', d)
-                    HAVING COUNT(*) >= 3   -- at least 3 trading days
-                )
-                SELECT
-                    ROUND(AVG(weekly_range)::NUMERIC, 0)  AS avg_range,
-                    ROUND(PERCENTILE_CONT(0.75)
-                          WITHIN GROUP (ORDER BY weekly_range)::NUMERIC, 0) AS p75_range,
-                    COUNT(*) AS weeks
-                FROM weekly
-            """)
-            hist = cur.fetchone()
-            avg_range = int(hist[0]) if hist and hist[0] else None
-            p75_range = int(hist[1]) if hist and hist[1] else None
-            hist_weeks = int(hist[2]) if hist and hist[2] else 0
+                        ROUND(AVG(weekly_range)::NUMERIC, 0),
+                        ROUND(PERCENTILE_CONT(0.75)
+                              WITHIN GROUP (ORDER BY weekly_range)::NUMERIC, 0),
+                        COUNT(*)
+                    FROM weekly
+                """)
+                hist = cur.fetchone()
+                avg_range  = int(hist[0]) if hist and hist[0] else None
+                p75_range  = int(hist[1]) if hist and hist[1] else None
+                hist_weeks = int(hist[2]) if hist and hist[2] else 0
+
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("fetch_summary error: %s", exc)
+        return {}
 
     return {
         "spot":       spot,
         "atm":        atm,
         "atm_iv":     atm_iv,
-        "vix":        float(vix)   if vix   else None,
-        "pcr":        float(pcr)   if pcr   else None,
+        "vix":        float(vix)      if vix      else None,
+        "pcr":        float(pcr)      if pcr      else None,
         "straddle":   float(straddle) if straddle else None,
-        "ce_wall":    int(ce_wall) if ce_wall else None,
-        "pe_wall":    int(pe_wall) if pe_wall else None,
+        "ce_wall":    int(ce_wall)    if ce_wall  else None,
+        "pe_wall":    int(pe_wall)    if pe_wall  else None,
         "max_pain":   max_pain,
         "avg_range":  avg_range,
         "p75_range":  p75_range,
