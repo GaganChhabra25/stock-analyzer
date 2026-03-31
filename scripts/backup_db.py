@@ -125,8 +125,13 @@ def main():
     log.info("Destination : %s", BACKUP_ROOT)
     log.info("=" * 55)
 
-    # Ask SSH password once
+    # Ask SSH password
     ssh_pass = getpass.getpass(f"\nSSH password for {SSH_USER}@{SSH_HOST}: ")
+
+    # Ask DB password (Contabo PostgreSQL)
+    db_pass_input = getpass.getpass(f"DB  password for {creds['user']}@stock_analyzer : ")
+    if db_pass_input:
+        creds["password"] = db_pass_input
     print()
 
     # Open tunnel
