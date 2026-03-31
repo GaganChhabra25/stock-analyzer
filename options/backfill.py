@@ -1,13 +1,14 @@
 """
 Backfill historical options data using Kite Connect historical API.
 
-Pulls per-minute OHLCV + OI for NIFTY and BANKNIFTY options
-(ATM ± 6 strikes) for a given date range and inserts into option_chain.
+Pulls per-minute OHLCV + OI for NIFTY and BANKNIFTY options across
+all near-term expiries (up to 90 days out), covering the full spot
+price range over the last 59 days.
 
 Usage:
-    python options/backfill.py                  # last 5 trading days
-    python options/backfill.py --days 10        # last 10 trading days
-    python options/backfill.py --from 2026-03-24 --to 2026-03-28
+    python options/backfill.py                      # all near-term expiries, 59 days
+    python options/backfill.py --from 2026-02-01    # from a specific date
+    python options/backfill.py --expiry 2026-04-07  # single expiry only
 """
 
 import argparse
@@ -30,103 +31,84 @@ from logging_config import configure_logging
 configure_logging()
 logger = logging.getLogger(__name__)
 
-SYMBOLS = ["NIFTY", "BANKNIFTY"]
-N_STRIKES = 6
+SYMBOLS        = ["NIFTY", "BANKNIFTY"]
 RISK_FREE_RATE = 0.07
+MAX_DAYS       = 59        # Kite API hard limit for minute data
+MAX_EXPIRY_DAYS = 90       # Only pull expiries within 90 days
 
 # Fixed Kite instrument tokens for index spot prices
 INDEX_TOKENS = {
-    "NIFTY":     256265,   # NSE:NIFTY 50
-    "BANKNIFTY": 260105,   # NSE:NIFTY BANK
+    "NIFTY":     256265,
+    "BANKNIFTY": 260105,
 }
 
-
-def trading_days_back(n: int):
-    """Return list of last n trading days (Mon-Fri), most recent first."""
-    days = []
-    d = date.today() - timedelta(days=1)
-    while len(days) < n:
-        if d.weekday() < 5:  # Mon=0 … Fri=4
-            days.append(d)
-        d -= timedelta(days=1)
-    return days
+# How many strikes either side of ATM range to cover
+STRIKE_BUFFER = 15   # wider than live collector to cover full historical range
 
 
 def fetch_spot_history(kite, symbol: str, from_dt: datetime, to_dt: datetime) -> dict:
-    """
-    Fetch per-minute spot price history for index.
-    Returns {datetime: spot_price}.
-    """
+    """Fetch per-minute spot price. Returns {datetime: close_price}."""
     token = INDEX_TOKENS[symbol]
     try:
-        records = kite.historical_data(
-            instrument_token=token,
-            from_date=from_dt,
-            to_date=to_dt,
-            interval="minute",
-        )
+        records = kite.historical_data(token, from_dt, to_dt, "minute")
         return {r["date"].replace(tzinfo=None): r["close"] for r in records}
     except Exception as exc:
-        logger.error("Failed to fetch spot history for %s: %s", symbol, exc)
+        logger.error("Spot history failed for %s: %s", symbol, exc)
         return {}
 
 
-def get_expiries_in_range(df, symbol: str, from_date: date, to_date: date):
-    """Return all expiries that overlap with the date range."""
-    sym_df = df[df["tradingsymbol"].str.startswith(symbol)]
-    expiries = sorted(sym_df["expiry"].unique())
+def get_strike_range(spot_history: dict, symbol: str, buffer: int) -> set:
+    """
+    Return all strikes covering the full spot range + buffer strikes on each side.
+    This ensures we capture all contracts that were ATM during the period.
+    """
+    step = STRIKE_STEP.get(symbol, 50)
+    if not spot_history:
+        return set()
+    lo = min(spot_history.values())
+    hi = max(spot_history.values())
+    # ATM at lowest spot minus buffer, to ATM at highest spot plus buffer
+    atm_lo = int(round(lo / step) * step) - buffer * step
+    atm_hi = int(round(hi / step) * step) + buffer * step
+    return set(range(atm_lo, atm_hi + step, step))
+
+
+def get_near_term_expiries(df, symbol: str, max_days: int) -> list:
+    """Return all expiries from today up to max_days out, sorted ascending."""
+    today = date.today()
+    cutoff = today + timedelta(days=max_days)
+    expiries = sorted(df[df["tradingsymbol"].str.startswith(symbol)]["expiry"].unique())
     result = []
     for e in expiries:
-        # Handle both date objects and strings (from JSON cache)
-        if isinstance(e, str):
-            e = date.fromisoformat(e)
-        if e >= from_date:
-            result.append(e)
+        e_date = date.fromisoformat(str(e))
+        if today <= e_date <= cutoff:
+            result.append(e_date)
     return result
 
 
-def get_strikes_for_range(spot_history: dict, symbol: str, n: int) -> set:
-    """Compute the union of all ATM ± n strikes seen across the spot history."""
-    step = STRIKE_STEP.get(symbol, 50)
-    strikes = set()
-    for spot in spot_history.values():
-        atm = int(round(spot / step) * step)
-        for i in range(-n, n + 1):
-            strikes.add(atm + i * step)
-    return strikes
+def already_have_data(symbol: str, expiry: date, from_date: date, to_date: date) -> bool:
+    """Check if we already have data for this expiry/date range to avoid re-fetching."""
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*) FROM option_chain
+                    WHERE instrument = %s
+                      AND expiry = %s
+                      AND ts::date BETWEEN %s AND %s
+                """, (symbol, expiry, from_date, to_date))
+                return cur.fetchone()[0] > 0
+    except Exception:
+        return False
 
 
-def backfill_symbol(kite, df, symbol: str, from_date: date, to_date: date):
-    """Backfill one symbol (NIFTY or BANKNIFTY) for the given date range."""
-    from_dt = datetime.combine(from_date, datetime.min.time().replace(hour=9, minute=15))
-    to_dt   = datetime.combine(to_date,   datetime.min.time().replace(hour=15, minute=30))
+def backfill_expiry(kite, df, symbol: str, expiry: date,
+                    from_date: date, to_date: date, strikes: set):
+    """Backfill one expiry for one symbol."""
+    expiry_str = expiry.isoformat()
 
-    logger.info("Fetching %s spot history %s → %s", symbol, from_date, to_date)
-    spot_history = fetch_spot_history(kite, symbol, from_dt, to_dt)
-    if not spot_history:
-        logger.error("No spot data for %s — aborting.", symbol)
-        return
-
-    # Determine all relevant strikes
-    strikes = get_strikes_for_range(spot_history, symbol, N_STRIKES)
-    logger.info("%s: %d unique strikes to backfill", symbol, len(strikes))
-
-    # Get expiries active during the range
-    expiries = get_expiries_in_range(df, symbol, from_date, to_date)
-    if not expiries:
-        logger.error("No expiries found for %s in range.", symbol)
-        return
-
-    # Use the earliest expiry that covers the range (weekly)
-    # For multi-week ranges, use the expiry closest to each day
-    expiry = expiries[0]
-    logger.info("%s: using expiry %s", symbol, expiry)
-
-    # Get instrument tokens for all relevant strikes
-    # Normalise expiry column to string for comparison
-    expiry_str = expiry.isoformat() if isinstance(expiry, date) else expiry
-    df_expiry  = df["expiry"].apply(lambda x: x.isoformat() if isinstance(x, date) else str(x))
-
+    # Filter instruments for this expiry and strike range
+    df_expiry = df["expiry"].apply(lambda x: str(x)[:10])
     sym_df = df[
         df["tradingsymbol"].str.startswith(symbol) &
         (df_expiry == expiry_str) &
@@ -135,51 +117,52 @@ def backfill_symbol(kite, df, symbol: str, from_date: date, to_date: date):
     ]
 
     if sym_df.empty:
-        logger.error("No instruments found for %s expiry %s", symbol, expiry)
-        return
+        logger.warning("No instruments for %s expiry %s", symbol, expiry)
+        return 0
+
+    from_dt = datetime.combine(from_date, datetime.min.time().replace(hour=9, minute=15))
+    to_dt   = datetime.combine(to_date,   datetime.min.time().replace(hour=15, minute=30))
+    T = max((expiry - date.today()).days, 1) / 365.0
+
+    # Need spot history for Greeks calculation
+    spot_history = fetch_spot_history(kite, symbol, from_dt, to_dt)
+    if not spot_history:
+        logger.error("No spot data for %s — skipping expiry %s", symbol, expiry)
+        return 0
 
     total_rows = 0
-    processed  = 0
+    n = len(sym_df)
 
-    for _, row in sym_df.iterrows():
-        token      = int(row["instrument_token"])
-        strike     = int(row["strike"])
-        opt_type   = row["instrument_type"]
-        processed += 1
+    for i, (_, row) in enumerate(sym_df.iterrows(), 1):
+        token    = int(row["instrument_token"])
+        strike   = int(row["strike"])
+        opt_type = row["instrument_type"]
 
         try:
-            records = kite.historical_data(
-                instrument_token=token,
-                from_date=from_dt,
-                to_date=to_dt,
-                interval="minute",
-            )
+            records = kite.historical_data(token, from_dt, to_dt, "minute")
         except Exception as exc:
-            logger.warning("Failed %s %s %s: %s", symbol, strike, opt_type, exc)
-            time.sleep(0.5)
+            logger.warning("[%d/%d] %s %s %s %s: %s", i, n, symbol, expiry, strike, opt_type, exc)
+            time.sleep(1)
             continue
+
+        time.sleep(0.35)
 
         if not records:
             continue
-
-        # Rate limit: ~3 req/sec
-        time.sleep(0.35)
-
-        T = max((expiry - date.today()).days, 1) / 365.0
 
         option_rows = []
         for rec in records:
             ts  = rec["date"].replace(tzinfo=None)
             ltp = rec["close"] or 0
             oi  = rec.get("oi", 0) or 0
+            vol = rec.get("volume", 0) or 0
 
             spot = spot_history.get(ts)
             if not spot:
-                # Find nearest spot (within 1 min)
                 closest = min(spot_history.keys(), key=lambda t: abs((t - ts).total_seconds()))
-                spot = spot_history[closest] if abs((closest - ts).total_seconds()) <= 60 else None
-
-            if not spot:
+                if abs((closest - ts).total_seconds()) <= 60:
+                    spot = spot_history[closest]
+            if not spot or ltp <= 0:
                 continue
 
             iv     = implied_volatility(ltp, spot, strike, T, RISK_FREE_RATE, opt_type)
@@ -190,18 +173,16 @@ def backfill_symbol(kite, df, symbol: str, from_date: date, to_date: date):
                 "ts": ts, "instrument": symbol, "expiry": expiry,
                 "strike": strike, "option_type": opt_type,
                 "ltp": ltp, "bid": None, "ask": None,
-                "oi": oi, "oi_change": 0,
-                "volume": rec.get("volume", 0) or 0,
+                "oi": oi, "oi_change": 0, "volume": vol,
                 "iv": iv,
                 "delta": greeks["delta"], "gamma": greeks["gamma"],
-                "theta": greeks["theta"], "vega": greeks["vega"],
+                "theta": greeks["theta"], "vega":  greeks["vega"],
                 "underlying_ltp": spot,
             })
 
         if not option_rows:
             continue
 
-        # Insert — skip duplicates
         with _get_conn() as conn:
             with conn.cursor() as cur:
                 cur.executemany("""
@@ -219,63 +200,95 @@ def backfill_symbol(kite, df, symbol: str, from_date: date, to_date: date):
             conn.commit()
 
         total_rows += len(option_rows)
-        logger.info("[%d/%d] %s %s %s: %d rows inserted",
-                    processed, len(sym_df), symbol, strike, opt_type, len(option_rows))
+        logger.info("[%d/%d] %s %s %s %s: %d rows", i, n, symbol, expiry, strike, opt_type, len(option_rows))
 
-    logger.info("%s backfill done. Total rows inserted: %d", symbol, total_rows)
     return total_rows
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Backfill historical options data")
-    parser.add_argument("--days", type=int, default=5,
-                        help="Number of trading days to backfill (default: 5)")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--from", dest="from_date", type=str,
-                        help="Start date YYYY-MM-DD")
-    parser.add_argument("--to", dest="to_date", type=str,
-                        help="End date YYYY-MM-DD")
+                        help="Start date YYYY-MM-DD (default: 59 days ago)")
+    parser.add_argument("--expiry", type=str,
+                        help="Single expiry date YYYY-MM-DD")
     args = parser.parse_args()
 
-    if args.from_date and args.to_date:
-        from_date = date.fromisoformat(args.from_date)
-        to_date   = date.fromisoformat(args.to_date)
-    else:
-        days = trading_days_back(args.days)
-        from_date = min(days)
-        to_date   = max(days)
+    today     = date.today()
+    from_date = date.fromisoformat(args.from_date) if args.from_date else today - timedelta(days=MAX_DAYS)
+    to_date   = today - timedelta(days=1)  # up to yesterday
 
-    logger.info("Backfilling %s → %s", from_date, to_date)
+    # Clamp to Kite's 60-day limit
+    if (today - from_date).days > MAX_DAYS:
+        from_date = today - timedelta(days=MAX_DAYS)
+        logger.warning("Clamped from_date to %s (Kite 60-day limit)", from_date)
+
+    logger.info("Backfilling %s to %s", from_date, to_date)
 
     kite = get_kite()
     if not kite:
-        logger.error("Kite not authorized. Run kite_auto_login.py first.")
+        logger.error("Kite not authorized.")
         sys.exit(1)
 
+    # Force refresh instruments (ignore cache — we need all expiries)
+    from options.instruments import CACHE_FILE
+    if CACHE_FILE.exists():
+        CACHE_FILE.unlink()
     df = load_instruments(kite)
+    logger.info("Loaded %d NFO instruments", len(df))
 
     grand_total = 0
+
     for symbol in SYMBOLS:
-        rows = backfill_symbol(kite, df, symbol, from_date, to_date)
-        grand_total += (rows or 0)
+        logger.info("=" * 60)
+        logger.info("Symbol: %s", symbol)
 
-    logger.info("Backfill complete. Grand total rows: %d", grand_total)
+        # Fetch spot history to determine strike range
+        from_dt = datetime.combine(from_date, datetime.min.time().replace(hour=9, minute=15))
+        to_dt   = datetime.combine(to_date,   datetime.min.time().replace(hour=15, minute=30))
+        spot_history = fetch_spot_history(kite, symbol, from_dt, to_dt)
+        if not spot_history:
+            logger.error("No spot data for %s — skipping", symbol)
+            continue
 
-    # Send Telegram summary
-    token   = __import__("os").environ.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = __import__("os").environ.get("TELEGRAM_CHAT_ID", "")
-    if token and chat_id:
-        import requests
+        strikes = get_strike_range(spot_history, symbol, STRIKE_BUFFER)
+        logger.info("%s spot range: %.0f - %.0f | %d strikes to cover",
+                    symbol, min(spot_history.values()), max(spot_history.values()), len(strikes))
+
+        # Get expiries
+        if args.expiry:
+            expiries = [date.fromisoformat(args.expiry)]
+        else:
+            expiries = get_near_term_expiries(df, symbol, MAX_EXPIRY_DAYS)
+
+        logger.info("%s: %d expiries to process: %s", symbol, len(expiries),
+                    [str(e) for e in expiries])
+
+        for expiry in expiries:
+            if already_have_data(symbol, expiry, from_date, to_date):
+                logger.info("Skipping %s %s — data already exists", symbol, expiry)
+                continue
+            logger.info("Processing %s expiry %s...", symbol, expiry)
+            rows = backfill_expiry(kite, df, symbol, expiry, from_date, to_date, strikes)
+            grand_total += rows
+            logger.info("%s %s done: %d rows", symbol, expiry, rows)
+
+    logger.info("=" * 60)
+    logger.info("Backfill complete. Grand total: %d rows", grand_total)
+
+    # Telegram summary
+    import os, requests as req
+    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id  = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if tg_token and chat_id:
         msg = (
-            f"Backfill complete!\n"
-            f"Range: {from_date} to {to_date}\n"
-            f"Total rows inserted: {grand_total:,}\n"
-            f"Symbols: NIFTY + BANKNIFTY"
+            "Backfill complete!\n"
+            "Range: " + str(from_date) + " to " + str(to_date) + "\n"
+            "Total rows inserted: " + str(grand_total) + "\n"
+            "Symbols: NIFTY + BANKNIFTY\n"
+            "Expiries covered: near-term up to 90 days"
         )
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": msg},
-            timeout=10,
-        )
+        req.post("https://api.telegram.org/bot" + tg_token + "/sendMessage",
+                 json={"chat_id": chat_id, "text": msg}, timeout=10)
 
 
 if __name__ == "__main__":
