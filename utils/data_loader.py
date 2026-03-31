@@ -113,6 +113,58 @@ def _parse_standard(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+# ── Kite Connect live holdings fetcher ───────────────────────────────────────
+
+def load_holdings_from_kite() -> pd.DataFrame:
+    """
+    Fetch live holdings directly from Zerodha via Kite Connect API.
+    Returns same DataFrame format as load_zerodha_holdings().
+    Raises RuntimeError if Kite is not authorized.
+    """
+    try:
+        from options.kite_auth import get_kite
+    except ImportError:
+        raise RuntimeError("options.kite_auth not available")
+
+    kite = get_kite()
+    if kite is None:
+        raise RuntimeError("Kite not authorized — no access token for today")
+
+    logger.info("Fetching live holdings from Kite Connect...")
+    raw = kite.holdings()
+
+    if not raw:
+        raise RuntimeError("Kite returned empty holdings list")
+
+    rows = []
+    for h in raw:
+        symbol = h.get("tradingsymbol", "").strip().upper()
+        qty    = h.get("quantity", 0) + h.get("t1_quantity", 0)
+        if not symbol or qty <= 0:
+            continue
+        rows.append({
+            "Symbol":        symbol,
+            "Quantity":      float(qty),
+            "Avg_Cost":      float(h.get("average_price", 0)),
+            "LTP":           float(h.get("last_price", 0)),
+            "Current_Value": float(qty) * float(h.get("last_price", 0)),
+            "PnL":           float(h.get("pnl", 0)),
+            "Net_Change_Pct": float(h.get("day_change_percentage", 0)),
+        })
+
+    if not rows:
+        raise RuntimeError("No holdings returned from Kite")
+
+    df = pd.DataFrame(rows)
+    df["Is_ETF"]       = df["Symbol"].apply(is_etf)
+    df["ETF_Name"]     = df["Symbol"].apply(lambda s: etf_meta(s)[0])
+    df["ETF_Category"] = df["Symbol"].apply(lambda s: etf_meta(s)[1])
+
+    logger.info("Loaded %d live holdings from Kite (%d ETFs, %d stocks)",
+                len(df), df["Is_ETF"].sum(), (~df["Is_ETF"]).sum())
+    return df.reset_index(drop=True)
+
+
 # ── Public loader ─────────────────────────────────────────────────────────────
 
 def load_zerodha_holdings(filepath: str) -> pd.DataFrame:

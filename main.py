@@ -25,7 +25,7 @@ import pandas as pd
 
 from logging_config import configure_logging
 from config import GOALS, ZERODHA_HOLDINGS_FILE, MF_HOLDINGS_FILE, REPORT_OUTPUT_FILE, HTML_REPORT_FILE
-from utils.data_loader import load_zerodha_holdings, load_mf_holdings
+from utils.data_loader import load_zerodha_holdings, load_mf_holdings, load_holdings_from_kite
 from analyzers.stock_analyzer import StockAnalyzer
 from analyzers.mf_analyzer import MFAnalyzer
 from analyzers.portfolio_analyzer import PortfolioAnalyzer
@@ -51,12 +51,18 @@ def run(stocks_only=False, mf_only=False, save_report=True):
 
     # ── Holdings (stocks + ETFs) ──────────────────────────────────────────────
     if not mf_only:
+        holdings = None
         try:
-            holdings = load_zerodha_holdings(ZERODHA_HOLDINGS_FILE)
-        except FileNotFoundError as e:
-            print(f"{Fore.RED}{e}{Style.RESET_ALL}")
-            logger.error("Holdings file not found: %s", e)
-            holdings = None
+            holdings = load_holdings_from_kite()
+            print(f"{Fore.GREEN}Live holdings fetched from Zerodha Kite ({len(holdings)} positions){Style.RESET_ALL}")
+        except Exception as kite_err:
+            logger.warning("Kite holdings unavailable (%s) — falling back to CSV", kite_err)
+            print(f"{Fore.YELLOW}Kite unavailable — loading from CSV{Style.RESET_ALL}")
+            try:
+                holdings = load_zerodha_holdings(ZERODHA_HOLDINGS_FILE)
+            except FileNotFoundError as e:
+                print(f"{Fore.RED}{e}{Style.RESET_ALL}")
+                logger.error("Holdings file not found: %s", e)
 
         if holdings is not None and not holdings.empty:
             analyzer = StockAnalyzer()
