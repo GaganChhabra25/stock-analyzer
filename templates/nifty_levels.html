@@ -139,6 +139,19 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .pill-val { font-size: 20px; font-weight: 700; color: #3fb950; }
 .pill-lbl { font-size: 10px; color: #8b949e; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.4px; text-align: center; }
 
+/* ── P&L box ── */
+.pnl-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; }
+.pnl-title { font-size: 10px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.pnl-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.pnl-cell { text-align: center; }
+.pnl-cell-label { font-size: 9px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+.pnl-cell-value { font-size: 15px; font-weight: 700; }
+.pnl-invest { color: #f0f6fc; }
+.pnl-profit { color: #3fb950; }
+.pnl-loss   { color: #f85149; }
+.pnl-note   { font-size: 10px; color: #484f58; margin-top: 8px; line-height: 1.5; }
+.pnl-divider { width: 1px; background: #30363d; }
+
 /* ── Disclaimer ── */
 .disclaimer { margin-top: 28px; font-size: 11px; color: #484f58; text-align: center; line-height: 1.6; }
 
@@ -352,6 +365,46 @@ tr:hover td { background: rgba(255,255,255,0.02); }
       </div>
 
       <!-- Reason -->
+      <!-- P&L for 1 lot -->
+      {% if trade.pnl %}
+      <div class="pnl-box">
+        <div class="pnl-title">&#128181; 1 Lot ({{ trade.pnl.lot_size }} units) P&amp;L</div>
+        <div class="pnl-grid">
+          <div class="pnl-cell">
+            <div class="pnl-cell-label">Margin Required</div>
+            <div class="pnl-cell-value pnl-invest">&#8377;{{ "{:,}".format(trade.pnl.margin) }}</div>
+          </div>
+          <div class="pnl-cell">
+            <div class="pnl-cell-label">Max Profit</div>
+            <div class="pnl-cell-value pnl-profit">&#8377;{{ "{:,}".format(trade.pnl.max_profit_inr) }}</div>
+          </div>
+          <div class="pnl-cell">
+            <div class="pnl-cell-label">Max Loss</div>
+            <div class="pnl-cell-value pnl-loss">&#8377;{{ "{:,}".format(trade.pnl.max_loss_inr) }}</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;">
+          <div style="flex:1;background:#21262d;border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">30% Target Profit</div>
+            <div style="font-size:14px;font-weight:700;color:#58a6ff;">&#8377;{{ "{:,}".format(trade.pnl.target_inr) }}</div>
+          </div>
+          <div style="flex:1;background:#21262d;border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Premium Collected</div>
+            <div style="font-size:14px;font-weight:700;color:#e3b341;">{{ trade.pnl.premium_pts | int }} pts × {{ trade.pnl.lot_size }}</div>
+          </div>
+          <div style="flex:1;background:#21262d;border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Return on Margin</div>
+            <div style="font-size:14px;font-weight:700;color:#3fb950;">
+              {% if trade.pnl.margin > 0 %}
+                {{ "%.1f"|format(trade.pnl.target_inr / trade.pnl.margin * 100) }}%
+              {% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="pnl-note">&#9432; {{ trade.pnl.note }}</div>
+      </div>
+      {% endif %}
+
       <div class="trade-reason">&#128203; <strong>Why this trade:</strong> {{ trade.reason }}</div>
     </div>
     {% endfor %}
@@ -452,6 +505,46 @@ tr:hover td { background: rgba(255,255,255,0.02); }
           <span class="tr-val green">{{ trade.theta_day }}</span>
         </div>
       </div>
+
+      <!-- P&L for 1 lot -->
+      {% if trade.pnl %}
+      <div class="pnl-box">
+        <div class="pnl-title">&#128181; 1 Lot ({{ trade.pnl.lot_size }} units) P&amp;L</div>
+        <div class="pnl-grid">
+          <div class="pnl-cell">
+            <div class="pnl-cell-label">Margin Required</div>
+            <div class="pnl-cell-value pnl-invest">&#8377;{{ "{:,}".format(trade.pnl.margin) }}</div>
+          </div>
+          <div class="pnl-cell">
+            <div class="pnl-cell-label">Max Profit</div>
+            <div class="pnl-cell-value pnl-profit">&#8377;{{ "{:,}".format(trade.pnl.max_profit_inr) }}</div>
+          </div>
+          <div class="pnl-cell">
+            <div class="pnl-cell-label">Max Loss</div>
+            <div class="pnl-cell-value pnl-loss">&#8377;{{ "{:,}".format(trade.pnl.max_loss_inr) }}</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;">
+          <div style="flex:1;background:#21262d;border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">30% Target Profit</div>
+            <div style="font-size:14px;font-weight:700;color:#58a6ff;">&#8377;{{ "{:,}".format(trade.pnl.target_inr) }}</div>
+          </div>
+          <div style="flex:1;background:#21262d;border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Premium Collected</div>
+            <div style="font-size:14px;font-weight:700;color:#e3b341;">{{ trade.pnl.premium_pts | int }} pts × {{ trade.pnl.lot_size }}</div>
+          </div>
+          <div style="flex:1;background:#21262d;border-radius:6px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9px;color:#8b949e;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px;">Return on Margin</div>
+            <div style="font-size:14px;font-weight:700;color:#3fb950;">
+              {% if trade.pnl.margin > 0 %}
+                {{ "%.1f"|format(trade.pnl.target_inr / trade.pnl.margin * 100) }}%
+              {% else %}—{% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="pnl-note">&#9432; {{ trade.pnl.note }}</div>
+      </div>
+      {% endif %}
 
       <div class="trade-reason">&#128203; <strong>Why this trade:</strong> {{ trade.reason }}</div>
     </div>

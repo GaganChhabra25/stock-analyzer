@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from screener.db import _get_conn, is_available as db_available
+from options.greeks import bs_price
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ _HIST_STRADDLE_AVG    = 1290        # avg ATM straddle premium at 9:15 AM open
 
 _WEEKLY_IV_TYPICAL    = 35.9        # % IV for 7-DTE expiry (from term structure)
 _MONTHLY_IV_TYPICAL   = 25.1        # % IV for 28-DTE expiry
+
+NIFTY_LOT_SIZE        = 75          # 1 lot = 75 units
 
 _RISK_FREE             = 0.07        # 7% annualised
 _STRIKE_STEP           = 50          # NIFTY strike granularity
@@ -79,6 +82,86 @@ def _strangle_prob(spot: float, strike_lo: float, strike_hi: float,
 
 def _atm_round(spot: float) -> int:
     return int(round(spot / _STRIKE_STEP) * _STRIKE_STEP)
+
+
+def _option_price(spot: float, strike: int, iv_pct: float, dte: int, opt: str) -> float:
+    """Black-Scholes theoretical price for an option."""
+    T = max(dte, 1) / 365.0
+    sigma = iv_pct / 100.0
+    return round(bs_price(spot, strike, T, _RISK_FREE, sigma, opt), 2)
+
+
+def _strangle_margin(spot: float) -> int:
+    """
+    Estimated SPAN + Exposure margin for a naked strangle (2 short legs).
+    Based on typical Zerodha/Kite margin for Nifty weekly OTM options:
+    ~₹70,000-90,000 per leg with ~25% correlation benefit for combined position.
+    Formula: ~6% of notional for both legs combined.
+    """
+    return int(spot * NIFTY_LOT_SIZE * 0.06)
+
+
+def _pnl_strangle(spot: float, sell_ce: int, sell_pe: int,
+                  iv_pct: float, dte: int) -> dict:
+    """P&L for 1 lot of short strangle."""
+    ce_price = _option_price(spot, sell_ce, iv_pct, dte, "CE")
+    pe_price = _option_price(spot, sell_pe, iv_pct, dte, "PE")
+    premium_pts   = ce_price + pe_price
+    premium_inr   = int(premium_pts * NIFTY_LOT_SIZE)
+    margin_inr    = _strangle_margin(spot)
+    # With hard SL 200 pts beyond each short strike, assume avg loss = 300 pts
+    sl_loss_pts   = 300
+    max_loss_inr  = int(sl_loss_pts * NIFTY_LOT_SIZE)
+    # Target: 30% of premium per trade cycle
+    target_inr    = int(premium_inr * 0.30)
+    return {
+        "margin":          margin_inr,
+        "premium_pts":     round(premium_pts, 0),
+        "max_profit_inr":  premium_inr,
+        "max_loss_inr":    max_loss_inr,
+        "target_inr":      target_inr,
+        "ce_price":        ce_price,
+        "pe_price":        pe_price,
+        "lot_size":        NIFTY_LOT_SIZE,
+        "note":            "Max loss assumes SL at ±200 pts beyond strikes. Actual max loss = unlimited.",
+    }
+
+
+def _pnl_iron_condor(spot: float, buy_pe: int, sell_pe: int,
+                     sell_ce: int, buy_ce: int,
+                     iv_pct: float, dte: int) -> dict:
+    """P&L for 1 lot of iron condor."""
+    sell_ce_p = _option_price(spot, sell_ce, iv_pct, dte, "CE")
+    buy_ce_p  = _option_price(spot, buy_ce,  iv_pct, dte, "CE")
+    sell_pe_p = _option_price(spot, sell_pe, iv_pct, dte, "PE")
+    buy_pe_p  = _option_price(spot, buy_pe,  iv_pct, dte, "PE")
+
+    net_premium_pts  = (sell_ce_p - buy_ce_p) + (sell_pe_p - buy_pe_p)
+    spread_width     = sell_ce - buy_pe_p  # not right, use actual spread
+    call_spread_w    = buy_ce - sell_ce
+    put_spread_w     = sell_pe - buy_pe
+    spread_w         = max(call_spread_w, put_spread_w)   # both = 500 typically
+
+    max_loss_pts     = spread_w - net_premium_pts
+    net_premium_inr  = int(net_premium_pts * NIFTY_LOT_SIZE)
+    max_loss_inr     = int(max_loss_pts * NIFTY_LOT_SIZE)
+    # Margin blocked = max loss (SEBI allows this for defined-risk spreads)
+    margin_inr       = max_loss_inr
+    target_inr       = int(net_premium_inr * 0.40)   # target 40% of premium
+
+    return {
+        "margin":          margin_inr,
+        "premium_pts":     round(net_premium_pts, 0),
+        "max_profit_inr":  net_premium_inr,
+        "max_loss_inr":    max_loss_inr,
+        "target_inr":      target_inr,
+        "sell_ce_price":   sell_ce_p,
+        "buy_ce_price":    buy_ce_p,
+        "sell_pe_price":   sell_pe_p,
+        "buy_pe_price":    buy_pe_p,
+        "lot_size":        NIFTY_LOT_SIZE,
+        "note":            "Max loss is hard-capped. No SL needed beyond natural position limits.",
+    }
 
 
 # ── DB queries ────────────────────────────────────────────────────────────────
@@ -267,6 +350,9 @@ def _build_weekly_trades(spot: float, atm: int, dte: int,
 
     theta_day = round(_expected_move_pts(spot, iv, 1) * 0.05, 0)  # rough theta proxy
 
+    pnl_strangle = _pnl_strangle(spot, short_ce, short_pe, iv, dte)
+    pnl_ic       = _pnl_iron_condor(spot, buy_pe, short_pe, short_ce, buy_ce, iv, dte)
+
     trades = [
         {
             "rank":        1,
@@ -275,11 +361,12 @@ def _build_weekly_trades(spot: float, atm: int, dte: int,
             "probability": blended_strangle,
             "action":      f"SELL {short_ce} CE  +  SELL {short_pe} PE",
             "strikes":     {"sell_ce": short_ce, "sell_pe": short_pe},
-            "premium":     f"~{int(prem * 0.85):,} pts combined (estimate)",
-            "breakeven":   f"{short_pe - int(prem * 0.42):,}  –  {short_ce + int(prem * 0.42):,}",
+            "premium":     f"~{int(pnl_strangle['premium_pts']):,} pts combined",
+            "breakeven":   f"{short_pe - int(pnl_strangle['premium_pts'] / 2):,}  –  {short_ce + int(pnl_strangle['premium_pts'] / 2):,}",
             "max_loss":    "Unlimited beyond breakevens — use hard SL",
             "stop_loss":   f"Exit if Nifty closes below {short_pe - 200} or above {short_ce + 200}",
             "theta_day":   f"~{int(theta_day)} pts/day theta decay working for you",
+            "pnl":         pnl_strangle,
             "reason":      (
                 f"59-day backtest: sellers won {_HIST_WIN_RATE}% of days. "
                 f"Market avg overprices moves by 3x. "
@@ -301,16 +388,17 @@ def _build_weekly_trades(spot: float, atm: int, dte: int,
                 "buy_pe": buy_pe, "sell_pe": short_pe,
                 "sell_ce": short_ce, "buy_ce": buy_ce,
             },
-            "premium":     "Net 200–350 pts after buying protection",
-            "breakeven":   f"{short_pe - 300:,}  –  {short_ce + 300:,}",
-            "max_loss":    f"Max ₹{500 * 75:,} per lot (defined risk, no blowup)",
+            "premium":     f"Net ~{int(pnl_ic['premium_pts']):,} pts after buying protection",
+            "breakeven":   f"{short_pe - int(pnl_ic['premium_pts']):,}  –  {short_ce + int(pnl_ic['premium_pts']):,}",
+            "max_loss":    f"Max ₹{pnl_ic['max_loss_inr']:,} per lot (defined risk, no blowup)",
             "stop_loss":   "Natural — max loss is built-in",
             "theta_day":   f"~{int(theta_day * 0.4)} pts/day (lower premium, lower theta)",
+            "pnl":         pnl_ic,
             "reason":      (
                 "Same probability as strangle but with DEFINED RISK. "
                 "Survive black swan events (budget, RBI surprise). "
                 f"Best for consistent compounding. "
-                f"10-15% losing days won't blow the account — each loss is capped at ₹{500 * 75:,}/lot."
+                f"10-15% losing days won't blow the account — each loss is capped at ₹{pnl_ic['max_loss_inr']:,}/lot."
             ),
         },
     ]
@@ -331,6 +419,9 @@ def _build_monthly_trades(spot: float, atm: int, dte: int,
     blended       = round(strangle_prob * 0.70 + 72 * 0.30, 1)   # monthly historical ~72%
     ic_prob       = round(blended - 3, 1)
 
+    pnl_ic       = _pnl_iron_condor(spot, buy_pe, short_pe, short_ce, buy_ce, iv, dte)
+    pnl_strangle = _pnl_strangle(spot, short_ce, short_pe, iv, dte)
+
     trades = [
         {
             "rank":        1,
@@ -345,11 +436,12 @@ def _build_monthly_trades(spot: float, atm: int, dte: int,
                 "buy_pe": buy_pe, "sell_pe": short_pe,
                 "sell_ce": short_ce, "buy_ce": buy_ce,
             },
-            "premium":     "Net 250–400 pts (monthly time value)",
-            "breakeven":   f"{short_pe - 350:,}  –  {short_ce + 350:,}",
-            "max_loss":    f"Max ₹{500 * 75:,} per lot",
+            "premium":     f"Net ~{int(pnl_ic['premium_pts']):,} pts after buying protection",
+            "breakeven":   f"{short_pe - int(pnl_ic['premium_pts']):,}  –  {short_ce + int(pnl_ic['premium_pts']):,}",
+            "max_loss":    f"Max ₹{pnl_ic['max_loss_inr']:,} per lot",
             "stop_loss":   "Exit at DTE 10 or 30-40% profit target — whichever first",
             "theta_day":   f"~{int(_expected_move_pts(spot, iv, 1) * 0.03)} pts/day at entry (accelerates near expiry)",
+            "pnl":         pnl_ic,
             "reason":      (
                 f"Monthly IV ({iv:.1f}%) vs weekly IV ({_WEEKLY_IV_TYPICAL}%) — enter monthly at DTE 25 "
                 f"when theta still moderate, close at DTE 10 when gamma risk rises. "
@@ -365,11 +457,12 @@ def _build_monthly_trades(spot: float, atm: int, dte: int,
             "probability": round(blended + 4, 1),
             "action":      f"SELL {short_ce} CE  +  SELL {short_pe} PE",
             "strikes":     {"sell_ce": short_ce, "sell_pe": short_pe},
-            "premium":     f"~{int(_expected_move_pts(spot, iv, dte) * 0.12):,} pts combined",
-            "breakeven":   f"{short_pe - 500:,}  –  {short_ce + 500:,}",
+            "premium":     f"~{int(pnl_strangle['premium_pts']):,} pts combined",
+            "breakeven":   f"{short_pe - int(pnl_strangle['premium_pts'] / 2):,}  –  {short_ce + int(pnl_strangle['premium_pts'] / 2):,}",
             "max_loss":    "Unlimited — needs active management",
             "stop_loss":   f"Hard stop: Nifty below {short_pe - 300} or above {short_ce + 300}",
             "theta_day":   "Higher premium = faster theta but also higher delta exposure",
+            "pnl":         pnl_strangle,
             "reason":      (
                 "Higher premium vs IC, but requires active delta-hedging. "
                 "Best for experienced traders with margin headroom. "
@@ -436,8 +529,18 @@ def get_nifty_intelligence() -> dict:
     # ── 4. Upcoming expiries ──────────────────────────────────────────────────
     db_expiries = _get_upcoming_expiries()
 
-    # Weekly = nearest upcoming expiry
-    weekly_expiry = db_expiries[0] if db_expiries else _next_thursday(today)
+    # Weekly = nearest upcoming expiry with DTE >= 4 (not worth entering with < 4 DTE)
+    weekly_expiry = None
+    for e in db_expiries:
+        if (e - today).days >= 4:
+            weekly_expiry = e
+            break
+    if weekly_expiry is None:
+        # Fallback: compute next Thursday with enough room
+        candidate = _next_thursday(today)
+        if (candidate - today).days < 4:
+            candidate = _next_thursday(candidate)
+        weekly_expiry = candidate
 
     # Monthly = last expiry with DTE > 20 or last Thursday of current month
     monthly_expiry = None
