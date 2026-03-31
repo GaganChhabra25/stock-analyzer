@@ -91,31 +91,49 @@ def auto_login() -> bool:
 
     logger.info("Step 2 OK. Session established.")
 
-    # ── Step 3: Hit Kite Connect auth URL — session cookie auto-skips login ────
+    # ── Step 3: Hit Kite Connect auth URL — intercept redirect before Flask ──────
     import urllib.parse as up
+    import re
     kite_auth_url = f"https://kite.trade/connect/login?api_key={api_key}&v=3"
+    request_token = None
 
     try:
-        final = session.get(kite_auth_url, allow_redirects=True, timeout=15)
-        final_url = final.url
+        # Follow redirects manually so we can capture request_token from the
+        # Location header *before* the redirect hits our Flask /kite/callback
+        # (which would reject it due to @login_required and redirect to /login).
+        current_url = kite_auth_url
+        for _ in range(10):
+            resp = session.get(current_url, allow_redirects=False, timeout=15)
+            location = resp.headers.get("Location", "")
+            logger.debug("Step 3 redirect: %s -> %s (status %s)",
+                         current_url[:80], location[:120], resp.status_code)
+
+            # Check both the Location header and the current URL for request_token
+            for candidate in [location, current_url]:
+                m = re.search(r"[?&]request_token=([A-Za-z0-9]+)", candidate)
+                if m:
+                    request_token = m.group(1)
+                    break
+
+            if request_token:
+                break
+
+            if resp.status_code in (301, 302, 303, 307, 308) and location:
+                # Make relative URLs absolute
+                current_url = up.urljoin(current_url, location)
+            else:
+                # No more redirects — check final response body as last resort
+                m = re.search(r"request_token=([A-Za-z0-9]+)", resp.text[:1000])
+                if m:
+                    request_token = m.group(1)
+                break
+
     except Exception as exc:
         logger.error("Step 3 redirect failed: %s", exc)
         return False
 
-    params = up.parse_qs(up.urlparse(final_url).query)
-    request_token = params.get("request_token", [None])[0]
-
-    # Fallback: scan response text for request_token
     if not request_token:
-        import re
-        for url in [final_url, final.text[:500]]:
-            match = re.search(r"request_token=([A-Za-z0-9]+)", url)
-            if match:
-                request_token = match.group(1)
-                break
-
-    if not request_token:
-        logger.error("Could not extract request_token. Final URL: %s", final_url[:200])
+        logger.error("Could not extract request_token. Last URL: %s", current_url[:200])
         return False
 
     logger.info("Step 3 OK. request_token received.")
