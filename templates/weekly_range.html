@@ -102,6 +102,66 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 @keyframes shimmer { to { background-position: -200% 0; } }
 .skel-val { height: 28px; width: 70%; margin-bottom: 6px; }
 .skel-sub { height: 14px; width: 50%; }
+
+/* ── Sell setup card ── */
+.sell-card { background: #161b22; border: 1px solid rgba(248,81,73,0.3); border-radius: 14px; padding: 24px 28px; margin-bottom: 20px; }
+.sell-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
+.sell-title { font-size: 15px; font-weight: 700; color: #f0f6fc; display: flex; align-items: center; gap: 10px; }
+.prob-badge { font-size: 12px; font-weight: 700; padding: 3px 12px; border-radius: 99px; }
+.prob-high { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.prob-med  { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.prob-low  { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+
+.sell-legs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+@media (max-width: 600px) { .sell-legs { grid-template-columns: 1fr; } }
+.sell-leg { background: rgba(248,81,73,0.07); border: 1px solid rgba(248,81,73,0.2); border-radius: 8px; padding: 14px 16px; }
+.sell-leg-label { font-size: 10px; color: #f85149; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.sell-leg-strike { font-size: 22px; font-weight: 700; color: #f0f6fc; }
+.sell-leg-meta { font-size: 11px; color: #8b949e; margin-top: 3px; }
+
+.sell-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+@media (max-width: 700px) { .sell-metrics { grid-template-columns: repeat(2, 1fr); } }
+.metric { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; }
+.metric-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.metric-value { font-size: 18px; font-weight: 700; }
+
+.reason-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; }
+.reason-item { font-size: 12px; color: #8b949e; padding: 3px 0; }
+.reason-item::before { content: "• "; color: #58a6ff; }
+
+.paper-btn { background: linear-gradient(135deg, #1f6feb, #388bfd); border: none; color: #fff; padding: 11px 28px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: opacity 0.2s; }
+.paper-btn:hover { opacity: 0.85; }
+.paper-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Open trades table ── */
+.trades-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px 28px; margin-bottom: 20px; }
+.trades-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.trades-title { font-size: 15px; font-weight: 700; color: #f0f6fc; }
+.open-count { font-size: 11px; background: rgba(56,139,253,0.15); color: #58a6ff; border: 1px solid rgba(56,139,253,0.3); padding: 2px 10px; border-radius: 99px; font-weight: 600; }
+
+table.trades-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.trades-tbl th { text-align: left; color: #8b949e; font-weight: 600; padding: 6px 10px; border-bottom: 1px solid #21262d; text-transform: uppercase; letter-spacing: 0.4px; font-size: 10px; }
+table.trades-tbl td { padding: 9px 10px; border-bottom: 1px solid #161b22; vertical-align: middle; }
+table.trades-tbl tr:last-child td { border-bottom: none; }
+table.trades-tbl tr:hover td { background: #1c2128; }
+.pnl-pos { color: #3fb950; font-weight: 700; }
+.pnl-neg { color: #f85149; font-weight: 700; }
+.pnl-flat { color: #8b949e; }
+.sl-warn { background: rgba(248,81,73,0.1); }
+.tgt-warn { background: rgba(63,185,80,0.1); }
+.exit-btn-sm { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 12px; border-radius: 5px; font-size: 11px; cursor: pointer; font-weight: 600; }
+.exit-btn-sm:hover { background: rgba(248,81,73,0.15); border-color: rgba(248,81,73,0.4); color: #f85149; }
+.exit-all-btn { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); color: #f85149; padding: 6px 16px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.exit-all-btn:hover { background: rgba(248,81,73,0.2); }
+.no-trades { text-align: center; color: #8b949e; padding: 24px; font-size: 13px; }
+
+/* ── History table ── */
+.history-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px 28px; margin-bottom: 24px; }
+.reason-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
+.rt-target { background: rgba(63,185,80,0.15); color: #3fb950; }
+.rt-sl     { background: rgba(248,81,73,0.15); color: #f85149; }
+.rt-time   { background: rgba(227,179,65,0.15); color: #e3b341; }
+.rt-manual { background: rgba(139,148,158,0.12); color: #8b949e; }
 </style>
 </head>
 <body>
@@ -259,6 +319,110 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
     </div>
 
   </div><!-- /content -->
+
+  <!-- ══════════════════════════════════════════════════════════════ -->
+  <!--  SELL SETUP SECTION                                          -->
+  <!-- ══════════════════════════════════════════════════════════════ -->
+
+  <div style="display:flex; align-items:center; justify-content:space-between; margin:32px 0 16px;">
+    <div style="font-size:18px; font-weight:700; color:#f0f6fc;">Intraday Sell Setup</div>
+    <button class="run-btn" id="setup-btn" onclick="loadSellSetup()" style="padding:8px 18px; font-size:12px;">
+      <span id="setup-icon">▶</span> Load Setup
+    </button>
+  </div>
+  <div class="status-strip" id="setup-status"></div>
+
+  <div id="sell-section" style="display:none;">
+
+    <!-- Sell setup card -->
+    <div class="sell-card">
+      <div class="sell-header">
+        <div class="sell-title">
+          Short Strangle (Intraday)
+          <span class="prob-badge" id="prob-badge">—%</span>
+        </div>
+        <div style="font-size:11px; color:#8b949e;">Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS</div>
+      </div>
+
+      <!-- Legs -->
+      <div class="sell-legs">
+        <div class="sell-leg">
+          <div class="sell-leg-label">Sell CE (Resistance side)</div>
+          <div class="sell-leg-strike" id="ss-ce">—</div>
+          <div class="sell-leg-meta">LTP: <span id="ss-ce-ltp">—</span> pts &nbsp;|&nbsp; SL: <span id="ss-ce-sl">—</span> pts</div>
+        </div>
+        <div class="sell-leg">
+          <div class="sell-leg-label">Sell PE (Support side)</div>
+          <div class="sell-leg-strike" id="ss-pe">—</div>
+          <div class="sell-leg-meta">LTP: <span id="ss-pe-ltp">—</span> pts &nbsp;|&nbsp; SL: <span id="ss-pe-sl">—</span> pts</div>
+        </div>
+      </div>
+
+      <!-- Metrics -->
+      <div class="sell-metrics">
+        <div class="metric">
+          <div class="metric-label">Total Premium</div>
+          <div class="metric-value blue" id="ss-premium">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Target (+35%)</div>
+          <div class="metric-value green" id="ss-target">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Stop-Loss (2×)</div>
+          <div class="metric-value red" id="ss-sl">—</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Max Profit (1 lot)</div>
+          <div class="metric-value" id="ss-maxprofit">—</div>
+        </div>
+      </div>
+
+      <!-- Reasoning -->
+      <div class="reason-box" id="ss-reasons"></div>
+
+      <!-- Action -->
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <button class="paper-btn" id="paper-btn" onclick="placePaperTrade()">
+          📝 Paper Trade
+        </button>
+        <span style="font-size:11px; color:#8b949e;">
+          Stores to DB → auto-exit on target / SL / 3:15 PM
+        </span>
+      </div>
+    </div>
+
+    <!-- Open trades -->
+    <div class="trades-card">
+      <div class="trades-header">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="trades-title">Open Paper Trades</div>
+          <span class="open-count" id="open-count">0</span>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <button class="exit-all-btn" id="exit-all-btn" onclick="exitAllTrades()" style="display:none;">
+            Exit All
+          </button>
+          <button onclick="loadOpenTrades()" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;">⟳ Refresh</button>
+        </div>
+      </div>
+      <div id="open-trades-body">
+        <div class="no-trades">No open trades today.</div>
+      </div>
+    </div>
+
+    <!-- Trade history -->
+    <div class="history-card">
+      <div class="trades-header" style="margin-bottom:16px;">
+        <div class="trades-title">Trade History (Paper)</div>
+        <div id="hist-summary" style="font-size:12px; color:#8b949e;"></div>
+      </div>
+      <div id="history-body">
+        <div class="no-trades">No closed trades yet.</div>
+      </div>
+    </div>
+
+  </div><!-- /sell-section -->
 
   <div class="footer-note" id="footer-note" style="display:none;">
     Data from option_chain table — SQL-aggregated, no raw rows loaded.
@@ -445,7 +609,267 @@ function stopCountdown() {
 // ── Auto-run on page load ────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', function () {
   runAnalysis();
+  loadSellSetup();
+  loadOpenTrades();
+  loadHistory();
+  // Refresh open trades every 90s
+  setInterval(loadOpenTrades, 90000);
 });
+
+// ── Sell Setup ────────────────────────────────────────────────────────────────
+var _currentSetup = null;
+
+function loadSellSetup() {
+  var btn = document.getElementById('setup-btn');
+  var icon = document.getElementById('setup-icon');
+  btn.disabled = true;
+  icon.textContent = '↻';
+  icon.classList.add('spin');
+  showSetupStatus('loading', 'Loading sell setup…');
+
+  fetch('/api/sell-setup')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.error) { showSetupStatus('error', d.error); return; }
+      _currentSetup = d;
+      renderSellSetup(d);
+      clearSetupStatus();
+      document.getElementById('sell-section').style.display = 'block';
+    })
+    .catch(function(e) { showSetupStatus('error', 'Error: ' + e.message); })
+    .finally(function() {
+      btn.disabled = false;
+      icon.textContent = '▶';
+      icon.classList.remove('spin');
+    });
+}
+
+function renderSellSetup(d) {
+  // Probability badge
+  var prob = d.probability;
+  var badge = document.getElementById('prob-badge');
+  badge.textContent = prob + '% win probability';
+  badge.className = 'prob-badge ' + (prob >= 75 ? 'prob-high' : prob >= 65 ? 'prob-med' : 'prob-low');
+
+  // Legs
+  document.getElementById('ss-ce').textContent = fmt(d.sell_ce) + ' CE';
+  document.getElementById('ss-pe').textContent = fmt(d.sell_pe) + ' PE';
+  document.getElementById('ss-ce-ltp').textContent = d.ce_ltp != null ? d.ce_ltp : '—';
+  document.getElementById('ss-pe-ltp').textContent = d.pe_ltp != null ? d.pe_ltp : '—';
+  document.getElementById('ss-ce-sl').textContent = d.ce_sl != null ? d.ce_sl : '—';
+  document.getElementById('ss-pe-sl').textContent = d.pe_sl != null ? d.pe_sl : '—';
+
+  // Metrics
+  document.getElementById('ss-premium').textContent   = d.total_premium + ' pts';
+  document.getElementById('ss-target').textContent    = '+' + d.target_pts + ' pts (₹' + fmt(d.target_inr) + ')';
+  document.getElementById('ss-sl').textContent        = '-' + d.sl_pts + ' pts (₹' + fmt(d.sl_inr) + ')';
+  document.getElementById('ss-maxprofit').textContent = '₹' + fmt(d.max_profit_inr) + ' / lot';
+
+  // Reasoning
+  var box = document.getElementById('ss-reasons');
+  box.innerHTML = (d.reasoning || []).map(function(r) {
+    return '<div class="reason-item">' + r + '</div>';
+  }).join('');
+}
+
+function showSetupStatus(type, msg) {
+  var el = document.getElementById('setup-status');
+  el.className = 'status-strip ' + type;
+  el.textContent = msg;
+}
+function clearSetupStatus() {
+  var el = document.getElementById('setup-status');
+  el.className = 'status-strip';
+  el.textContent = '';
+}
+
+// ── Paper Trade ───────────────────────────────────────────────────────────────
+function placePaperTrade() {
+  if (!_currentSetup) { alert('Load setup first.'); return; }
+  var btn = document.getElementById('paper-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Placing…';
+
+  fetch('/api/paper-trade', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({expiry: _currentSetup.expiry})
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        btn.textContent = '✓ Placed!';
+        setTimeout(function() {
+          btn.textContent = '📝 Paper Trade';
+          btn.disabled = false;
+        }, 2000);
+        loadOpenTrades();
+        loadHistory();
+      } else {
+        alert('Error: ' + d.error);
+        btn.textContent = '📝 Paper Trade';
+        btn.disabled = false;
+      }
+    })
+    .catch(function(e) {
+      alert('Network error: ' + e.message);
+      btn.textContent = '📝 Paper Trade';
+      btn.disabled = false;
+    });
+}
+
+// ── Open Trades ───────────────────────────────────────────────────────────────
+var _openGroups = {};
+
+function loadOpenTrades() {
+  fetch('/api/open-trades')
+    .then(function(r) { return r.json(); })
+    .then(renderOpenTrades)
+    .catch(function() {});
+}
+
+function renderOpenTrades(trades) {
+  var body = document.getElementById('open-trades-body');
+  var count = document.getElementById('open-count');
+  var exitAllBtn = document.getElementById('exit-all-btn');
+
+  count.textContent = trades.length;
+
+  if (!trades.length) {
+    body.innerHTML = '<div class="no-trades">No open trades today.</div>';
+    exitAllBtn.style.display = 'none';
+    return;
+  }
+
+  exitAllBtn.style.display = 'inline-block';
+
+  // Group by group_id
+  _openGroups = {};
+  trades.forEach(function(t) {
+    if (!_openGroups[t.group_id]) _openGroups[t.group_id] = [];
+    _openGroups[t.group_id].push(t);
+  });
+
+  var html = '<table class="trades-tbl"><thead><tr>' +
+    '<th>Group</th><th>Leg</th><th>Entry</th><th>Current</th>' +
+    '<th>Target</th><th>SL</th><th>P&L pts</th><th>P&L ₹</th><th>Status</th><th></th>' +
+    '</tr></thead><tbody>';
+
+  trades.forEach(function(t) {
+    var rowCls = t.sl_breached ? 'sl-warn' : t.target_reached ? 'tgt-warn' : '';
+    var pnlCls = t.pnl_pts == null ? 'pnl-flat' : t.pnl_pts > 0 ? 'pnl-pos' : 'pnl-neg';
+    var statusTxt = t.sl_breached ? '⚠ SL HIT' : t.target_reached ? '✓ TARGET' : 'Open';
+    html += '<tr class="' + rowCls + '">' +
+      '<td style="font-size:10px;color:#8b949e;">' + t.group_id.slice(-8) + '</td>' +
+      '<td><b>' + t.strike + '</b> ' + t.option_type + '</td>' +
+      '<td>' + (t.entry_price || '—') + '</td>' +
+      '<td>' + (t.current_ltp != null ? t.current_ltp : '—') + '</td>' +
+      '<td class="green">' + (t.target_price || '—') + '</td>' +
+      '<td class="red">' + (t.sl_price || '—') + '</td>' +
+      '<td class="' + pnlCls + '">' + (t.pnl_pts != null ? (t.pnl_pts > 0 ? '+' : '') + t.pnl_pts : '—') + '</td>' +
+      '<td class="' + pnlCls + '">' + (t.pnl_inr != null ? (t.pnl_inr > 0 ? '+₹' : '-₹') + Math.abs(t.pnl_inr) : '—') + '</td>' +
+      '<td style="font-size:11px;">' + statusTxt + '</td>' +
+      '<td><button class="exit-btn-sm" onclick="exitOneLeg(' + t.id + ', \'' + t.group_id + '\')">Exit</button></td>' +
+      '</tr>';
+  });
+
+  // Group P&L summary rows
+  Object.keys(_openGroups).forEach(function(gid) {
+    var legs = _openGroups[gid];
+    var totalPnlPts = legs.reduce(function(s, t) { return s + (t.pnl_pts || 0); }, 0);
+    var totalPnlInr = legs.reduce(function(s, t) { return s + (t.pnl_inr || 0); }, 0);
+    var cls = totalPnlPts > 0 ? 'pnl-pos' : totalPnlPts < 0 ? 'pnl-neg' : 'pnl-flat';
+    html += '<tr style="background:#1c2128; font-weight:700;">' +
+      '<td colspan="6" style="color:#8b949e;font-size:11px;">Group ' + gid.slice(-8) + ' combined P&L</td>' +
+      '<td class="' + cls + '">' + (totalPnlPts > 0 ? '+' : '') + totalPnlPts.toFixed(1) + '</td>' +
+      '<td class="' + cls + '">' + (totalPnlInr > 0 ? '+₹' : '-₹') + Math.abs(Math.round(totalPnlInr)) + '</td>' +
+      '<td></td>' +
+      '<td><button class="exit-btn-sm" onclick="exitGroup(\'' + gid + '\')">Exit All</button></td>' +
+      '</tr>';
+  });
+
+  html += '</tbody></table>';
+  body.innerHTML = html;
+}
+
+function exitOneLeg(id, groupId) {
+  if (!confirm('Exit this leg at current market price?')) return;
+  fetch('/api/exit-trade/' + id, {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) { loadOpenTrades(); loadHistory(); }
+      else alert('Exit failed: ' + d.error);
+    });
+}
+
+function exitGroup(gid) {
+  if (!confirm('Exit ALL legs of group ' + gid.slice(-8) + ' at current market price?')) return;
+  fetch('/api/exit-group/' + gid, {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) { loadOpenTrades(); loadHistory(); }
+      else alert('Exit failed: ' + d.error);
+    });
+}
+
+function exitAllTrades() {
+  if (!confirm('Exit ALL open paper trades now?')) return;
+  var groups = Object.keys(_openGroups);
+  Promise.all(groups.map(function(gid) {
+    return fetch('/api/exit-group/' + gid, {method: 'POST'}).then(function(r) { return r.json(); });
+  })).then(function() { loadOpenTrades(); loadHistory(); });
+}
+
+// ── Trade History ─────────────────────────────────────────────────────────────
+function loadHistory() {
+  fetch('/api/trade-history')
+    .then(function(r) { return r.json(); })
+    .then(renderHistory)
+    .catch(function() {});
+}
+
+function renderHistory(rows) {
+  var body = document.getElementById('history-body');
+  var summary = document.getElementById('hist-summary');
+
+  if (!rows.length) {
+    body.innerHTML = '<div class="no-trades">No closed trades yet. Place a paper trade to start tracking.</div>';
+    return;
+  }
+
+  // Summary stats
+  var wins = rows.filter(function(r) { return r.total_pnl_inr > 0; }).length;
+  var totalPnl = rows.reduce(function(s, r) { return s + (r.total_pnl_inr || 0); }, 0);
+  var wr = Math.round(wins / rows.length * 100);
+  var pnlStr = (totalPnl >= 0 ? '+₹' : '-₹') + Math.abs(Math.round(totalPnl)).toLocaleString('en-IN');
+  summary.innerHTML = '<span style="color:' + (wr >= 60 ? '#3fb950' : '#e3b341') + ';">' + wr + '% win rate</span>' +
+    ' &nbsp;|&nbsp; ' + rows.length + ' trades' +
+    ' &nbsp;|&nbsp; <span style="color:' + (totalPnl >= 0 ? '#3fb950' : '#f85149') + ';">' + pnlStr + ' total</span>';
+
+  var html = '<table class="trades-tbl"><thead><tr>' +
+    '<th>Date</th><th>Strategy</th><th>Prob %</th><th>P&L pts</th>' +
+    '<th>P&L ₹</th><th>Exit</th><th>Time In</th>' +
+    '</tr></thead><tbody>';
+
+  rows.forEach(function(r) {
+    var pnlCls = r.total_pnl_inr > 0 ? 'pnl-pos' : r.total_pnl_inr < 0 ? 'pnl-neg' : 'pnl-flat';
+    var reasonCls = r.exit_reason === 'TARGET' ? 'rt-target' : r.exit_reason === 'SL' ? 'rt-sl' :
+                    r.exit_reason === 'TIME' ? 'rt-time' : 'rt-manual';
+    var pts = r.total_pnl_pts != null ? (r.total_pnl_pts > 0 ? '+' : '') + r.total_pnl_pts.toFixed(1) : '—';
+    var inr = r.total_pnl_inr != null ? (r.total_pnl_inr >= 0 ? '+₹' : '-₹') + Math.abs(Math.round(r.total_pnl_inr)).toLocaleString('en-IN') : '—';
+    html += '<tr>' +
+      '<td>' + (r.trade_date || '—') + '</td>' +
+      '<td style="font-size:11px;">Short Strangle</td>' +
+      '<td>' + (r.probability != null ? r.probability + '%' : '—') + '</td>' +
+      '<td class="' + pnlCls + '">' + pts + '</td>' +
+      '<td class="' + pnlCls + '">' + inr + '</td>' +
+      '<td><span class="reason-tag ' + reasonCls + '">' + (r.exit_reason || '—') + '</span></td>' +
+      '<td style="font-size:11px; color:#8b949e;">' + (r.entry_time || '—') + ' → ' + (r.exit_time || '—') + '</td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  body.innerHTML = html;
+}
 </script>
 </body>
 </html>

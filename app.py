@@ -496,12 +496,114 @@ def nifty_intelligence():
     return render_template("nifty_levels.html", user=session["user"], data=data)
 
 
+# ── Auto-exit background thread (starts once on app boot) ─────────────────────
+
+def _start_auto_exit_thread():
+    """Runs auto_exit_check() every 60s during market hours."""
+    import time as _time
+    def _loop():
+        while True:
+            try:
+                from options.trade_executor import auto_exit_check
+                auto_exit_check()
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("auto_exit_check error: %s", exc)
+            _time.sleep(60)
+    t = threading.Thread(target=_loop, daemon=True, name="auto-exit")
+    t.start()
+
+_start_auto_exit_thread()
+
+
 # ── Weekly Range Prediction ───────────────────────────────────────────────────
 
 @app.route("/weekly")
 @login_required
 def weekly_range():
     return render_template("weekly_range.html", user=session["user"])
+
+
+@app.route("/api/sell-setup")
+@login_required
+def api_sell_setup():
+    """Sell setup + probability for current week expiry."""
+    from options.range_predict import fetch_summary, _next_thursday
+    from options.intraday_setup import compute_sell_setup
+    from datetime import date as _date
+
+    today  = _date.today()
+    expiry = today if today.weekday() == 3 else _next_thursday(today)
+
+    snap = fetch_summary(expiry)
+    if not snap:
+        return jsonify({"error": "DB unavailable or no data yet"}), 503
+
+    setup = compute_sell_setup(snap, expiry)
+    # Serialise date
+    setup["expiry"] = str(setup["expiry"])
+    return jsonify(setup)
+
+
+@app.route("/api/paper-trade", methods=["POST"])
+@login_required
+def api_paper_trade():
+    """Place a paper trade for the sell setup."""
+    from options.range_predict import fetch_summary, _next_thursday
+    from options.intraday_setup import compute_sell_setup
+    from options.trade_executor import place_paper_trade
+    from datetime import date as _date, datetime as _dt
+
+    data = request.get_json(silent=True) or {}
+    expiry_str = data.get("expiry")
+    if expiry_str:
+        expiry = _dt.strptime(expiry_str, "%Y-%m-%d").date()
+    else:
+        today  = _date.today()
+        expiry = today if today.weekday() == 3 else _next_thursday(today)
+
+    snap = fetch_summary(expiry)
+    if not snap:
+        return jsonify({"ok": False, "error": "DB unavailable"}), 503
+
+    setup = compute_sell_setup(snap, expiry)
+    result = place_paper_trade(setup)
+    return jsonify(result), (200 if result["ok"] else 500)
+
+
+@app.route("/api/open-trades")
+@login_required
+def api_open_trades():
+    """Open paper trades for today with live P&L."""
+    from options.trade_executor import get_open_trades
+    return jsonify(get_open_trades())
+
+
+@app.route("/api/trade-history")
+@login_required
+def api_trade_history():
+    """Closed paper trades for analysis."""
+    from options.trade_executor import get_trade_history
+    limit = min(int(request.args.get("limit", 50)), 200)
+    return jsonify(get_trade_history(limit))
+
+
+@app.route("/api/exit-trade/<int:trade_id>", methods=["POST"])
+@login_required
+def api_exit_trade(trade_id):
+    """Manually exit a single trade leg."""
+    from options.trade_executor import exit_trade
+    result = exit_trade(trade_id, "MANUAL")
+    return jsonify(result), (200 if result["ok"] else 500)
+
+
+@app.route("/api/exit-group/<group_id>", methods=["POST"])
+@login_required
+def api_exit_group(group_id):
+    """Manually exit all legs of a group."""
+    from options.trade_executor import exit_group
+    result = exit_group(group_id, "MANUAL")
+    return jsonify(result), (200 if result["ok"] else 500)
 
 
 @app.route("/api/weekly-range")
