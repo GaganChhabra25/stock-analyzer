@@ -168,6 +168,8 @@ def main():
                         help="Skip full dump, only backup individual tables")
     parser.add_argument("--full-only",   action="store_true",
                         help="Only full dump, skip individual tables")
+    parser.add_argument("--port", type=str, default=None,
+                        help="Override DB port (e.g. 5433 when using SSH tunnel)")
     args = parser.parse_args()
 
     # Sanity checks
@@ -180,6 +182,11 @@ def main():
 
     url   = _read_database_url()
     creds = _parse_url(url)
+
+    # Port override — used when SSH tunnel runs on a different port
+    if args.port:
+        creds["port"] = args.port
+        log.info("Port overridden to %s (SSH tunnel)", args.port)
 
     now       = datetime.now()
     stamp     = now.strftime("%Y%m%d_%H%M%S")   # e.g. 20260331_143022
@@ -194,7 +201,7 @@ def main():
     if creds["host"] in ("localhost", "127.0.0.1"):
         log.info("NOTE: DATABASE_URL points to localhost.")
         log.info("      If DB is on Contabo, make sure SSH tunnel is active:")
-        log.info("      ssh -L 5432:localhost:5432 user@CONTABO_IP -N")
+        log.info("      ssh -L 5433:localhost:5432 user@CONTABO_IP -N")
         log.info("")
 
     full_ok = False

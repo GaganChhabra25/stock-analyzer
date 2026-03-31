@@ -5,8 +5,8 @@ color 0A
 :: ============================================================
 ::  EDIT THESE TWO LINES WITH YOUR CONTABO SERVER DETAILS
 :: ============================================================
-set CONTABO_IP=YOUR_CONTABO_IP_HERE
-set SSH_USER=YOUR_SSH_USERNAME_HERE
+set CONTABO_IP=185.211.6.5
+set SSH_USER=root
 :: ============================================================
 
 echo ================================================
@@ -24,19 +24,19 @@ if "%CONTABO_IP%"=="YOUR_CONTABO_IP_HERE" (
     exit /b 1
 )
 
-:: Step 1: Open SSH tunnel in background
-echo [1/3] Opening SSH tunnel...
-start "SSH-Tunnel" /min ssh -L 5432:localhost:5432 %SSH_USER%@%CONTABO_IP% -N -o StrictHostKeyChecking=no -o ServerAliveInterval=30
+:: Step 1: Open SSH tunnel on port 5433 (5432 is used by local PostgreSQL)
+echo [1/3] Opening SSH tunnel on localhost:5433 ...
+start "SSH-Tunnel" /min ssh -L 5433:localhost:5432 %SSH_USER%@%CONTABO_IP% -N -o StrictHostKeyChecking=no -o ServerAliveInterval=30
 
 :: Wait for tunnel to establish
-echo       Waiting 4 seconds for tunnel...
-timeout /t 4 /nobreak >nul
+echo       Waiting 5 seconds for tunnel...
+timeout /t 5 /nobreak >nul
 
-:: Step 2: Run backup
-echo [2/3] Running backup...
+:: Step 2: Run backup using port 5433
+echo [2/3] Running backup via tunnel...
 echo.
 cd /d D:\Gagan\Projects\stock-analyzer
-python scripts\backup_db.py
+python scripts\backup_db.py --port 5433
 
 :: Step 3: Close tunnel
 echo.
