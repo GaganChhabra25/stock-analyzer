@@ -400,7 +400,6 @@ function runAnalysis() {
   icon.classList.add('spin');
 
   showStatus('loading', 'Querying database… (aggregating option_chain data)');
-  stopCountdown();
 
   fetch('/api/weekly-range')
     .then(function(r) {
