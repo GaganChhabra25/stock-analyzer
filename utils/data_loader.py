@@ -139,16 +139,22 @@ def load_holdings_from_kite() -> pd.DataFrame:
     rows = []
     for h in raw:
         symbol = h.get("tradingsymbol", "").strip().upper()
-        qty    = h.get("quantity", 0) + h.get("t1_quantity", 0)
+        # opening_quantity = free + pledged (collateral) — matches what Zerodha UI shows
+        # Fall back to quantity + t1 if opening_quantity is missing
+        qty = float(h.get("opening_quantity") or 0)
+        if qty <= 0:
+            qty = float(h.get("quantity", 0)) + float(h.get("t1_quantity", 0)) + float(h.get("collateral_quantity", 0))
         if not symbol or qty <= 0:
             continue
+        avg = float(h.get("average_price", 0))
+        ltp = float(h.get("last_price", 0))
         rows.append({
             "Symbol":        symbol,
-            "Quantity":      float(qty),
-            "Avg_Cost":      float(h.get("average_price", 0)),
-            "LTP":           float(h.get("last_price", 0)),
-            "Current_Value": float(qty) * float(h.get("last_price", 0)),
-            "PnL":           float(h.get("pnl", 0)),
+            "Quantity":      qty,
+            "Avg_Cost":      avg,
+            "LTP":           ltp,
+            "Current_Value": qty * ltp,
+            "PnL":           (ltp - avg) * qty,
             "Net_Change_Pct": float(h.get("day_change_percentage", 0)),
         })
 
