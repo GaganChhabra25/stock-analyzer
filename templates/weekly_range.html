@@ -289,7 +289,7 @@ table.trades-tbl tr:hover td { background: #1c2128; }
   <!-- ══════════════════════════════════════════════════════════════ -->
 
   <div style="display:flex; align-items:center; justify-content:space-between; margin:32px 0 16px;">
-    <div style="font-size:18px; font-weight:700; color:#f0f6fc;">Intraday Sell Setup</div>
+    <div style="font-size:18px; font-weight:700; color:#f0f6fc;" id="setup-section-title">Intraday Sell Setup</div>
     <button class="run-btn" id="setup-btn" onclick="loadSellSetup()" style="padding:8px 18px; font-size:12px;">
       <span id="setup-icon">▶</span> Load Setup
     </button>
@@ -302,10 +302,10 @@ table.trades-tbl tr:hover td { background: #1c2128; }
     <div class="sell-card">
       <div class="sell-header">
         <div class="sell-title">
-          Short Strangle (Intraday)
+          <span id="ss-title">Short Strangle (Intraday)</span>
           <span class="prob-badge" id="prob-badge">—%</span>
         </div>
-        <div style="font-size:11px; color:#8b949e;">Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS</div>
+        <div style="font-size:11px; color:#8b949e;" id="ss-meta">Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS</div>
       </div>
 
       <!-- Legs -->
@@ -589,6 +589,18 @@ function loadSellSetup() {
 }
 
 function renderSellSetup(d) {
+  // Section header + card title
+  var instrLabel = d.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
+  var f = getFilters();
+  var expiryLabel = f.expiry_type === 'monthly' ? 'Monthly' : 'Weekly';
+  document.getElementById('setup-section-title').textContent =
+    instrLabel + ' — ' + expiryLabel + ' Intraday Sell Setup';
+  document.getElementById('ss-title').textContent =
+    instrLabel + ' Short Strangle (Intraday)';
+  document.getElementById('ss-meta').innerHTML =
+    'Expiry: <b>' + (d.expiry || '—') + '</b> &nbsp;|&nbsp; Lot: ' + (d.lot_size || '—') +
+    ' &nbsp;|&nbsp; Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS';
+
   // Probability badge
   var prob = d.probability;
   var badge = document.getElementById('prob-badge');
