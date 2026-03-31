@@ -17,13 +17,20 @@ from screener.db import _get_conn, is_available
 
 logger = logging.getLogger(__name__)
 
-LOT_SIZE   = 75
+LOT_SIZE    = 75
 STRIKE_STEP = 50
+
+# Per-instrument defaults
+_INSTRUMENT_CONFIG = {
+    "NIFTY":     {"lot_size": 75,  "strike_step": 50},
+    "BANKNIFTY": {"lot_size": 15,  "strike_step": 100},
+}
 
 
 # ── LTP fetch from option_chain ────────────────────────────────────────────────
 
-def get_option_ltp(expiry: date, strike: int, option_type: str) -> Optional[float]:
+def get_option_ltp(expiry: date, strike: int, option_type: str,
+                   instrument: str = "NIFTY") -> Optional[float]:
     """Latest LTP for a strike from option_chain table. None if not found."""
     if not is_available():
         return None
@@ -34,13 +41,13 @@ def get_option_ltp(expiry: date, strike: int, option_type: str) -> Optional[floa
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT ltp FROM option_chain
-                    WHERE instrument  = 'NIFTY'
+                    WHERE instrument  = %s
                       AND expiry      = %s
                       AND strike      = %s
                       AND option_type = %s
                       AND ltp         IS NOT NULL
                     ORDER BY ts DESC LIMIT 1
-                """, (expiry, strike, option_type))
+                """, (instrument.upper(), expiry, strike, option_type))
                 row = cur.fetchone()
                 return float(row[0]) if row else None
     except Exception as exc:
@@ -95,7 +102,7 @@ def _sell_probability(iv: float, vix: Optional[float], pcr: Optional[float]) -> 
 
 # ── Main setup builder ─────────────────────────────────────────────────────────
 
-def compute_sell_setup(snap: dict, expiry: date) -> dict:
+def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> dict:
     """
     Build intraday short strangle setup from market snapshot.
 
@@ -104,6 +111,11 @@ def compute_sell_setup(snap: dict, expiry: date) -> dict:
     Stop-loss       : combined P&L loss = 2× premium received
     Hard exit       : 3:15 PM IST regardless
     """
+    instr  = instrument.upper()
+    cfg    = _INSTRUMENT_CONFIG.get(instr, _INSTRUMENT_CONFIG["NIFTY"])
+    lot    = cfg["lot_size"]
+    step   = cfg["strike_step"]
+
     spot = snap["spot"]
     iv   = snap["atm_iv"] or 35.9      # fallback to historical typical
     pcr  = snap.get("pcr")
@@ -115,14 +127,14 @@ def compute_sell_setup(snap: dict, expiry: date) -> dict:
     sigma_pts = spot * (iv / 100.0) * math.sqrt(1.0 / 252.0)
 
     # Sell at 1.5σ from spot (theoretical ~86% probability of staying inside)
-    dist = max(round(sigma_pts * 1.5 / STRIKE_STEP) * STRIKE_STEP, STRIKE_STEP * 4)
+    dist = max(round(sigma_pts * 1.5 / step) * step, step * 4)
 
-    sell_ce = int(round((spot + dist) / STRIKE_STEP) * STRIKE_STEP)
-    sell_pe = int(round((spot - dist) / STRIKE_STEP) * STRIKE_STEP)
+    sell_ce = int(round((spot + dist) / step) * step)
+    sell_pe = int(round((spot - dist) / step) * step)
 
     # ── Fetch live LTPs ───────────────────────────────────────────────────────
-    ce_ltp = get_option_ltp(expiry, sell_ce, "CE")
-    pe_ltp = get_option_ltp(expiry, sell_pe, "PE")
+    ce_ltp = get_option_ltp(expiry, sell_ce, "CE", instr)
+    pe_ltp = get_option_ltp(expiry, sell_pe, "PE", instr)
 
     # Fallback: estimate from IV if no live data
     if ce_ltp is None:
@@ -136,9 +148,9 @@ def compute_sell_setup(snap: dict, expiry: date) -> dict:
     target_pts = round(total_premium * 0.35, 1)   # 35% profit on premium
     sl_pts     = round(total_premium * 2.0,  1)   # 2× premium as max loss
 
-    target_inr = int(target_pts * LOT_SIZE)
-    sl_inr     = int(sl_pts     * LOT_SIZE)
-    max_inr    = int(total_premium * LOT_SIZE)
+    target_inr = int(target_pts * lot)
+    sl_inr     = int(sl_pts     * lot)
+    max_inr    = int(total_premium * lot)
 
     # Per-leg individual SL (for leg-level tracking)
     ce_sl = round(ce_ltp * 3.0, 1)   # exit CE if it triples
@@ -184,7 +196,8 @@ def compute_sell_setup(snap: dict, expiry: date) -> dict:
         "max_profit_inr": max_inr,
 
         "probability":   prob,
-        "lot_size":      LOT_SIZE,
+        "instrument":    instr,
+        "lot_size":      lot,
         "reasoning":     reasons,
         "hard_exit":     "15:15 IST",
     }

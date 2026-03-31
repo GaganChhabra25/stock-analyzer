@@ -25,10 +25,47 @@ from screener.db import _get_conn, is_available
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
+# Expiry weekdays: Nifty → Thursday (3), Banknifty → Wednesday (2)
+_EXPIRY_WEEKDAY = {"NIFTY": 3, "BANKNIFTY": 2}
+
+# ATM rounding step per instrument
+_STRIKE_STEP = {"NIFTY": 50, "BANKNIFTY": 100}
+
+
+def _next_expiry(instrument: str = "NIFTY", expiry_type: str = "weekly",
+                 from_date: date = None) -> date:
+    """
+    Returns the next expiry date for the given instrument and expiry type.
+      weekly  → next occurrence of the expiry weekday
+      monthly → last occurrence of the expiry weekday in the current/next month
+    """
+    import calendar
+    d   = from_date or date.today()
+    wd  = _EXPIRY_WEEKDAY.get(instrument.upper(), 3)   # default Thursday
+
+    if expiry_type.lower() == "monthly":
+        def _last_weekday(year: int, month: int, weekday: int) -> date:
+            last_day = calendar.monthrange(year, month)[1]
+            last = date(year, month, last_day)
+            diff = (last.weekday() - weekday) % 7
+            return last - timedelta(days=diff)
+
+        candidate = _last_weekday(d.year, d.month, wd)
+        if candidate > d:
+            return candidate
+        # current month's expiry has passed — use next month
+        next_month = d.month % 12 + 1
+        next_year  = d.year + (1 if d.month == 12 else 0)
+        return _last_weekday(next_year, next_month, wd)
+    else:
+        # weekly: next occurrence (never today)
+        days = (wd - d.weekday()) % 7
+        return d + timedelta(days=days if days else 7)
+
+
 def _next_thursday(from_date: date = None) -> date:
-    d = from_date or date.today()
-    days = (3 - d.weekday()) % 7
-    return d + timedelta(days=days if days else 7)
+    """Backward-compat wrapper — returns next Nifty weekly expiry (Thursday)."""
+    return _next_expiry("NIFTY", "weekly", from_date)
 
 
 def _expected_move(spot: float, iv_pct: float, dte: int) -> float:
@@ -38,7 +75,7 @@ def _expected_move(spot: float, iv_pct: float, dte: int) -> float:
 
 # ─── Step 1: ONE SQL call → 8 numbers ─────────────────────────────────────────
 
-def fetch_summary(expiry: date) -> dict:
+def fetch_summary(expiry: date, instrument: str = "NIFTY") -> dict:
     """
     Fast summary from market_snapshot (small table) + one lightweight option_chain query.
     Never runs full-table scans on 35L rows — all heavy aggregation avoided.
@@ -46,6 +83,9 @@ def fetch_summary(expiry: date) -> dict:
     """
     if not is_available():
         return {}
+
+    instr     = instrument.upper()
+    step      = _STRIKE_STEP.get(instr, 50)
 
     try:
         with _get_conn() as conn:
@@ -62,9 +102,9 @@ def fetch_summary(expiry: date) -> dict:
                     SELECT spot_price, vix, pcr_oi, atm_strike,
                            atm_straddle, call_oi_wall, put_oi_wall, ts
                     FROM market_snapshot
-                    WHERE instrument = 'NIFTY'
+                    WHERE instrument = %s
                     ORDER BY ts DESC LIMIT 1
-                """)
+                """, (instr,))
                 snap = cur.fetchone()
 
                 if snap:
@@ -74,10 +114,10 @@ def fetch_summary(expiry: date) -> dict:
                     cur.execute("""
                         SELECT underlying_ltp, ts
                         FROM option_chain
-                        WHERE instrument = 'NIFTY'
+                        WHERE instrument = %s
                           AND underlying_ltp IS NOT NULL
                         ORDER BY ts DESC LIMIT 1
-                    """)
+                    """, (instr,))
                     row = cur.fetchone()
                     if not row:
                         return {}
@@ -85,18 +125,18 @@ def fetch_summary(expiry: date) -> dict:
                     vix = pcr = atm = straddle = ce_wall = pe_wall = None
 
                 spot = float(spot)
-                atm  = int(round(spot / 50) * 50) if not atm else int(atm)
+                atm  = int(round(spot / step) * step) if not atm else int(atm)
 
                 # ── B. ATM IV — only last 30 min, indexed lookup ───────────────
                 cur.execute("""
                     SELECT ROUND(AVG(iv)::NUMERIC, 2)
                     FROM option_chain
-                    WHERE instrument  = 'NIFTY'
+                    WHERE instrument  = %s
                       AND expiry      = %s
                       AND strike      = %s
                       AND iv          IS NOT NULL
                       AND ts         >= NOW() - INTERVAL '30 minutes'
-                """, (expiry, atm))
+                """, (instr, expiry, atm))
                 iv_row = cur.fetchone()
                 atm_iv = float(iv_row[0]) if iv_row and iv_row[0] else None
 
@@ -105,7 +145,7 @@ def fetch_summary(expiry: date) -> dict:
                 # put_oi_wall  = strike with highest PE OI (support)
                 # Max pain approximation: midpoint of the two walls
                 if ce_wall and pe_wall:
-                    max_pain = int(round((int(ce_wall) + int(pe_wall)) / 2 / 50) * 50)
+                    max_pain = int(round((int(ce_wall) + int(pe_wall)) / 2 / step) * step)
                 else:
                     max_pain = atm
 
@@ -118,7 +158,7 @@ def fetch_summary(expiry: date) -> dict:
                             MAX(spot_price)             AS day_high,
                             MIN(spot_price)             AS day_low
                         FROM market_snapshot
-                        WHERE instrument = 'NIFTY'
+                        WHERE instrument = %s
                           AND spot_price IS NOT NULL
                           AND ts >= NOW() - INTERVAL '90 days'
                         GROUP BY ts::date
@@ -137,7 +177,7 @@ def fetch_summary(expiry: date) -> dict:
                               WITHIN GROUP (ORDER BY weekly_range)::NUMERIC, 0),
                         COUNT(*)
                     FROM weekly
-                """)
+                """, (instr,))
                 hist = cur.fetchone()
                 avg_range  = int(hist[0]) if hist and hist[0] else None
                 p75_range  = int(hist[1]) if hist and hist[1] else None
@@ -149,6 +189,7 @@ def fetch_summary(expiry: date) -> dict:
         return {}
 
     return {
+        "instrument": instr,
         "spot":       spot,
         "atm":        atm,
         "atm_iv":     atm_iv,
@@ -201,6 +242,7 @@ def compute_range(s: dict, expiry: date) -> dict:
         bias = "UNKNOWN (no PCR data)"
 
     return {
+        "instrument":     s.get("instrument", "NIFTY"),
         "expiry":         expiry.strftime("%d %b %Y (%A)"),
         "dte":            dte,
         "spot":           spot,

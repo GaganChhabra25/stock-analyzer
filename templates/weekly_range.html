@@ -33,6 +33,11 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Dropdowns ── */
+.filter-sel { background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 8px 32px 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b949e'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+.filter-sel:focus { outline: none; border-color: #7c3aed; }
+.filter-sel:hover { border-color: #58a6ff; }
+
 
 /* ── Status strip ── */
 .status-strip { font-size: 12px; padding: 8px 14px; border-radius: 7px; margin-bottom: 22px; display: none; }
@@ -174,10 +179,18 @@ table.trades-tbl tr:hover td { background: #1c2128; }
   <!-- Top bar -->
   <div class="top-bar">
     <div>
-      <div class="page-title">Weekly Expiry Range</div>
+      <div class="page-title" id="page-title">Weekly Expiry Range</div>
       <div class="page-sub" id="page-sub">Fetching prediction…</div>
     </div>
-    <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <select class="filter-sel" id="sel-instrument" onchange="onFilterChange()">
+        <option value="NIFTY">Nifty</option>
+        <option value="BANKNIFTY">Bank Nifty</option>
+      </select>
+      <select class="filter-sel" id="sel-expiry-type" onchange="onFilterChange()">
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
       <button class="run-btn" id="run-btn" onclick="runAnalysis()">
         <span id="btn-icon">▶</span> Run Analysis
       </button>
@@ -193,7 +206,7 @@ table.trades-tbl tr:hover td { background: #1c2128; }
     <!-- Stat cards -->
     <div class="cards">
       <div class="card">
-        <div class="card-label">Nifty Spot</div>
+        <div class="card-label" id="c-spot-label">Spot</div>
         <div class="card-value" id="c-spot">—</div>
         <div class="card-sub" id="c-as-of">—</div>
       </div>
@@ -391,6 +404,23 @@ function fmt(n, dec) {
   return Number(n).toLocaleString('en-IN', {minimumFractionDigits: dec || 0, maximumFractionDigits: dec || 0});
 }
 
+function getFilters() {
+  return {
+    instrument:  document.getElementById('sel-instrument').value,
+    expiry_type: document.getElementById('sel-expiry-type').value
+  };
+}
+
+function onFilterChange() {
+  // Reset content when filters change so stale data isn't shown
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('sell-section').style.display = 'none';
+  var f = getFilters();
+  var label = (f.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty') + ' — ' +
+              (f.expiry_type === 'monthly' ? 'Monthly' : 'Weekly') + ' Expiry Range';
+  document.getElementById('page-title').textContent = label;
+}
+
 // ── Run analysis ────────────────────────────────────────────────────────────
 function runAnalysis() {
   var btn = document.getElementById('run-btn');
@@ -401,7 +431,10 @@ function runAnalysis() {
 
   showStatus('loading', 'Querying database… (aggregating option_chain data)');
 
-  fetch('/api/weekly-range')
+  var f = getFilters();
+  var url = '/api/weekly-range?instrument=' + f.instrument + '&expiry_type=' + f.expiry_type;
+
+  fetch(url)
     .then(function(r) {
       if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'HTTP ' + r.status); });
       return r.json();
@@ -422,8 +455,10 @@ function runAnalysis() {
 // ── Render ──────────────────────────────────────────────────────────────────
 function renderData(d) {
   // Header
+  var instrLabel = d.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
+  document.getElementById('c-spot-label').textContent = instrLabel + ' Spot';
   document.getElementById('page-sub').textContent =
-    'Expiry: ' + d.expiry + '  |  As of: ' + (d.as_of || 'N/A');
+    instrLabel + ' · Expiry: ' + d.expiry + '  |  As of: ' + (d.as_of || 'N/A');
 
   // Stat cards
   document.getElementById('c-spot').textContent = fmt(d.spot, 2);
@@ -510,6 +545,7 @@ function clearStatus() {
 
 // ── Auto-run on page load ────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', function () {
+  onFilterChange();   // set initial page title from dropdown defaults
   runAnalysis();
   loadSellSetup();
   loadOpenTrades();
@@ -529,7 +565,10 @@ function loadSellSetup() {
   icon.classList.add('spin');
   showSetupStatus('loading', 'Loading sell setup…');
 
-  fetch('/api/sell-setup')
+  var f = getFilters();
+  var url = '/api/sell-setup?instrument=' + f.instrument + '&expiry_type=' + f.expiry_type;
+
+  fetch(url)
     .then(function(r) {
       if (!r.ok) return r.json().then(function(d) { throw new Error(d.error || 'HTTP ' + r.status); });
       return r.json();
@@ -598,7 +637,7 @@ function placePaperTrade() {
   fetch('/api/paper-trade', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({expiry: _currentSetup.expiry})
+    body: JSON.stringify({expiry: _currentSetup.expiry, instrument: getFilters().instrument, expiry_type: getFilters().expiry_type})
   })
     .then(function(r) { return r.json(); })
     .then(function(d) {
