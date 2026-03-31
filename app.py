@@ -178,10 +178,17 @@ def logout():
 
 # ── Kite Connect OAuth routes ──────────────────────────────────────────────────
 
+@app.route("/auth/zerodha")
+def auth_zerodha():
+    """Redirect to Zerodha Kite Connect login for user authentication."""
+    from options.kite_auth import get_login_url
+    return redirect(get_login_url())
+
+
 @app.route("/kite/login")
 @login_required
 def kite_login():
-    """Redirect to Zerodha login page to authorize Kite Connect."""
+    """Redirect to Zerodha login page to re-authorize Kite Connect."""
     from options.kite_auth import get_login_url
     return redirect(get_login_url())
 
@@ -190,20 +197,37 @@ def kite_login():
 def kite_callback():
     """
     Zerodha redirects here after login with ?request_token=XXX.
-    Exchange it for an access token and store in DB.
+    1. Exchange request_token for access token and save to DB.
+    2. Fetch Zerodha profile and create a Flask login session.
     """
     request_token = request.args.get("request_token")
     status        = request.args.get("status")
 
     if status != "success" or not request_token:
-        return "Kite authorization failed or was cancelled.", 400
+        return render_template("login.html", error="Zerodha login was cancelled or failed."), 400
 
     try:
-        from options.kite_auth import generate_access_token
+        from options.kite_auth import generate_access_token, get_kite
         generate_access_token(request_token)
-        return redirect(url_for("kite_status"))
     except Exception as exc:
-        return f"Failed to generate access token: {exc}", 500
+        return render_template("login.html", error=f"Zerodha auth failed: {exc}"), 500
+
+    # Set Flask session so the user is logged in
+    if "user" not in session:
+        try:
+            kite    = get_kite()
+            profile = kite.profile()
+            session.permanent = True
+            session["user"] = {
+                "email":   profile.get("email", profile.get("user_id", "zerodha-user")),
+                "name":    profile.get("user_name", profile.get("user_id", "Zerodha User")),
+                "picture": "",
+                "via":     "zerodha",
+            }
+        except Exception:
+            pass  # Token saved; session login optional
+
+    return redirect(url_for("index"))
 
 
 @app.route("/kite/status")
