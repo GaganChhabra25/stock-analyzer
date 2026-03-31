@@ -49,7 +49,7 @@ def format_currency_plain(val) -> str:
     return format_currency(val, symbol="Rs.", html=False)
 
 
-def format_currency_html(val) -> str:
+def format_currency_html(val, *_) -> str:
     """Shorthand for HTML output (uses '₹' prefix, &nbsp;)."""
     return format_currency(val, symbol="₹", html=True)
 
