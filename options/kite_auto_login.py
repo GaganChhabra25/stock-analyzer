@@ -71,8 +71,8 @@ def auto_login() -> bool:
     logger.info("Step 1 OK. request_id received.")
 
     # ── Step 2: TOTP ───────────────────────────────────────────────────────────
-    totp  = pyotp.TOTP(totp_secret)
-    otp   = totp.now()
+    totp = pyotp.TOTP(totp_secret)
+    otp  = totp.now()
 
     try:
         resp = session.post(TWOFA_URL, data={
@@ -80,40 +80,45 @@ def auto_login() -> bool:
             "request_id":  request_id,
             "twofa_value": otp,
             "twofa_type":  twofa_type,
-        }, timeout=15, allow_redirects=False)
+        }, timeout=15, allow_redirects=True)
     except Exception as exc:
         logger.error("Login step 2 (TOTP) failed: %s", exc)
         return False
 
-    # ── Step 3: Extract request_token from redirect ────────────────────────────
-    redirect_url = resp.headers.get("Location", "")
-    if not redirect_url:
-        # Try from response body
-        import re
-        match = re.search(r"request_token=([A-Za-z0-9]+)", resp.text)
-        redirect_url = match.group(0) if match else ""
-
-    import urllib.parse as up
-    params = up.parse_qs(up.urlparse(redirect_url).query)
-    request_token = params.get("request_token", [None])[0]
-
-    if not request_token:
-        # Try following the redirect manually
-        try:
-            final = session.get(
-                f"https://kite.trade/connect/login?api_key={api_key}&v=3",
-                allow_redirects=True, timeout=15
-            )
-            params = up.parse_qs(up.urlparse(final.url).query)
-            request_token = params.get("request_token", [None])[0]
-        except Exception:
-            pass
-
-    if not request_token:
-        logger.error("Could not extract request_token from redirect: %s", redirect_url[:200])
+    if resp.status_code == 403:
+        logger.error("TOTP rejected: %s", resp.json().get("message", ""))
         return False
 
-    logger.info("Step 2 OK. request_token received.")
+    logger.info("Step 2 OK. Session established.")
+
+    # ── Step 3: Hit Kite Connect auth URL — session cookie auto-skips login ────
+    import urllib.parse as up
+    kite_auth_url = f"https://kite.trade/connect/login?api_key={api_key}&v=3"
+
+    try:
+        final = session.get(kite_auth_url, allow_redirects=True, timeout=15)
+        final_url = final.url
+    except Exception as exc:
+        logger.error("Step 3 redirect failed: %s", exc)
+        return False
+
+    params = up.parse_qs(up.urlparse(final_url).query)
+    request_token = params.get("request_token", [None])[0]
+
+    # Fallback: scan response text for request_token
+    if not request_token:
+        import re
+        for url in [final_url, final.text[:500]]:
+            match = re.search(r"request_token=([A-Za-z0-9]+)", url)
+            if match:
+                request_token = match.group(1)
+                break
+
+    if not request_token:
+        logger.error("Could not extract request_token. Final URL: %s", final_url[:200])
+        return False
+
+    logger.info("Step 3 OK. request_token received.")
 
     # ── Step 4: Generate and save access token ─────────────────────────────────
     try:
