@@ -73,11 +73,16 @@ def fetch_spot_history(kite, symbol: str, from_dt: datetime, to_dt: datetime) ->
 
 def get_expiries_in_range(df, symbol: str, from_date: date, to_date: date):
     """Return all expiries that overlap with the date range."""
-    import pandas as pd
     sym_df = df[df["tradingsymbol"].str.startswith(symbol)]
     expiries = sorted(sym_df["expiry"].unique())
-    # Include expiries that fall on or after from_date (active during range)
-    return [e for e in expiries if e >= from_date]
+    result = []
+    for e in expiries:
+        # Handle both date objects and strings (from JSON cache)
+        if isinstance(e, str):
+            e = date.fromisoformat(e)
+        if e >= from_date:
+            result.append(e)
+    return result
 
 
 def get_strikes_for_range(spot_history: dict, symbol: str, n: int) -> set:
@@ -118,9 +123,13 @@ def backfill_symbol(kite, df, symbol: str, from_date: date, to_date: date):
     logger.info("%s: using expiry %s", symbol, expiry)
 
     # Get instrument tokens for all relevant strikes
+    # Normalise expiry column to string for comparison
+    expiry_str = expiry.isoformat() if isinstance(expiry, date) else expiry
+    df_expiry  = df["expiry"].apply(lambda x: x.isoformat() if isinstance(x, date) else str(x))
+
     sym_df = df[
         df["tradingsymbol"].str.startswith(symbol) &
-        (df["expiry"] == expiry) &
+        (df_expiry == expiry_str) &
         (df["strike"].isin(strikes)) &
         (df["instrument_type"].isin(["CE", "PE"]))
     ]
