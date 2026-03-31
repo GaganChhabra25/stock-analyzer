@@ -25,7 +25,7 @@ import pandas as pd
 
 from logging_config import configure_logging
 from config import GOALS, ZERODHA_HOLDINGS_FILE, MF_HOLDINGS_FILE, REPORT_OUTPUT_FILE, HTML_REPORT_FILE
-from utils.data_loader import load_zerodha_holdings, load_mf_holdings, load_holdings_from_kite
+from utils.data_loader import load_zerodha_holdings, load_mf_holdings, load_holdings_from_kite, load_mf_from_kite
 from analyzers.stock_analyzer import StockAnalyzer
 from analyzers.mf_analyzer import MFAnalyzer
 from analyzers.portfolio_analyzer import PortfolioAnalyzer
@@ -108,12 +108,20 @@ def run(stocks_only=False, mf_only=False, save_report=True):
 
     # ── Mutual Funds ──────────────────────────────────────────────────────────
     if not stocks_only:
+        mf_holdings = None
         try:
-            mf_holdings = load_mf_holdings(MF_HOLDINGS_FILE)
-        except FileNotFoundError as e:
-            print(f"{Fore.YELLOW}No MF file found ({e}). Skipping MF analysis.{Style.RESET_ALL}")
-            logger.warning("MF holdings file not found: %s", e)
-            mf_holdings = None
+            mf_holdings = load_mf_from_kite()
+            active_sips = mf_holdings[mf_holdings["Monthly_SIP"] > 0]
+            print(f"{Fore.GREEN}Live MF holdings fetched from Zerodha Kite "
+                  f"({len(mf_holdings)} funds, {len(active_sips)} with active SIP){Style.RESET_ALL}")
+        except Exception as kite_err:
+            logger.warning("Kite MF unavailable (%s) — falling back to CSV", kite_err)
+            print(f"{Fore.YELLOW}Kite MF unavailable — loading from CSV{Style.RESET_ALL}")
+            try:
+                mf_holdings = load_mf_holdings(MF_HOLDINGS_FILE)
+            except FileNotFoundError as e:
+                print(f"{Fore.YELLOW}No MF file found ({e}). Skipping MF analysis.{Style.RESET_ALL}")
+                logger.warning("MF holdings file not found: %s", e)
 
         if mf_holdings is not None and not mf_holdings.empty:
             mf_analyzer = MFAnalyzer()

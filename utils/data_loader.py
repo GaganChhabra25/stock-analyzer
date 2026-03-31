@@ -165,6 +165,78 @@ def load_holdings_from_kite() -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+# ── Kite Connect live MF holdings + SIP fetcher ──────────────────────────────
+
+def load_mf_from_kite() -> pd.DataFrame:
+    """
+    Fetch live MF holdings and active SIPs from Kite Connect.
+    Returns same DataFrame format as load_mf_holdings().
+    Raises RuntimeError if Kite is not authorized or no MF holdings found.
+    """
+    try:
+        from options.kite_auth import get_kite
+    except ImportError:
+        raise RuntimeError("options.kite_auth not available")
+
+    kite = get_kite()
+    if kite is None:
+        raise RuntimeError("Kite not authorized")
+
+    logger.info("Fetching live MF holdings from Kite Connect...")
+    raw_holdings = kite.mf_holdings()
+    raw_sips     = kite.mf_sips()
+
+    if not raw_holdings:
+        raise RuntimeError("No MF holdings found in Kite account")
+
+    # Build SIP lookup: tradingsymbol → monthly_amount (active SIPs only)
+    # Convert weekly/fortnightly to monthly equivalent
+    _freq_multiplier = {"weekly": 4, "fortnightly": 2, "monthly": 1, "quarterly": 0.33}
+    sip_map = {}
+    for s in raw_sips:
+        if s.get("status", "").upper() != "ACTIVE":
+            continue
+        sym    = s.get("tradingsymbol", "")
+        amount = float(s.get("instalment_amount", 0))
+        freq   = s.get("frequency", "monthly").lower()
+        monthly = amount * _freq_multiplier.get(freq, 1)
+        sip_map[sym] = sip_map.get(sym, 0) + monthly
+
+    rows = []
+    for h in raw_holdings:
+        sym       = h.get("tradingsymbol", "")
+        fund_name = h.get("fund", sym).strip()
+        quantity  = float(h.get("quantity", 0))
+        avg_nav   = float(h.get("average_price", 0))
+        last_nav  = float(h.get("last_price", 0))
+        pnl       = (last_nav - avg_nav) * quantity  # recalculate (Kite returns 0 sometimes)
+        cur_val   = last_nav * quantity
+
+        scheme_code = _lookup_scheme_code(fund_name)
+
+        rows.append({
+            "Fund_Name":        fund_name,
+            "Scheme_Code":      int(scheme_code) if scheme_code else 0,
+            "Monthly_SIP":      sip_map.get(sym, 0.0),
+            "Total_Units":      quantity,
+            "Avg_Purchase_NAV": avg_nav,
+            "Current_NAV":      last_nav,
+            "Current_Value":    cur_val,
+            "PnL":              pnl,
+            "Net_Change_Pct":   ((last_nav - avg_nav) / avg_nav * 100) if avg_nav else 0,
+            "Expense_Ratio":    0.0,
+            "Notes":            "",
+        })
+
+    df = pd.DataFrame(rows)
+    df["Category"] = df["Fund_Name"].apply(_detect_mf_category)
+    df = df[df["Total_Units"] > 0].copy()
+
+    active_sips = sum(1 for s in raw_sips if s.get("status", "").upper() == "ACTIVE")
+    logger.info("Loaded %d MF holdings from Kite (%d active SIPs)", len(df), active_sips)
+    return df.reset_index(drop=True)
+
+
 # ── Public loader ─────────────────────────────────────────────────────────────
 
 def load_zerodha_holdings(filepath: str) -> pd.DataFrame:
