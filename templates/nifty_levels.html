@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Options Intelligence — Nifty</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+
+/* ── Header ── */
+.header { background: linear-gradient(135deg, #1a1a3e 0%, #2d1b69 100%); padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-logo { font-size: 24px; }
+.header-title { font-size: 18px; font-weight: 700; color: #fff; }
+.header-sub { font-size: 11px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.nav-btn { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.85); padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; }
+.nav-btn:hover { background: rgba(255,255,255,0.2); }
+.nav-btn.active { background: rgba(139,93,255,0.3); border-color: rgba(189,143,255,0.5); color: #bd8fff; }
+
+/* ── Layout ── */
+.main { padding: 32px 40px; max-width: 1200px; margin: 0 auto; }
+.page-title { font-size: 22px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
+.page-sub { font-size: 13px; color: #8b949e; margin-bottom: 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.source-badge { font-size: 10px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+.src-live     { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.src-backfill { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.src-static   { background: rgba(139,148,158,0.15); color: #8b949e; border: 1px solid #30363d; }
+
+/* ── Stat row ── */
+.stat-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 28px; }
+@media (max-width: 860px) { .stat-row { grid-template-columns: repeat(3, 1fr); } }
+.stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 18px 20px; }
+.stat-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
+.stat-value { font-size: 26px; font-weight: 700; color: #f0f6fc; line-height: 1; }
+.stat-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
+.stat-up   { color: #3fb950; }
+.stat-down { color: #f85149; }
+.stat-warn { color: #e3b341; }
+
+/* ── Section headers ── */
+.section { margin-bottom: 36px; }
+.section-title { font-size: 15px; font-weight: 700; color: #f0f6fc; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+.section-badge { font-size: 10px; background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 8px; border-radius: 99px; font-weight: 500; }
+.dte-badge { font-size: 10px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+.dte-hot  { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+.dte-warm { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.dte-cool { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+
+/* ── Range visualizer ── */
+.range-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px 28px; margin-bottom: 20px; }
+.range-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+.range-expiry { font-size: 14px; font-weight: 700; color: #f0f6fc; }
+.range-meta { display: flex; gap: 16px; font-size: 12px; color: #8b949e; }
+.range-meta span { display: flex; align-items: center; gap: 4px; }
+
+.range-bar-wrap { position: relative; height: 56px; margin: 0 0 12px; }
+.range-bar-bg { position: absolute; top: 20px; left: 0; right: 0; height: 16px; background: #21262d; border-radius: 8px; overflow: hidden; }
+.range-bar-fill { position: absolute; top: 0; height: 100%; border-radius: 8px; }
+.range-sell-zone { background: linear-gradient(90deg, rgba(63,185,80,0.3), rgba(63,185,80,0.5)); }
+.range-danger-lo  { background: linear-gradient(90deg, rgba(248,81,73,0.5), rgba(248,81,73,0.2)); }
+.range-danger-hi  { background: linear-gradient(90deg, rgba(248,81,73,0.2), rgba(248,81,73,0.5)); }
+
+/* Spot marker */
+.spot-marker { position: absolute; top: 12px; width: 32px; height: 32px; border-radius: 50%; background: #f0f6fc; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #0d1117; transform: translateX(-50%); z-index: 2; }
+
+.range-labels { display: flex; justify-content: space-between; font-size: 11px; color: #8b949e; margin-top: 4px; }
+.range-label-spot { position: absolute; top: 48px; font-size: 10px; font-weight: 700; color: #f0f6fc; transform: translateX(-50%); white-space: nowrap; }
+
+.range-numbers { display: flex; justify-content: space-between; margin-top: 8px; }
+.range-lo-val { font-size: 16px; font-weight: 700; color: #f85149; }
+.range-hi-val { font-size: 16px; font-weight: 700; color: #3fb950; }
+.range-center  { text-align: center; font-size: 12px; color: #8b949e; }
+.range-center strong { color: #f0f6fc; font-size: 14px; display: block; }
+
+/* ── Trade cards ── */
+.trades-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .trades-grid { grid-template-columns: 1fr; } }
+
+.trade-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 14px; transition: border-color 0.2s; }
+.trade-card:hover { border-color: #58a6ff; }
+.trade-card.conviction-high { border-left: 3px solid #3fb950; }
+.trade-card.conviction-medium { border-left: 3px solid #e3b341; }
+
+.trade-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.trade-name { font-size: 15px; font-weight: 700; color: #f0f6fc; }
+.conviction-badge { font-size: 10px; padding: 3px 10px; border-radius: 99px; font-weight: 700; white-space: nowrap; }
+.conv-high   { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.conv-medium { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+
+/* Probability bar */
+.prob-section { }
+.prob-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; display: flex; justify-content: space-between; }
+.prob-bar-track { height: 10px; background: #21262d; border-radius: 5px; overflow: hidden; margin-bottom: 4px; }
+.prob-bar-fill  { height: 100%; border-radius: 5px; background: linear-gradient(90deg, #238636, #3fb950); transition: width 0.8s ease; }
+.prob-bar-fill.medium { background: linear-gradient(90deg, #9a6700, #e3b341); }
+.prob-num { font-size: 22px; font-weight: 700; color: #3fb950; }
+.prob-num.medium { color: #e3b341; }
+
+/* Trade action */
+.trade-action { font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; color: #58a6ff; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 10px 14px; line-height: 1.5; }
+
+.trade-rows { display: flex; flex-direction: column; gap: 6px; }
+.trade-row  { display: flex; justify-content: space-between; font-size: 12px; border-bottom: 1px solid #21262d; padding-bottom: 5px; }
+.trade-row:last-child { border-bottom: none; }
+.tr-label { color: #8b949e; }
+.tr-val   { color: #f0f6fc; font-weight: 600; text-align: right; max-width: 60%; }
+.tr-val.green { color: #3fb950; }
+.tr-val.red   { color: #f85149; }
+
+.trade-reason { font-size: 11px; color: #8b949e; line-height: 1.6; background: rgba(255,255,255,0.02); border-radius: 6px; padding: 10px 12px; border-left: 2px solid #30363d; }
+
+/* ── Key levels table ── */
+.tbl-wrap { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead { background: #21262d; }
+th { padding: 11px 16px; text-align: left; font-size: 10px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+td { padding: 10px 16px; border-top: 1px solid #21262d; white-space: nowrap; }
+tr:hover td { background: rgba(255,255,255,0.02); }
+
+.side-support    { color: #3fb950; font-weight: 700; }
+.side-resistance { color: #f85149; font-weight: 700; }
+
+.strength-bar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; min-width: 80px; }
+.strength-fill { height: 100%; border-radius: 3px; }
+.str-high   { background: #3fb950; }
+.str-medium { background: #e3b341; }
+.str-low    { background: #8b949e; }
+
+/* ── Summary box ── */
+.summary-box { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px 28px; }
+.summary-title { font-size: 13px; font-weight: 700; color: #f0f6fc; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.summary-text { font-size: 13px; color: #8b949e; line-height: 1.8; }
+.summary-text strong { color: #f0f6fc; }
+
+.stats-pills { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.pill { display: flex; flex-direction: column; align-items: center; background: #21262d; border: 1px solid #30363d; border-radius: 10px; padding: 12px 18px; min-width: 90px; }
+.pill-val { font-size: 20px; font-weight: 700; color: #3fb950; }
+.pill-lbl { font-size: 10px; color: #8b949e; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.4px; text-align: center; }
+
+/* ── Disclaimer ── */
+.disclaimer { margin-top: 28px; font-size: 11px; color: #484f58; text-align: center; line-height: 1.6; }
+
+/* ── Chart canvas ── */
+.chart-wrap { position: relative; height: 160px; margin: 0 0 8px; }
+
+/* ── Refresh badge ── */
+.refresh-note { font-size: 11px; color: #484f58; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div class="header-logo">&#127911;</div>
+    <div>
+      <div class="header-title">Options Intelligence</div>
+      <div class="header-sub">Nifty levels, expected range &amp; high-probability trades</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <a href="/" class="nav-btn">Dashboard</a>
+    <a href="/nifty" class="nav-btn active">Options Intel</a>
+    <a href="/insights" class="nav-btn">DB Insights</a>
+    <a href="/logout" class="nav-btn">Sign Out</a>
+  </div>
+</div>
+
+<div class="main">
+
+{% if not data.available %}
+<div style="text-align:center; padding:80px 20px;">
+  <div style="font-size:40px; margin-bottom:12px;">&#9888;&#65039;</div>
+  <div style="font-size:14px; color:#8b949e;">Analysis unavailable: {{ data.get('error','Unknown error') }}</div>
+</div>
+{% else %}
+
+<!-- Page title + data freshness -->
+<div class="page-title">Nifty Options Intelligence</div>
+<div class="page-sub">
+  <span>As of: <strong style="color:#f0f6fc;">{{ data.as_of }}</strong></span>
+  {% if data.data_source == 'live' %}
+    <span class="source-badge src-live">&#9679; Live Data</span>
+  {% elif data.data_source == 'backfill' %}
+    <span class="source-badge src-backfill">&#9679; Backfill Data</span>
+  {% else %}
+    <span class="source-badge src-static">&#9679; Static Reference</span>
+  {% endif %}
+  <span class="refresh-note">Spot &amp; IV update every minute during market hours</span>
+</div>
+
+<!-- ── Stat Row ── -->
+<div class="stat-row">
+
+  <div class="stat-card">
+    <div class="stat-label">Nifty Spot</div>
+    <div class="stat-value">{{ "{:,.0f}".format(data.spot) }}</div>
+    <div class="stat-sub">ATM Strike: {{ data.atm_strike }}</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">India VIX</div>
+    {% if data.vix %}
+      <div class="stat-value {% if data.vix > 18 %}stat-warn{% elif data.vix < 14 %}stat-up{% else %}stat-down{% endif %}">
+        {{ "%.1f"|format(data.vix) }}
+      </div>
+      <div class="stat-sub">{% if data.vix > 18 %}High — IV elevated{% elif data.vix < 14 %}Low — IV depressed{% else %}Moderate{% endif %}</div>
+    {% else %}
+      <div class="stat-value" style="font-size:18px; color:#8b949e;">N/A</div>
+      <div class="stat-sub">Live data from Apr 1</div>
+    {% endif %}
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">PCR (OI)</div>
+    {% if data.pcr %}
+      <div class="stat-value {% if data.pcr > 1.2 %}stat-up{% elif data.pcr < 0.8 %}stat-down{% else %}stat-warn{% endif %}">
+        {{ "%.2f"|format(data.pcr) }}
+      </div>
+      <div class="stat-sub">{% if data.pcr > 1.2 %}Bullish sentiment{% elif data.pcr < 0.8 %}Bearish sentiment{% else %}Neutral{% endif %}</div>
+    {% else %}
+      <div class="stat-value" style="font-size:18px; color:#8b949e;">N/A</div>
+      <div class="stat-sub">Needs live OI data</div>
+    {% endif %}
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">ATM Straddle</div>
+    {% if data.atm_straddle %}
+      <div class="stat-value">{{ "{:,.0f}".format(data.atm_straddle) }}</div>
+      <div class="stat-sub">Implied weekly move</div>
+    {% else %}
+      <div class="stat-value" style="font-size:18px; color:#8b949e;">~{{ "{:,.0f}".format(data.weekly.expected_move * 2) }}</div>
+      <div class="stat-sub">Estimated from IV</div>
+    {% endif %}
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">Historical Win Rate</div>
+    <div class="stat-value stat-up">{{ data.stats.win_rate }}%</div>
+    <div class="stat-sub">Short straddle · 59 days</div>
+  </div>
+
+</div>
+
+<!-- ────────────────────────────────────────────────────── WEEKLY ── -->
+<div class="section">
+  <div class="section-title">
+    &#128197; Weekly Expiry — {{ data.weekly.expiry }} ({{ data.weekly.expiry_dow }})
+    {% if data.weekly.dte <= 3 %}
+      <span class="dte-badge dte-hot">{{ data.weekly.dte }} DTE — HOT THETA</span>
+    {% elif data.weekly.dte <= 7 %}
+      <span class="dte-badge dte-warm">{{ data.weekly.dte }} DTE — Prime Zone</span>
+    {% else %}
+      <span class="dte-badge dte-cool">{{ data.weekly.dte }} DTE</span>
+    {% endif %}
+    <span class="section-badge">IV {{ data.weekly.iv }}%</span>
+  </div>
+
+  <!-- Range visualizer -->
+  <div class="range-card">
+    <div class="range-header">
+      <div class="range-expiry">Expected Weekly Range (1&#963; Black-Scholes)</div>
+      <div class="range-meta">
+        <span>&#963; Move: <strong style="color:#f0f6fc;">±{{ "{:,}".format(data.weekly.expected_move) }} pts</strong></span>
+        <span>IV: <strong style="color:#f0f6fc;">{{ data.weekly.iv }}%</strong></span>
+        <span>DTE: <strong style="color:#f0f6fc;">{{ data.weekly.dte }}</strong></span>
+      </div>
+    </div>
+
+    <!-- Canvas chart for range -->
+    <div class="chart-wrap">
+      <canvas id="weeklyRangeChart"></canvas>
+    </div>
+
+    <div class="range-numbers">
+      <div>
+        <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">1&#963; LOW (support zone)</div>
+        <div class="range-lo-val">{{ "{:,}".format(data.weekly.range.lo) }}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">Current Spot / ATM</div>
+        <div style="font-size:18px;font-weight:700;color:#f0f6fc;">{{ "{:,}".format(data.spot | int) }}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">1&#963; HIGH (resistance zone)</div>
+        <div class="range-hi-val">{{ "{:,}".format(data.weekly.range.hi) }}</div>
+      </div>
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:#484f58;">
+      68% probability spot expires between these levels · Historical actual avg move: {{ data.stats.avg_move }} pts/day vs ~{{ data.weekly.expected_move * 2 }} pt straddle — sellers have structural edge
+    </div>
+  </div>
+
+  <!-- Weekly trade cards -->
+  <div class="trades-grid">
+    {% for trade in data.weekly.trades %}
+    <div class="trade-card conviction-{{ trade.conviction | lower }}">
+
+      <div class="trade-header">
+        <div>
+          <div class="trade-name">{{ trade.rank }}. {{ trade.name }}</div>
+          <div style="font-size:11px;color:#8b949e;margin-top:3px;">Weekly · {{ data.weekly.expiry }} · DTE {{ data.weekly.dte }}</div>
+        </div>
+        <span class="conviction-badge conv-{{ trade.conviction | lower }}">
+          {{ trade.conviction }} CONVICTION
+        </span>
+      </div>
+
+      <!-- Probability bar -->
+      <div class="prob-section">
+        <div class="prob-label">
+          <span>Win Probability</span>
+          <span style="color:{% if trade.probability >= 78 %}#3fb950{% else %}#e3b341{% endif %};">{{ trade.probability }}%</span>
+        </div>
+        <div class="prob-bar-track">
+          <div class="prob-bar-fill {% if trade.probability < 78 %}medium{% endif %}"
+               style="width:{{ trade.probability }}%"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#484f58;margin-top:2px;">
+          <span>50%</span><span>65%</span><span>80%</span><span>95%</span>
+        </div>
+      </div>
+
+      <!-- Action box -->
+      <div class="trade-action">{{ trade.action }}</div>
+
+      <!-- Trade details -->
+      <div class="trade-rows">
+        <div class="trade-row">
+          <span class="tr-label">Premium Collected</span>
+          <span class="tr-val green">{{ trade.premium }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Breakeven Range</span>
+          <span class="tr-val">{{ trade.breakeven }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Stop Loss</span>
+          <span class="tr-val red">{{ trade.stop_loss }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Max Loss</span>
+          <span class="tr-val red">{{ trade.max_loss }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Theta Edge</span>
+          <span class="tr-val green">{{ trade.theta_day }}</span>
+        </div>
+      </div>
+
+      <!-- Reason -->
+      <div class="trade-reason">&#128203; <strong>Why this trade:</strong> {{ trade.reason }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- ────────────────────────────────────────────────────── MONTHLY ── -->
+<div class="section">
+  <div class="section-title">
+    &#128336; Monthly Expiry — {{ data.monthly.expiry }} ({{ data.monthly.expiry_dow }})
+    <span class="dte-badge dte-cool">{{ data.monthly.dte }} DTE</span>
+    <span class="section-badge">IV {{ data.monthly.iv }}%</span>
+  </div>
+
+  <!-- Range visualizer -->
+  <div class="range-card">
+    <div class="range-header">
+      <div class="range-expiry">Expected Monthly Range (1&#963; Black-Scholes)</div>
+      <div class="range-meta">
+        <span>&#963; Move: <strong style="color:#f0f6fc;">±{{ "{:,}".format(data.monthly.expected_move) }} pts</strong></span>
+        <span>IV: <strong style="color:#f0f6fc;">{{ data.monthly.iv }}%</strong></span>
+        <span>DTE: <strong style="color:#f0f6fc;">{{ data.monthly.dte }}</strong></span>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="monthlyRangeChart"></canvas>
+    </div>
+
+    <div class="range-numbers">
+      <div>
+        <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">1&#963; LOW</div>
+        <div class="range-lo-val">{{ "{:,}".format(data.monthly.range.lo) }}</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">Spot / ATM</div>
+        <div style="font-size:18px;font-weight:700;color:#f0f6fc;">{{ "{:,}".format(data.spot | int) }}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:10px;color:#8b949e;margin-bottom:3px;">1&#963; HIGH</div>
+        <div class="range-hi-val">{{ "{:,}".format(data.monthly.range.hi) }}</div>
+      </div>
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:#484f58;">
+      Weekly IV {{ data.weekly.iv }}% vs Monthly IV {{ data.monthly.iv }}% — weeklies 2x richer · enter monthly IC at DTE 25, close at DTE 10
+    </div>
+  </div>
+
+  <div class="trades-grid">
+    {% for trade in data.monthly.trades %}
+    <div class="trade-card conviction-{{ trade.conviction | lower }}">
+
+      <div class="trade-header">
+        <div>
+          <div class="trade-name">{{ trade.rank }}. {{ trade.name }}</div>
+          <div style="font-size:11px;color:#8b949e;margin-top:3px;">Monthly · {{ data.monthly.expiry }} · DTE {{ data.monthly.dte }}</div>
+        </div>
+        <span class="conviction-badge conv-{{ trade.conviction | lower }}">
+          {{ trade.conviction }} CONVICTION
+        </span>
+      </div>
+
+      <div class="prob-section">
+        <div class="prob-label">
+          <span>Win Probability</span>
+          <span style="color:{% if trade.probability >= 78 %}#3fb950{% else %}#e3b341{% endif %};">{{ trade.probability }}%</span>
+        </div>
+        <div class="prob-bar-track">
+          <div class="prob-bar-fill {% if trade.probability < 78 %}medium{% endif %}"
+               style="width:{{ trade.probability }}%"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#484f58;margin-top:2px;">
+          <span>50%</span><span>65%</span><span>80%</span><span>95%</span>
+        </div>
+      </div>
+
+      <div class="trade-action">{{ trade.action }}</div>
+
+      <div class="trade-rows">
+        <div class="trade-row">
+          <span class="tr-label">Premium Collected</span>
+          <span class="tr-val green">{{ trade.premium }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Breakeven Range</span>
+          <span class="tr-val">{{ trade.breakeven }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Stop Loss / Exit</span>
+          <span class="tr-val red">{{ trade.stop_loss }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Max Loss</span>
+          <span class="tr-val red">{{ trade.max_loss }}</span>
+        </div>
+        <div class="trade-row">
+          <span class="tr-label">Theta Edge</span>
+          <span class="tr-val green">{{ trade.theta_day }}</span>
+        </div>
+      </div>
+
+      <div class="trade-reason">&#128203; <strong>Why this trade:</strong> {{ trade.reason }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- ────────────────────────────────────────────────── KEY LEVELS ── -->
+<div class="section">
+  <div class="section-title">
+    &#127981; Volume-Based Key Levels
+    <span class="section-badge">59-day data · {{ data.stats.data_rows }} rows</span>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Strike</th>
+          <th>Side</th>
+          <th>Type</th>
+          <th>59d Volume</th>
+          <th>Strength</th>
+          <th>Signal</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for lvl in data.key_levels %}
+        <tr>
+          <td style="font-weight:700; color:#f0f6fc; font-size:15px;">{{ "{:,}".format(lvl.strike) }}</td>
+          <td class="{{ 'side-support' if lvl.side == 'Support' else 'side-resistance' }}">
+            {% if lvl.side == 'Support' %}&#8593; Support{% else %}&#8595; Resistance{% endif %}
+          </td>
+          <td style="color:#8b949e;">{{ lvl.type }}</td>
+          <td style="color:#8b949e;">{{ lvl.vol_m }}M contracts</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div class="strength-bar">
+                <div class="strength-fill {% if lvl.strength >= 85 %}str-high{% elif lvl.strength >= 70 %}str-medium{% else %}str-low{% endif %}"
+                     style="width:{{ lvl.strength }}%"></div>
+              </div>
+              <span style="font-size:12px;font-weight:700;color:{% if lvl.strength >= 85 %}#3fb950{% elif lvl.strength >= 70 %}#e3b341{% else %}#8b949e{% endif %};">
+                {{ lvl.strength }}%
+              </span>
+            </div>
+          </td>
+          <td style="color:#8b949e;font-size:12px;">{{ lvl.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ──────────────────────────────────────────────── DATA SUMMARY ── -->
+<div class="section">
+  <div class="section-title">&#128202; Analysis Summary &amp; Edge Metrics</div>
+  <div class="summary-box">
+    <div class="summary-title">&#128203; Why These Trades? (Data-Backed)</div>
+    <div class="summary-text">{{ data.summary }}</div>
+
+    <div class="stats-pills">
+      <div class="pill">
+        <div class="pill-val">{{ data.stats.win_rate }}%</div>
+        <div class="pill-lbl">Seller Win Rate</div>
+      </div>
+      <div class="pill">
+        <div class="pill-val">{{ data.stats.edge_pts }}</div>
+        <div class="pill-lbl">Avg Daily Edge (pts)</div>
+      </div>
+      <div class="pill">
+        <div class="pill-val">{{ data.stats.avg_move }}</div>
+        <div class="pill-lbl">Avg Actual Move (pts)</div>
+      </div>
+      <div class="pill">
+        <div class="pill-val">~3x</div>
+        <div class="pill-lbl">Overpricing Ratio</div>
+      </div>
+      <div class="pill">
+        <div class="pill-val">{{ data.stats.data_rows }}</div>
+        <div class="pill-lbl">Rows Analyzed</div>
+      </div>
+      <div class="pill">
+        <div class="pill-val">{{ data.stats.data_days }}</div>
+        <div class="pill-lbl">Days Backtested</div>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;padding:12px 16px;background:rgba(63,185,80,0.06);border:1px solid rgba(63,185,80,0.2);border-radius:8px;">
+      <div style="font-size:12px;color:#3fb950;font-weight:700;margin-bottom:6px;">&#9989; Recommended Approach for Consistent Profits</div>
+      <div style="font-size:12px;color:#8b949e;line-height:1.7;">
+        <strong style="color:#f0f6fc;">Weekly:</strong> Iron Condor on Thursday expiry (enter Mon–Tue, exit before Thu 2PM). Target 30% of premium.<br>
+        <strong style="color:#f0f6fc;">Monthly:</strong> Iron Condor entered at DTE 25 (max theta efficiency). Exit at DTE 10 or 40% profit.<br>
+        <strong style="color:#f0f6fc;">Risk per trade:</strong> 2% of capital max. Scale: 1 lot initially, add on consistent wins.<br>
+        <strong style="color:#f0f6fc;">Re-query:</strong> Refresh strikes when Nifty moves &gt;500 pts from {{ data.atm_strike }}.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="disclaimer">
+  Options trading involves significant risk. These are data-backed suggestions, not financial advice.
+  Past win rates do not guarantee future performance. Always use stop-losses. Trade only capital you can afford to lose.
+</div>
+
+{% endif %}
+</div><!-- /main -->
+
+<!-- ── Charts (Chart.js via CDN) ── -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  var spot   = {{ data.spot | int }};
+  var wLo    = {{ data.weekly.range.lo }};
+  var wHi    = {{ data.weekly.range.hi }};
+  var mLo    = {{ data.monthly.range.lo }};
+  var mHi    = {{ data.monthly.range.hi }};
+
+  // Key S/R levels for reference lines
+  var keyLevels = [22000, 22500, 23000, 23500, 24000];
+
+  function buildRangeChart(canvasId, lo, hi, title) {
+    var ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+
+    // Build a horizontal bar chart showing [lo ... spot ... hi]
+    // Using a floating bar dataset trick
+    var spread = Math.max(hi - lo, 800);
+    var pad    = spread * 0.25;
+    var xMin   = lo - pad;
+    var xMax   = hi + pad;
+
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ['Range'],
+        datasets: [
+          {
+            // Left danger zone: xMin → lo
+            label: 'Below Support',
+            data: [[xMin, lo]],
+            backgroundColor: 'rgba(248,81,73,0.25)',
+            borderColor: 'rgba(248,81,73,0.6)',
+            borderWidth: 1,
+            borderSkipped: false,
+            borderRadius: 4,
+          },
+          {
+            // Safe sell zone: lo → hi
+            label: 'Expected Range (safe zone)',
+            data: [[lo, hi]],
+            backgroundColor: 'rgba(63,185,80,0.18)',
+            borderColor: 'rgba(63,185,80,0.6)',
+            borderWidth: 1,
+            borderSkipped: false,
+            borderRadius: 4,
+          },
+          {
+            // Right danger zone: hi → xMax
+            label: 'Above Resistance',
+            data: [[hi, xMax]],
+            backgroundColor: 'rgba(248,81,73,0.25)',
+            borderColor: 'rgba(248,81,73,0.6)',
+            borderWidth: 1,
+            borderSkipped: false,
+            borderRadius: 4,
+          },
+        ],
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { left: 8, right: 8 } },
+        scales: {
+          x: {
+            min: xMin,
+            max: xMax,
+            grid: { color: '#21262d' },
+            ticks: {
+              color: '#8b949e',
+              font: { size: 10 },
+              callback: function(v) { return v.toLocaleString('en-IN'); },
+              maxTicksLimit: 8,
+            },
+          },
+          y: {
+            display: false,
+            stacked: false,
+          },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) {
+                var d = ctx.raw;
+                return ' ' + Math.round(d[0]).toLocaleString('en-IN') + ' → ' + Math.round(d[1]).toLocaleString('en-IN');
+              }
+            }
+          },
+          annotation: undefined,
+        },
+      },
+      plugins: [{
+        id: 'spotLine',
+        afterDraw: function(chart) {
+          var xScale = chart.scales['x'];
+          var yScale = chart.scales['y'];
+          var ctx2 = chart.ctx;
+          var xPos = xScale.getPixelForValue(spot);
+          var yTop = yScale.top;
+          var yBot = yScale.bottom;
+
+          // Spot line
+          ctx2.save();
+          ctx2.beginPath();
+          ctx2.strokeStyle = '#f0f6fc';
+          ctx2.lineWidth = 2;
+          ctx2.setLineDash([4, 3]);
+          ctx2.moveTo(xPos, yTop);
+          ctx2.lineTo(xPos, yBot);
+          ctx2.stroke();
+
+          // Spot label
+          ctx2.fillStyle = '#f0f6fc';
+          ctx2.font = 'bold 10px Segoe UI';
+          ctx2.textAlign = 'center';
+          ctx2.fillText('SPOT ' + spot.toLocaleString('en-IN'), xPos, yTop - 4);
+
+          // Lo label
+          var xLo = xScale.getPixelForValue(lo);
+          ctx2.fillStyle = '#f85149';
+          ctx2.font = 'bold 10px Segoe UI';
+          ctx2.textAlign = 'center';
+          ctx2.fillText(Math.round(lo).toLocaleString('en-IN'), xLo, yBot + 14);
+
+          // Hi label
+          var xHi = xScale.getPixelForValue(hi);
+          ctx2.fillStyle = '#3fb950';
+          ctx2.textAlign = 'center';
+          ctx2.fillText(Math.round(hi).toLocaleString('en-IN'), xHi, yBot + 14);
+
+          ctx2.restore();
+        }
+      }],
+    });
+  }
+
+  buildRangeChart('weeklyRangeChart',  wLo, wHi,  'Weekly');
+  buildRangeChart('monthlyRangeChart', mLo, mHi, 'Monthly');
+})();
+</script>
+
+</body>
+</html>

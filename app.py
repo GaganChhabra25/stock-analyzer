@@ -483,6 +483,19 @@ def insights():
     return render_template("insights.html", user=session["user"], data=data)
 
 
+# ── Nifty Options Intelligence ───────────────────────────────────────────────
+
+@app.route("/nifty")
+@login_required
+def nifty_intelligence():
+    from options.nifty_analysis import get_nifty_intelligence
+    try:
+        data = get_nifty_intelligence()
+    except Exception as exc:
+        data = {"available": False, "error": str(exc)}
+    return render_template("nifty_levels.html", user=session["user"], data=data)
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
