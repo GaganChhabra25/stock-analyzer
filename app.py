@@ -526,6 +526,39 @@ def weekly_range():
     return render_template("weekly_range.html", user=session["user"])
 
 
+def _fetch_db_ltps(instrument: str, expiry, strikes_types: list) -> dict:
+    """
+    Get last known LTP from option_chain DB for given strikes.
+    Works after market hours — returns the last collected price (closing price).
+    Returns {(strike, option_type): ltp}.
+    """
+    from screener.db import _get_conn, is_available
+    result = {}
+    if not is_available():
+        return result
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return result
+            with conn.cursor() as cur:
+                for strike, otype in strikes_types:
+                    cur.execute("""
+                        SELECT ltp FROM option_chain
+                        WHERE instrument  = %s
+                          AND expiry      = %s
+                          AND strike      = %s
+                          AND option_type = %s
+                          AND ltp IS NOT NULL
+                        ORDER BY ts DESC LIMIT 1
+                    """, (instrument.upper(), expiry, int(strike), otype))
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        result[(strike, otype)] = float(row[0])
+    except Exception as exc:
+        app.logger.warning("_fetch_db_ltps failed: %s", exc)
+    return result
+
+
 def _fetch_live_ltps(kite, instrument: str, expiry, strikes_types: list) -> dict:
     """
     Fetch live LTP from Kite for a list of (strike, option_type) pairs.
@@ -601,42 +634,49 @@ def api_sell_setup():
 
         setup = compute_sell_setup(snap, expiry, instrument)
 
-        # ── Override LTPs with live Kite prices ────────────────────────────
-        kite = get_kite()
-        if kite:
-            live = _fetch_live_ltps(
-                kite, instrument, expiry,
-                [(setup["sell_ce"], "CE"), (setup["sell_pe"], "PE")]
-            )
-            setup["_ltp_debug"] = live.get("_debug", {})
-            lot = setup["lot_size"]
-            ce_live = live.get((setup["sell_ce"], "CE"))
-            pe_live = live.get((setup["sell_pe"], "PE"))
-            if ce_live:
-                setup["ce_ltp"] = round(ce_live, 1)
-                setup["ce_sl"]  = round(setup["ce_ltp"] * 3.0, 1)
-            if pe_live:
-                setup["pe_ltp"] = round(pe_live, 1)
-                setup["pe_sl"]  = round(setup["pe_ltp"] * 3.0, 1)
+        # ── Override LTPs: Kite live → DB last-known → BS approx ─────────────
+        strikes_types = [(setup["sell_ce"], "CE"), (setup["sell_pe"], "PE")]
+        lot = setup["lot_size"]
 
-            # Recompute all derived values from fresh LTPs
-            total = round((setup["ce_ltp"] or 0) + (setup["pe_ltp"] or 0), 1)
-            setup["total_premium"]   = total
-            setup["target_pts"]      = round(total * 0.35, 1)
-            setup["sl_pts"]          = round(total * 2.0,  1)
-            setup["target_inr"]      = int(setup["target_pts"] * lot)
-            setup["sl_inr"]          = int(setup["sl_pts"]     * lot)
-            setup["max_profit_inr"]  = int(total * lot)
-            # Mark source: kite_live if both legs fetched, else partial/bs_approx
-            if ce_live and pe_live:
-                setup["ltp_source"] = "kite_live"
-            elif ce_live or pe_live:
-                setup["ltp_source"] = "kite_partial"
-            else:
-                setup["ltp_source"] = "bs_approx"
-        else:
-            setup["ltp_source"] = "bs_approx"
-            setup["_ltp_debug"] = {"step": "kite_not_authorized"}
+        # 1. Try Kite live prices (works during + after market hours)
+        kite = get_kite()
+        prices = {}
+        ltp_source = "bs_approx"
+        if kite:
+            live = _fetch_live_ltps(kite, instrument, expiry, strikes_types)
+            setup["_ltp_debug"] = live.get("_debug", {})
+            prices = {k: v for k, v in live.items() if k != "_debug" and not isinstance(k, str)}
+            if prices:
+                ltp_source = "kite_live" if len(prices) == 2 else "kite_partial"
+
+        # 2. DB fallback: use last collected LTP from option_chain (closing price after hours)
+        if len(prices) < 2:
+            db_prices = _fetch_db_ltps(instrument, expiry, strikes_types)
+            for key, val in db_prices.items():
+                if key not in prices:
+                    prices[key] = val
+            if db_prices:
+                ltp_source = "db_last" if not prices or ltp_source == "bs_approx" else "kite_partial+db"
+
+        # Apply fetched prices to setup
+        ce_price = prices.get((setup["sell_ce"], "CE"))
+        pe_price = prices.get((setup["sell_pe"], "PE"))
+        if ce_price:
+            setup["ce_ltp"] = round(ce_price, 1)
+            setup["ce_sl"]  = round(setup["ce_ltp"] * 3.0, 1)
+        if pe_price:
+            setup["pe_ltp"] = round(pe_price, 1)
+            setup["pe_sl"]  = round(setup["pe_ltp"] * 3.0, 1)
+
+        # Recompute all derived values
+        total = round((setup["ce_ltp"] or 0) + (setup["pe_ltp"] or 0), 1)
+        setup["total_premium"]   = total
+        setup["target_pts"]      = round(total * 0.35, 1)
+        setup["sl_pts"]          = round(total * 2.0,  1)
+        setup["target_inr"]      = int(setup["target_pts"] * lot)
+        setup["sl_inr"]          = int(setup["sl_pts"]     * lot)
+        setup["max_profit_inr"]  = int(total * lot)
+        setup["ltp_source"]      = ltp_source
 
         setup["expiry"] = str(setup["expiry"])
         return jsonify(setup)
