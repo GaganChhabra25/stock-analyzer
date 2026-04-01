@@ -68,6 +68,52 @@ def _next_thursday(from_date: date = None) -> date:
     return _next_expiry("NIFTY", "weekly", from_date)
 
 
+def get_nearest_db_expiry(instrument: str = "NIFTY",
+                          expiry_type: str = "weekly") -> date:
+    """
+    Return the nearest upcoming expiry that actually has data in option_chain.
+    Falls back to _next_expiry() only if the DB has no data at all.
+    This correctly handles NSE holidays (e.g. Apr 2 moved to Apr 7).
+    """
+    import calendar as _cal
+    today = date.today()
+
+    if not is_available():
+        return _next_expiry(instrument, expiry_type, today)
+
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return _next_expiry(instrument, expiry_type, today)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT expiry FROM option_chain
+                    WHERE instrument = %s
+                      AND expiry >= %s
+                    ORDER BY expiry ASC
+                    LIMIT 10
+                """, (instrument.upper(), today))
+                rows = [r[0] for r in cur.fetchall()]
+    except Exception:
+        return _next_expiry(instrument, expiry_type, today)
+
+    if not rows:
+        return _next_expiry(instrument, expiry_type, today)
+
+    if expiry_type.lower() == "monthly":
+        # Monthly = last expiry of the current/next month
+        for month_offset in (0, 1):
+            yr  = today.year + ((today.month + month_offset - 1) // 12)
+            mon = (today.month + month_offset - 1) % 12 + 1
+            month_expiries = [e for e in rows if e.year == yr and e.month == mon]
+            if month_expiries:
+                return month_expiries[-1]
+        return rows[-1]
+    else:
+        # Weekly = nearest expiry in DB (already sorted ascending)
+        return rows[0]
+
+
 def _expected_move(spot: float, iv_pct: float, dte: int) -> float:
     """Black-Scholes 1-sigma move in index points."""
     return spot * (iv_pct / 100.0) * math.sqrt(max(dte, 1) / 365.0)

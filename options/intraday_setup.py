@@ -290,24 +290,38 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
     }
 
 
-# ── Black-Scholes approximation (fallback when no live LTP) ───────────────────
+# ── Black-Scholes fallback (when no live LTP in DB) ───────────────────────────
 
 def _bs_approx(spot: float, strike: int, iv_pct: float, opt_type: str,
                expiry: Optional[date] = None) -> float:
-    """Very rough ATM approximation — used only when DB has no LTP."""
+    """
+    Full Black-Scholes price — used only when DB has no LTP for this strike.
+    Uses calendar DTE (not trading days) for correct short-dated option pricing.
+    """
     import math
-    if expiry is not None:
-        dte = max((expiry - date.today()).days, 1)
-    else:
-        dte = 1
-    T = dte / 252.0
-    sigma = iv_pct / 100.0
-    sv = sigma * math.sqrt(T)
-    moneyness = spot / strike
-    # Intrinsic + time value approximation
+
+    def _norm_cdf(x: float) -> float:
+        """Standard normal CDF via math.erf."""
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    dte = max((expiry - date.today()).days, 1) if expiry else 1
+    T   = dte / 365.0                 # calendar-day fraction of year
+    S   = float(spot)
+    K   = float(strike)
+    r   = 0.07                        # risk-free rate
+    sig = iv_pct / 100.0
+
+    sv  = sig * math.sqrt(T)
+    if sv < 1e-9:
+        # At expiry: return intrinsic
+        return round(max(S - K, 0) if opt_type == "CE" else max(K - S, 0), 1)
+
+    d1 = (math.log(S / K) + (r + 0.5 * sig * sig) * T) / sv
+    d2 = d1 - sv
+
     if opt_type == "CE":
-        intrinsic = max(spot - strike, 0)
+        price = S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
     else:
-        intrinsic = max(strike - spot, 0)
-    time_val = spot * sv * 0.4   # rough Vega approximation
-    return round(intrinsic + time_val, 1)
+        price = K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+
+    return round(max(price, 0.05), 1)

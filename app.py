@@ -532,19 +532,14 @@ def api_sell_setup():
     """Sell setup + probability for selected instrument / expiry type."""
     import traceback
     try:
-        from options.range_predict import fetch_summary, _next_expiry
+        from options.range_predict import fetch_summary, get_nearest_db_expiry
         from options.intraday_setup import compute_sell_setup
-        from datetime import date as _date
 
         instrument  = request.args.get("instrument", "NIFTY").upper()
         expiry_type = request.args.get("expiry_type", "weekly").lower()
 
-        today          = _date.today()
-        expiry_weekday = 2 if instrument == "BANKNIFTY" else 3
-        if today.weekday() == expiry_weekday:
-            expiry = today
-        else:
-            expiry = _next_expiry(instrument, expiry_type, today)
+        # Use actual DB expiry (respects NSE holidays / moved expiries)
+        expiry = get_nearest_db_expiry(instrument, expiry_type)
 
         snap = fetch_summary(expiry, instrument)
         if not snap:
@@ -562,10 +557,10 @@ def api_sell_setup():
 @login_required
 def api_paper_trade():
     """Place a paper trade for the sell setup."""
-    from options.range_predict import fetch_summary, _next_expiry
+    from options.range_predict import fetch_summary, get_nearest_db_expiry
     from options.intraday_setup import compute_sell_setup
     from options.trade_executor import place_paper_trade
-    from datetime import date as _date, datetime as _dt
+    from datetime import datetime as _dt
 
     data        = request.get_json(silent=True) or {}
     instrument  = data.get("instrument", "NIFTY").upper()
@@ -575,12 +570,7 @@ def api_paper_trade():
     if expiry_str:
         expiry = _dt.strptime(expiry_str, "%Y-%m-%d").date()
     else:
-        today          = _date.today()
-        expiry_weekday = 2 if instrument == "BANKNIFTY" else 3
-        if today.weekday() == expiry_weekday:
-            expiry = today
-        else:
-            expiry = _next_expiry(instrument, expiry_type, today)
+        expiry = get_nearest_db_expiry(instrument, expiry_type)
 
     snap = fetch_summary(expiry, instrument)
     if not snap:
@@ -633,8 +623,8 @@ def api_weekly_range():
     Runs fetch_summary + compute_range entirely in SQL aggregation.
     35L rows → ~13 numbers → JSON response. Never loads raw rows into Python.
     """
-    from options.range_predict import fetch_summary, compute_range, _next_expiry
-    from datetime import date as _date, datetime as _dt
+    from options.range_predict import fetch_summary, compute_range, get_nearest_db_expiry
+    from datetime import datetime as _dt
 
     instrument  = request.args.get("instrument", "NIFTY").upper()
     expiry_type = request.args.get("expiry_type", "weekly").lower()
@@ -646,12 +636,8 @@ def api_weekly_range():
         except ValueError:
             return jsonify({"error": "Invalid expiry date. Use YYYY-MM-DD"}), 400
     else:
-        today          = _date.today()
-        expiry_weekday = 2 if instrument == "BANKNIFTY" else 3
-        if today.weekday() == expiry_weekday:
-            expiry = today
-        else:
-            expiry = _next_expiry(instrument, expiry_type, today)
+        # Use actual expiry from DB — correctly handles NSE holidays
+        expiry = get_nearest_db_expiry(instrument, expiry_type)
 
     summary = fetch_summary(expiry, instrument)
     if not summary:
