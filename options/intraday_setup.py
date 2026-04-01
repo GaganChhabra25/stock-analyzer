@@ -164,9 +164,9 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
 
     # Fallback: estimate from IV if no live data
     if ce_ltp is None:
-        ce_ltp = round(_bs_approx(spot, sell_ce, iv, "CE"), 1)
+        ce_ltp = round(_bs_approx(spot, sell_ce, iv, "CE", expiry), 1)
     if pe_ltp is None:
-        pe_ltp = round(_bs_approx(spot, sell_pe, iv, "PE"), 1)
+        pe_ltp = round(_bs_approx(spot, sell_pe, iv, "PE", expiry), 1)
 
     total_premium = round((ce_ltp or 0) + (pe_ltp or 0), 1)
 
@@ -292,10 +292,15 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
 
 # ── Black-Scholes approximation (fallback when no live LTP) ───────────────────
 
-def _bs_approx(spot: float, strike: int, iv_pct: float, opt_type: str) -> float:
+def _bs_approx(spot: float, strike: int, iv_pct: float, opt_type: str,
+               expiry: Optional[date] = None) -> float:
     """Very rough ATM approximation — used only when DB has no LTP."""
     import math
-    T = 1 / 252.0
+    if expiry is not None:
+        dte = max((expiry - date.today()).days, 1)
+    else:
+        dte = 1
+    T = dte / 252.0
     sigma = iv_pct / 100.0
     sv = sigma * math.sqrt(T)
     moneyness = spot / strike
