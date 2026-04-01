@@ -36,7 +36,10 @@ def load_instruments(kite) -> pd.DataFrame:
         if mtime == date.today():
             logger.debug("Using cached NFO instruments.")
             with open(CACHE_FILE) as f:
-                return pd.DataFrame(json.load(f))
+                df_cached = pd.DataFrame(json.load(f))
+            # Restore expiry as date objects (JSON stores them as strings)
+            df_cached["expiry"] = pd.to_datetime(df_cached["expiry"]).dt.date
+            return df_cached
 
     logger.info("Fetching NFO instruments from Kite Connect...")
     instruments = kite.instruments("NFO")

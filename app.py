@@ -529,41 +529,55 @@ def weekly_range():
 def _fetch_live_ltps(kite, instrument: str, expiry, strikes_types: list) -> dict:
     """
     Fetch live LTP from Kite for a list of (strike, option_type) pairs.
-    Returns {(strike, option_type): ltp}.  Falls back silently on any error.
+    Returns {(strike, option_type): ltp, "_debug": {...}}.
     strikes_types: [(strike, 'CE'), (strike, 'PE'), ...]
     """
+    debug = {"step": "init", "token_map": {}, "quotes_raw": {}}
     try:
         from options.instruments import load_instruments
+        debug["step"] = "load_instruments"
         df = load_instruments(kite)
+        debug["df_rows"] = len(df)
+        debug["expiry_sample"] = str(df["expiry"].iloc[0]) if not df.empty else "empty"
+        debug["expiry_dtype"] = str(df["expiry"].dtype)
+
         # Build token → (strike, option_type) map for requested strikes
         token_map = {}
         for strike, otype in strikes_types:
+            # Use tolerance comparison for float strikes (avoid precision mismatch)
             mask = (
                 df["tradingsymbol"].str.startswith(instrument) &
-                (df["expiry"]          == expiry) &
-                (df["strike"]          == float(strike)) &
+                (df["expiry"] == expiry) &
+                ((df["strike"] - float(strike)).abs() < 0.5) &
                 (df["instrument_type"] == otype)
             )
             rows = df[mask]
+            debug[f"rows_{strike}_{otype}"] = len(rows)
             if not rows.empty:
                 tok = int(rows.iloc[0]["instrument_token"])
                 token_map[tok] = (strike, otype)
+                debug["token_map"][str(tok)] = f"{strike}_{otype}"
 
+        debug["step"] = "tokens_built"
         if not token_map:
-            return {}
+            app.logger.warning("_fetch_live_ltps: no tokens matched. debug=%s", debug)
+            return {"_debug": debug}
 
+        debug["step"] = "kite_quote"
         quotes = kite.quote([f"NFO:{t}" for t in token_map])
-        result = {}
+        debug["quotes_raw"] = {k: v.get("last_price") for k, v in quotes.items()}
+        result = {"_debug": debug}
         for sym, q in quotes.items():
             raw_tok = int(sym.split(":")[1])
             key = token_map.get(raw_tok)
             ltp = q.get("last_price")
             if key and ltp:
                 result[key] = float(ltp)
+        debug["step"] = "done"
         return result
     except Exception as exc:
-        app.logger.warning("_fetch_live_ltps failed: %s", exc)
-        return {}
+        app.logger.warning("_fetch_live_ltps failed at step=%s: %s", debug.get("step"), exc)
+        return {"_debug": debug, "_error": str(exc)}
 
 
 @app.route("/api/sell-setup")
@@ -594,12 +608,15 @@ def api_sell_setup():
                 kite, instrument, expiry,
                 [(setup["sell_ce"], "CE"), (setup["sell_pe"], "PE")]
             )
+            setup["_ltp_debug"] = live.get("_debug", {})
             lot = setup["lot_size"]
-            if live.get((setup["sell_ce"], "CE")):
-                setup["ce_ltp"] = round(live[(setup["sell_ce"], "CE")], 1)
+            ce_live = live.get((setup["sell_ce"], "CE"))
+            pe_live = live.get((setup["sell_pe"], "PE"))
+            if ce_live:
+                setup["ce_ltp"] = round(ce_live, 1)
                 setup["ce_sl"]  = round(setup["ce_ltp"] * 3.0, 1)
-            if live.get((setup["sell_pe"], "PE")):
-                setup["pe_ltp"] = round(live[(setup["sell_pe"], "PE")], 1)
+            if pe_live:
+                setup["pe_ltp"] = round(pe_live, 1)
                 setup["pe_sl"]  = round(setup["pe_ltp"] * 3.0, 1)
 
             # Recompute all derived values from fresh LTPs
@@ -610,9 +627,16 @@ def api_sell_setup():
             setup["target_inr"]      = int(setup["target_pts"] * lot)
             setup["sl_inr"]          = int(setup["sl_pts"]     * lot)
             setup["max_profit_inr"]  = int(total * lot)
-            setup["ltp_source"]      = "kite_live"
+            # Mark source: kite_live if both legs fetched, else partial/bs_approx
+            if ce_live and pe_live:
+                setup["ltp_source"] = "kite_live"
+            elif ce_live or pe_live:
+                setup["ltp_source"] = "kite_partial"
+            else:
+                setup["ltp_source"] = "bs_approx"
         else:
-            setup["ltp_source"] = "bs_approx" if setup.get("ce_ltp") else "none"
+            setup["ltp_source"] = "bs_approx"
+            setup["_ltp_debug"] = {"step": "kite_not_authorized"}
 
         setup["expiry"] = str(setup["expiry"])
         return jsonify(setup)
