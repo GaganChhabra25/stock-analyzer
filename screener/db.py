@@ -58,6 +58,9 @@ def _get_conn():
     try:
         conn = psycopg2.connect(_db_url())
         conn.autocommit = False
+        # Always work in IST so NOW(), CURRENT_DATE, timestamps display correctly
+        with conn.cursor() as _c:
+            _c.execute("SET TIME ZONE 'Asia/Kolkata'")
         yield conn
         conn.commit()
     except Exception as exc:

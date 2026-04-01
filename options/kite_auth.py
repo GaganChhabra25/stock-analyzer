@@ -83,6 +83,32 @@ def get_login_url() -> str:
     return kite.login_url()
 
 
+def send_auth_success_telegram() -> None:
+    """Send Telegram confirming Kite auth succeeded. Called from /kite/callback."""
+    import requests
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat  = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat:
+        return
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    msg = (
+        "\u2705 Zerodha Kite authenticated successfully!\n"
+        f"Time: {now_ist.strftime('%d-%b-%Y %I:%M %p IST')}\n"
+        "Options data collection will start at 9:15 AM IST."
+    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat, "text": msg},
+            timeout=10,
+        )
+        logger.info("Telegram auth-success notification sent.")
+    except Exception as exc:
+        logger.warning("Telegram auth-success send failed: %s", exc)
+
+
 def send_daily_reminder() -> None:
     """Send Telegram message at 9:00 AM IST reminding user to authorize Kite."""
     import requests

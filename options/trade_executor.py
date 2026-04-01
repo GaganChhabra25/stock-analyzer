@@ -13,6 +13,7 @@ import logging
 import uuid
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from screener.db import _get_conn, is_available
 
@@ -222,8 +223,14 @@ def get_open_trades() -> list:
             t["target_reached"] = False
 
         # Serialise dates/times for JSON
-        t["expiry"]     = str(t["expiry"])
-        t["entry_time"] = t["entry_time"].strftime("%H:%M:%S") if t["entry_time"] else None
+        t["expiry"] = str(t["expiry"])
+        if t["entry_time"]:
+            et = t["entry_time"]
+            if hasattr(et, 'tzinfo') and et.tzinfo is None:
+                et = et.replace(tzinfo=timezone.utc)
+            t["entry_time"] = et.astimezone(ZoneInfo("Asia/Kolkata")).strftime("%H:%M:%S")
+        else:
+            t["entry_time"] = None
 
         trades.append(t)
 
@@ -265,6 +272,8 @@ def get_trade_history(limit: int = 50) -> list:
                 # Serialise
                 for r in rows:
                     r["trade_date"] = str(r["trade_date"])
+                    # entry_time / exit_time are ::time(0) casts — plain time objects, no tz
+                    # They come from TIMESTAMPTZ columns so the DB (IST session) returns IST times
                     r["entry_time"] = str(r["entry_time"]) if r["entry_time"] else None
                     r["exit_time"]  = str(r["exit_time"])  if r["exit_time"]  else None
                     for k in ("total_pnl_pts", "total_pnl_inr", "probability"):

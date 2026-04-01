@@ -16,6 +16,9 @@ import os
 import sys
 from datetime import datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+IST_TZ = ZoneInfo("Asia/Kolkata")
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,7 +69,7 @@ def days_to_expiry(expiry) -> float:
 
 
 def _notify_first_collection(ts: datetime, rows: int) -> None:
-    """Send Telegram only on the first successful collection of the day."""
+    """Send Telegram only on the first successful collection of the day (9:15 AM IST)."""
     from datetime import date
     sentinel_file = Path(__file__).parent.parent / "data" / f"collected_{date.today()}.flag"
     if sentinel_file.exists():
@@ -78,9 +81,11 @@ def _notify_first_collection(ts: datetime, rows: int) -> None:
     if not token or not chat_id:
         return
 
+    # ts is already IST-aware from datetime.now(IST_TZ)
+    ts_str = ts.strftime("%d-%b-%Y %I:%M %p IST")
     msg = (
-        f"Options data collection started — {ts.strftime('%d-%b-%Y %I:%M %p')} IST\n"
-        f"Capturing NIFTY + BANKNIFTY option chains every minute.\n"
+        f"\U0001f7e2 Options collection started at {ts_str}\n"
+        f"Capturing NIFTY + BANKNIFTY chains every minute.\n"
         f"First batch: {rows} rows inserted."
     )
     try:
@@ -90,8 +95,59 @@ def _notify_first_collection(ts: datetime, rows: int) -> None:
             json={"chat_id": chat_id, "text": msg},
             timeout=10,
         )
-    except Exception:
-        pass
+        logger.info("Telegram first-collection notification sent.")
+    except Exception as exc:
+        logger.warning("Telegram notify failed: %s", exc)
+
+
+def _notify_eod_summary() -> None:
+    """Send EOD Telegram summary once, triggered by cron at 3:35 PM IST."""
+    from datetime import date as _date
+    sentinel = Path(__file__).parent.parent / "data" / f"eod_{_date.today()}.flag"
+    if sentinel.exists():
+        return
+    sentinel.touch()
+
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*), MIN(ts), MAX(ts)
+                    FROM option_chain
+                    WHERE ts::date = CURRENT_DATE
+                """)
+                row = cur.fetchone()
+                total = row[0] if row else 0
+                first = row[1].strftime("%I:%M %p IST") if row and row[1] else "N/A"
+                last  = row[2].strftime("%I:%M %p IST") if row and row[2] else "N/A"
+
+                cur.execute("SELECT COUNT(*) FROM market_snapshot WHERE ts::date = CURRENT_DATE")
+                snaps = cur.fetchone()[0]
+
+        msg = (
+            f"\U0001f4ca Market Close — {_date.today().strftime('%d %b %Y')}\n\n"
+            f"Option chain rows : {total:,}\n"
+            f"Market snapshots  : {snaps:,}\n"
+            f"First collection  : {first}\n"
+            f"Last collection   : {last}\n\n"
+            "Data ingestion complete. \u2705"
+        )
+        import requests as req
+        req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg},
+            timeout=10,
+        )
+        logger.info("EOD Telegram summary sent.")
+    except Exception as exc:
+        logger.warning("EOD summary failed: %s", exc)
 
 
 def collect_once():
@@ -105,8 +161,8 @@ def collect_once():
         logger.warning("Kite not authorized. Visit /kite/login to authorize.")
         return
 
-    ts = datetime.now()
-    logger.info("Collecting option chain at %s", ts.strftime("%H:%M:%S"))
+    ts = datetime.now(IST_TZ)
+    logger.info("Collecting option chain at %s IST", ts.strftime("%H:%M:%S"))
 
     try:
         df_instruments = load_instruments(kite)
@@ -279,4 +335,11 @@ def collect_once():
 
 
 if __name__ == "__main__":
-    collect_once()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--eod", action="store_true", help="Send EOD summary Telegram")
+    args = parser.parse_args()
+    if args.eod:
+        _notify_eod_summary()
+    else:
+        collect_once()

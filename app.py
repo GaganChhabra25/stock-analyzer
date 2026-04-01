@@ -207,8 +207,10 @@ def kite_callback():
         return render_template("login.html", error="Zerodha login was cancelled or failed."), 400
 
     try:
-        from options.kite_auth import generate_access_token, get_kite
+        from options.kite_auth import generate_access_token, get_kite, send_auth_success_telegram
         generate_access_token(request_token)
+        # Notify via Telegram that auth succeeded
+        threading.Thread(target=send_auth_success_telegram, daemon=True).start()
     except Exception as exc:
         return render_template("login.html", error=f"Zerodha auth failed: {exc}"), 500
 
@@ -659,6 +661,96 @@ def api_weekly_range():
     # Make all values JSON-serialisable
     return jsonify({k: (str(v) if hasattr(v, 'isoformat') else v)
                     for k, v in result.items()})
+
+
+# ── Real-time spot price from Kite ────────────────────────────────────────────
+
+_SPOT_SYMBOLS = {
+    "NIFTY":     "NSE:NIFTY 50",
+    "BANKNIFTY": "NSE:NIFTY BANK",
+}
+
+
+@app.route("/api/spot-price")
+@login_required
+def api_spot_price():
+    """Live spot price directly from Kite — no DB, always fresh."""
+    from options.kite_auth import get_kite
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    instrument = request.args.get("instrument", "NIFTY").upper()
+    sym = _SPOT_SYMBOLS.get(instrument)
+    if not sym:
+        return jsonify({"error": "Unknown instrument"}), 400
+
+    kite = get_kite()
+    if kite is None:
+        return jsonify({"error": "Kite not authorized — visit /kite/login"}), 503
+
+    try:
+        quote = kite.quote([sym])
+        ltp   = quote[sym]["last_price"]
+        ist   = datetime.now(ZoneInfo("Asia/Kolkata"))
+        return jsonify({
+            "instrument": instrument,
+            "spot":       ltp,
+            "as_of":      ist.strftime("%I:%M:%S %p IST"),
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+# ── End-of-day collection summary Telegram ────────────────────────────────────
+
+@app.route("/api/eod-summary", methods=["POST"])
+@login_required
+def api_eod_summary():
+    """Send end-of-day data collection summary via Telegram. Called by cron at 3:35 PM IST."""
+    import os, requests as req
+    from datetime import date
+
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return jsonify({"ok": False, "error": "Telegram not configured"}), 400
+
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return jsonify({"ok": False, "error": "DB unavailable"}), 503
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*) AS rows,
+                           MIN(ts)  AS first_ts,
+                           MAX(ts)  AS last_ts
+                    FROM option_chain
+                    WHERE ts::date = CURRENT_DATE
+                """)
+                row = cur.fetchone()
+                total_rows = row[0] if row else 0
+                first_ts   = row[1].strftime("%I:%M %p IST") if row and row[1] else "N/A"
+                last_ts    = row[2].strftime("%I:%M %p IST") if row and row[2] else "N/A"
+
+                cur.execute("SELECT COUNT(*) FROM market_snapshot WHERE ts::date = CURRENT_DATE")
+                snaps = cur.fetchone()[0]
+
+        msg = (
+            f"\U0001f4ca Market Data Collection Summary — {date.today().strftime('%d %b %Y')}\n\n"
+            f"Option chain rows : {total_rows:,}\n"
+            f"Market snapshots  : {snaps:,}\n"
+            f"First collection  : {first_ts}\n"
+            f"Last collection   : {last_ts}\n\n"
+            "Data ingestion complete for today. \u2705"
+        )
+        req.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg},
+            timeout=10,
+        )
+        return jsonify({"ok": True, "rows": total_rows})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

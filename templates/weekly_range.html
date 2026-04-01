@@ -206,7 +206,7 @@ table.trades-tbl tr:hover td { background: #1c2128; }
     <!-- Stat cards -->
     <div class="cards">
       <div class="card">
-        <div class="card-label" id="c-spot-label">Spot</div>
+        <div class="card-label" id="c-spot-label">Spot <span id="live-dot" style="display:none; color:#3fb950; font-size:9px; font-weight:700; vertical-align:middle;">● LIVE</span></div>
         <div class="card-value" id="c-spot">—</div>
         <div class="card-sub" id="c-as-of">—</div>
       </div>
@@ -400,7 +400,22 @@ table.trades-tbl tr:hover td { background: #1c2128; }
 
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
-var _timer = null;
+var _timer             = null;
+var _spotTimer         = null;
+var _setupTimer        = null;
+var _tradesTimer       = null;
+var _lastRangeData     = null;  // cached for bar-spot updates
+
+// ── Market hours helper (IST, client-side) ─────────────────────────────────
+function isMarketHours() {
+  var now = new Date();
+  // Convert browser time to IST (UTC+5:30)
+  var utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  var ist = new Date(utc + 5.5 * 3600000);
+  var h = ist.getHours(), m = ist.getMinutes();
+  var mins = h * 60 + m;
+  return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30;
+}
 
 function fmt(n, dec) {
   if (n == null) return '—';
@@ -415,13 +430,59 @@ function getFilters() {
 }
 
 function onFilterChange() {
-  // Reset content when filters change so stale data isn't shown
   document.getElementById('content').style.display = 'none';
   document.getElementById('sell-section').style.display = 'none';
   var f = getFilters();
   var label = (f.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty') + ' — ' +
               (f.expiry_type === 'monthly' ? 'Monthly' : 'Weekly') + ' Expiry Range';
   document.getElementById('page-title').textContent = label;
+  // Restart polling with new instrument
+  startSpotPolling();
+}
+
+// ── Real-time Spot Polling (every 5s during market hours) ──────────────────
+function startSpotPolling() {
+  if (_spotTimer) clearInterval(_spotTimer);
+  fetchSpot();  // immediate first fetch
+  if (isMarketHours()) {
+    document.getElementById('live-dot').style.display = 'inline';
+    _spotTimer = setInterval(fetchSpot, 5000);
+  } else {
+    document.getElementById('live-dot').style.display = 'none';
+  }
+}
+
+function fetchSpot() {
+  var f = getFilters();
+  fetch('/api/spot-price?instrument=' + f.instrument)
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(d) {
+      if (!d || d.error) return;
+      // Update spot card
+      document.getElementById('c-spot').textContent = fmt(d.spot, 2);
+      document.getElementById('c-as-of').textContent = d.as_of || '—';
+      // Update page sub if content is visible
+      var sub = document.getElementById('page-sub');
+      if (sub && _lastRangeData) {
+        var instrLabel = f.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
+        sub.textContent = instrLabel + ' · Expiry: ' + _lastRangeData.expiry + '  |  Live: ' + d.as_of;
+      }
+      // Update bar-spot position if range data available
+      if (_lastRangeData) {
+        updateBarSpot(d.spot, _lastRangeData);
+      }
+    })
+    .catch(function() {});
+}
+
+function updateBarSpot(spot, d) {
+  var lo = d.iv_range.lo, hi = d.iv_range.hi;
+  var pad = (hi - lo) * 0.15;
+  var barLo = lo - pad, barHi = hi + pad, span = barHi - barLo;
+  if (span <= 0) return;
+  var spotPct = ((spot - barLo) / span * 100).toFixed(1) + '%';
+  document.getElementById('bar-spot').style.left = spotPct;
+  document.getElementById('spot-lbl').textContent = fmt(spot, 0);
 }
 
 // ── Run analysis ────────────────────────────────────────────────────────────
@@ -457,13 +518,14 @@ function runAnalysis() {
 
 // ── Render ──────────────────────────────────────────────────────────────────
 function renderData(d) {
-  // Header
+  _lastRangeData = d;  // cache for bar-spot live updates
+
   var instrLabel = d.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
   document.getElementById('c-spot-label').textContent = instrLabel + ' Spot';
   document.getElementById('page-sub').textContent =
     instrLabel + ' · Expiry: ' + d.expiry + '  |  As of: ' + (d.as_of || 'N/A');
 
-  // Stat cards
+  // Spot shown from live polling; use DB value as fallback until first poll arrives
   document.getElementById('c-spot').textContent = fmt(d.spot, 2);
   document.getElementById('c-as-of').textContent = d.as_of || '—';
 
@@ -506,27 +568,22 @@ function renderData(d) {
   document.getElementById('bar-pain').style.left = painPct;
   document.getElementById('pain-lbl').textContent = fmt(d.max_pain);
 
-  // Key levels
   document.getElementById('l-pe').textContent = fmt(d.pe_wall);
   document.getElementById('l-mp').textContent = fmt(d.max_pain);
   document.getElementById('l-ce').textContent = fmt(d.ce_wall);
 
-  // Historical
   if (d.avg_weekly_range) {
     document.getElementById('hist-section').style.display = 'grid';
     document.getElementById('h-avg').textContent  = fmt(d.avg_weekly_range) + ' pts';
     document.getElementById('h-p75').textContent  = fmt(d.p75_weekly_range) + ' pts';
-    var weeks = d.hist_weeks || 0;
-    document.getElementById('h-weeks').textContent = 'Based on ' + weeks + ' weeks';
-
+    document.getElementById('h-weeks').textContent = 'Based on ' + (d.hist_weeks || 0) + ' weeks';
     var width = d.pred_range.hi - d.pred_range.lo;
     document.getElementById('h-width').textContent = fmt(width) + ' pts';
     var tag = width < d.avg_weekly_range ? 'LOW volatility week' : 'HIGH volatility week';
     var tagEl = document.getElementById('h-tag');
     tagEl.textContent = tag;
     tagEl.className = 'card-sub ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
-    var wEl = document.getElementById('h-width');
-    wEl.className = 'card-value ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
+    document.getElementById('h-width').className = 'card-value ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
   }
 
   document.getElementById('content').style.display = 'block';
@@ -553,8 +610,17 @@ window.addEventListener('DOMContentLoaded', function () {
   loadSellSetup();
   loadOpenTrades();
   loadHistory();
-  // Refresh open trades every 90s
-  setInterval(loadOpenTrades, 90000);
+  startSpotPolling();
+
+  if (isMarketHours()) {
+    // Sell setup: refresh every 30s during market hours
+    _setupTimer = setInterval(loadSellSetup, 30000);
+    // Open trades P&L: refresh every 15s during market hours
+    _tradesTimer = setInterval(loadOpenTrades, 15000);
+  } else {
+    // Outside market hours: refresh trades every 2 min (for history display)
+    _tradesTimer = setInterval(loadOpenTrades, 120000);
+  }
 });
 
 // ── Sell Setup ────────────────────────────────────────────────────────────────

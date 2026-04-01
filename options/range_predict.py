@@ -188,6 +188,19 @@ def fetch_summary(expiry: date, instrument: str = "NIFTY") -> dict:
         logging.getLogger(__name__).warning("fetch_summary error: %s", exc)
         return {}
 
+    # Format as_of in IST for display
+    try:
+        from zoneinfo import ZoneInfo
+        if hasattr(ts, 'tzinfo') and ts.tzinfo is not None:
+            ts_ist = ts.astimezone(ZoneInfo("Asia/Kolkata"))
+        else:
+            # naive timestamp — assume it's already UTC from server, convert
+            from datetime import timezone
+            ts_ist = ts.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Kolkata"))
+        as_of_str = ts_ist.strftime("%Y-%m-%d %I:%M %p IST")
+    except Exception:
+        as_of_str = str(ts)
+
     return {
         "instrument": instr,
         "spot":       spot,
@@ -202,7 +215,7 @@ def fetch_summary(expiry: date, instrument: str = "NIFTY") -> dict:
         "avg_range":  avg_range,
         "p75_range":  p75_range,
         "hist_weeks": hist_weeks,
-        "as_of":      str(ts),
+        "as_of":      as_of_str,
     }
 
 
