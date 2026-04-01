@@ -828,8 +828,12 @@ function renderSellSetup(d) {
     instrLabel + ' — ' + expiryLabel + ' Intraday Sell Setup';
   document.getElementById('ss-title').textContent =
     instrLabel + ' Short Strangle (Intraday)';
+  var srcBadge = d.ltp_source === 'kite_live'
+    ? '<span style="color:#3fb950;font-weight:700;">● Live</span>'
+    : '<span style="color:#e3b341;">~ Est.</span>';
   document.getElementById('ss-meta').innerHTML =
     'Expiry: <b>' + (d.expiry || '—') + '</b> &nbsp;|&nbsp; Lot: ' + (d.lot_size || '—') +
+    ' &nbsp;|&nbsp; Price: ' + srcBadge +
     ' &nbsp;|&nbsp; Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS';
 
   // Probability badge

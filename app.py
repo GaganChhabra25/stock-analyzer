@@ -526,19 +526,59 @@ def weekly_range():
     return render_template("weekly_range.html", user=session["user"])
 
 
+def _fetch_live_ltps(kite, instrument: str, expiry, strikes_types: list) -> dict:
+    """
+    Fetch live LTP from Kite for a list of (strike, option_type) pairs.
+    Returns {(strike, option_type): ltp}.  Falls back silently on any error.
+    strikes_types: [(strike, 'CE'), (strike, 'PE'), ...]
+    """
+    try:
+        from options.instruments import load_instruments
+        df = load_instruments(kite)
+        # Build token → (strike, option_type) map for requested strikes
+        token_map = {}
+        for strike, otype in strikes_types:
+            mask = (
+                df["tradingsymbol"].str.startswith(instrument) &
+                (df["expiry"]          == expiry) &
+                (df["strike"]          == float(strike)) &
+                (df["instrument_type"] == otype)
+            )
+            rows = df[mask]
+            if not rows.empty:
+                tok = int(rows.iloc[0]["instrument_token"])
+                token_map[tok] = (strike, otype)
+
+        if not token_map:
+            return {}
+
+        quotes = kite.quote([f"NFO:{t}" for t in token_map])
+        result = {}
+        for sym, q in quotes.items():
+            raw_tok = int(sym.split(":")[1])
+            key = token_map.get(raw_tok)
+            ltp = q.get("last_price")
+            if key and ltp:
+                result[key] = float(ltp)
+        return result
+    except Exception as exc:
+        app.logger.warning("_fetch_live_ltps failed: %s", exc)
+        return {}
+
+
 @app.route("/api/sell-setup")
 @login_required
 def api_sell_setup():
-    """Sell setup + probability for selected instrument / expiry type."""
+    """Sell setup with live LTP from Kite for the selected strikes."""
     import traceback
     try:
         from options.range_predict import fetch_summary, get_nearest_db_expiry
         from options.intraday_setup import compute_sell_setup
+        from options.kite_auth import get_kite
 
         instrument  = request.args.get("instrument", "NIFTY").upper()
         expiry_type = request.args.get("expiry_type", "weekly").lower()
 
-        # Use actual DB expiry (respects NSE holidays / moved expiries)
         expiry = get_nearest_db_expiry(instrument, expiry_type)
 
         snap = fetch_summary(expiry, instrument)
@@ -546,6 +586,34 @@ def api_sell_setup():
             return jsonify({"error": "DB unavailable or no data yet"}), 503
 
         setup = compute_sell_setup(snap, expiry, instrument)
+
+        # ── Override LTPs with live Kite prices ────────────────────────────
+        kite = get_kite()
+        if kite:
+            live = _fetch_live_ltps(
+                kite, instrument, expiry,
+                [(setup["sell_ce"], "CE"), (setup["sell_pe"], "PE")]
+            )
+            lot = setup["lot_size"]
+            if live.get((setup["sell_ce"], "CE")):
+                setup["ce_ltp"] = round(live[(setup["sell_ce"], "CE")], 1)
+                setup["ce_sl"]  = round(setup["ce_ltp"] * 3.0, 1)
+            if live.get((setup["sell_pe"], "PE")):
+                setup["pe_ltp"] = round(live[(setup["sell_pe"], "PE")], 1)
+                setup["pe_sl"]  = round(setup["pe_ltp"] * 3.0, 1)
+
+            # Recompute all derived values from fresh LTPs
+            total = round((setup["ce_ltp"] or 0) + (setup["pe_ltp"] or 0), 1)
+            setup["total_premium"]   = total
+            setup["target_pts"]      = round(total * 0.35, 1)
+            setup["sl_pts"]          = round(total * 2.0,  1)
+            setup["target_inr"]      = int(setup["target_pts"] * lot)
+            setup["sl_inr"]          = int(setup["sl_pts"]     * lot)
+            setup["max_profit_inr"]  = int(total * lot)
+            setup["ltp_source"]      = "kite_live"
+        else:
+            setup["ltp_source"] = "bs_approx" if setup.get("ce_ltp") else "none"
+
         setup["expiry"] = str(setup["expiry"])
         return jsonify(setup)
     except Exception as exc:
