@@ -70,6 +70,23 @@ def get_nearest_expiry(df: pd.DataFrame, symbol: str) -> Optional[date]:
     return future[0] if future else None
 
 
+def get_monthly_expiry(df: pd.DataFrame, symbol: str) -> Optional[date]:
+    """Return the current month's monthly expiry (last Thursday/Wednesday of the month)."""
+    import calendar
+    today = date.today()
+    expiries = sorted(
+        df[df["tradingsymbol"].str.startswith(symbol)]["expiry"].unique()
+    )
+    # Monthly expiry = last expiry of the current month; if already past, next month's
+    for month_offset in (0, 1):
+        yr  = today.year + ((today.month + month_offset - 1) // 12)
+        mon = (today.month + month_offset - 1) % 12 + 1
+        month_expiries = [e for e in expiries if e.year == yr and e.month == mon and e >= today]
+        if month_expiries:
+            return month_expiries[-1]   # last expiry in that month = monthly
+    return None
+
+
 def get_option_tokens(
     df: pd.DataFrame,
     symbol: str,

@@ -25,7 +25,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from options.kite_auth import get_kite
 from options.instruments import (
-    load_instruments, get_nearest_expiry,
+    load_instruments, get_nearest_expiry, get_monthly_expiry,
     get_option_tokens, atm_strike,
 )
 from options.greeks import implied_volatility, calculate_greeks
@@ -134,33 +134,42 @@ def collect_once():
             continue
 
         atm = atm_strike(spot, symbol)
-        expiry = get_nearest_expiry(df_instruments, symbol)
-        if not expiry:
+        weekly_expiry  = get_nearest_expiry(df_instruments, symbol)
+        monthly_expiry = get_monthly_expiry(df_instruments, symbol)
+
+        # Collect both weekly and monthly expiry (deduplicate when they coincide)
+        expiries_to_collect = list(dict.fromkeys(
+            e for e in [weekly_expiry, monthly_expiry] if e
+        ))
+        if not expiries_to_collect:
             logger.warning("No upcoming expiry for %s", symbol)
             continue
 
-        T = days_to_expiry(expiry)
+        # All tokens across expiries in one batch
+        combined_token_map = {}
+        for expiry in expiries_to_collect:
+            tm = get_option_tokens(df_instruments, symbol, expiry, atm, N_STRIKES)
+            for key, tok in tm.items():
+                combined_token_map[(expiry, key[0], key[1])] = tok
 
-        # Get instrument tokens for ATM ± N_STRIKES
-        token_map = get_option_tokens(df_instruments, symbol, expiry, atm, N_STRIKES)
-        if not token_map:
-            logger.warning("No tokens found for %s %s", symbol, expiry)
+        if not combined_token_map:
+            logger.warning("No tokens found for %s", symbol)
             continue
 
-        # Fetch quotes for all option instruments
-        tokens = [f"NFO:{t}" for t in token_map.values()]
+        tokens = [f"NFO:{t}" for t in combined_token_map.values()]
         try:
             option_quotes = kite.quote(tokens)
         except Exception as exc:
             logger.error("Failed to fetch option quotes for %s: %s", symbol, exc)
             continue
 
-        # Build reverse map: token → (strike, option_type)
-        token_to_key = {v: k for k, v in token_map.items()}
+        token_to_key = {v: k for k, v in combined_token_map.items()}
 
         option_rows = []
+        # Keep per-expiry OI for snapshot (use weekly expiry for snapshot)
         call_oi_by_strike = {}
         put_oi_by_strike  = {}
+        expiry = weekly_expiry   # snapshot uses weekly expiry
 
         for token_str, quote in option_quotes.items():
             # token_str is like "NFO:12345678"
@@ -173,7 +182,7 @@ def collect_once():
             if not key:
                 continue
 
-            strike, opt_type = key
+            row_expiry, strike, opt_type = key
             ltp    = quote.get("last_price", 0) or 0
             volume = quote.get("volume", 0) or 0
             oi     = quote.get("oi", 0) or 0
@@ -183,13 +192,13 @@ def collect_once():
             bid    = depth.get("buy",  [{}])[0].get("price") if depth else None
             ask    = depth.get("sell", [{}])[0].get("price") if depth else None
 
-            # IV and Greeks
-            iv = implied_volatility(ltp, spot, strike, T, RISK_FREE_RATE, opt_type)
+            T_row  = days_to_expiry(row_expiry)
+            iv = implied_volatility(ltp, spot, strike, T_row, RISK_FREE_RATE, opt_type)
             sigma = (iv / 100.0) if iv else 0.20
-            greeks = calculate_greeks(spot, strike, T, RISK_FREE_RATE, sigma, opt_type)
+            greeks = calculate_greeks(spot, strike, T_row, RISK_FREE_RATE, sigma, opt_type)
 
             option_rows.append({
-                "ts": ts, "instrument": symbol, "expiry": expiry,
+                "ts": ts, "instrument": symbol, "expiry": row_expiry,
                 "strike": strike, "option_type": opt_type,
                 "ltp": ltp, "bid": bid, "ask": ask,
                 "oi": oi, "oi_change": oi_chg, "volume": volume,
@@ -199,10 +208,11 @@ def collect_once():
                 "underlying_ltp": spot,
             })
 
-            if opt_type == "CE":
-                call_oi_by_strike[strike] = oi
-            else:
-                put_oi_by_strike[strike] = oi
+            if row_expiry == weekly_expiry:
+                if opt_type == "CE":
+                    call_oi_by_strike[strike] = oi
+                else:
+                    put_oi_by_strike[strike] = oi
 
         if not option_rows:
             continue
