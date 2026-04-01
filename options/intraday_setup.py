@@ -123,8 +123,11 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
     atm  = snap["atm"]
 
     # ── Technical signals (Kite) ─────────────────────────────────────────────
-    from options.technicals import get_tech_signals
-    tech = get_tech_signals(instr)
+    try:
+        from options.technicals import get_tech_signals
+        tech = get_tech_signals(instr)
+    except Exception:
+        tech = {}
 
     # ── Intraday 1σ move ──────────────────────────────────────────────────────
     # 1 trading day = 1/252 of a year
@@ -248,7 +251,8 @@ def compute_sell_setup(snap: dict, expiry: date, instrument: str = "NIFTY") -> d
         "expiry":        expiry,
         "atm":           atm,
         "sigma_pts":     int(sigma_pts),
-        "dist_pts":      dist,
+        "dist_ce_pts":   dist_ce,
+        "dist_pe_pts":   dist_pe,
 
         # Legs
         "sell_ce":       sell_ce,

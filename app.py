@@ -528,28 +528,32 @@ def weekly_range():
 @login_required
 def api_sell_setup():
     """Sell setup + probability for selected instrument / expiry type."""
-    from options.range_predict import fetch_summary, _next_expiry
-    from options.intraday_setup import compute_sell_setup
-    from datetime import date as _date
+    import traceback
+    try:
+        from options.range_predict import fetch_summary, _next_expiry
+        from options.intraday_setup import compute_sell_setup
+        from datetime import date as _date
 
-    instrument  = request.args.get("instrument", "NIFTY").upper()
-    expiry_type = request.args.get("expiry_type", "weekly").lower()
+        instrument  = request.args.get("instrument", "NIFTY").upper()
+        expiry_type = request.args.get("expiry_type", "weekly").lower()
 
-    today          = _date.today()
-    expiry_weekday = 2 if instrument == "BANKNIFTY" else 3
-    if today.weekday() == expiry_weekday:
-        expiry = today
-    else:
-        expiry = _next_expiry(instrument, expiry_type, today)
+        today          = _date.today()
+        expiry_weekday = 2 if instrument == "BANKNIFTY" else 3
+        if today.weekday() == expiry_weekday:
+            expiry = today
+        else:
+            expiry = _next_expiry(instrument, expiry_type, today)
 
-    snap = fetch_summary(expiry, instrument)
-    if not snap:
-        return jsonify({"error": "DB unavailable or no data yet"}), 503
+        snap = fetch_summary(expiry, instrument)
+        if not snap:
+            return jsonify({"error": "DB unavailable or no data yet"}), 503
 
-    setup = compute_sell_setup(snap, expiry, instrument)
-    # Serialise date
-    setup["expiry"] = str(setup["expiry"])
-    return jsonify(setup)
+        setup = compute_sell_setup(snap, expiry, instrument)
+        setup["expiry"] = str(setup["expiry"])
+        return jsonify(setup)
+    except Exception as exc:
+        app.logger.error("api_sell_setup error: %s\n%s", exc, traceback.format_exc())
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/api/paper-trade", methods=["POST"])
