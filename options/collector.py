@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 SYMBOLS        = ["NIFTY", "BANKNIFTY"]
-N_STRIKES      = 6        # ATM ± 6
+N_STRIKES      = 20       # ATM ± 20 — covers sell setup strikes at ~1.5σ (~750 pts)
 RISK_FREE_RATE = 0.07     # 7% annualised
 MARKET_OPEN    = time(9, 14)
 MARKET_CLOSE   = time(15, 31)
