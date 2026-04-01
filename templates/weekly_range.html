@@ -53,18 +53,36 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .card-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
 .green { color: #3fb950; } .red { color: #f85149; } .yellow { color: #e3b341; } .blue { color: #58a6ff; }
 
-/* ── Range visualiser ── */
+/* ── Range card ── */
 .range-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px 28px; margin-bottom: 20px; }
 .range-title { font-size: 13px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 20px; }
 
-.range-bar-wrap { position: relative; margin-bottom: 14px; }
-.bar-labels { display: flex; justify-content: space-between; font-size: 12px; color: #8b949e; margin-bottom: 6px; }
-.bar-outer { height: 20px; background: #21262d; border-radius: 10px; position: relative; overflow: visible; }
-.bar-fill { height: 100%; border-radius: 10px; background: linear-gradient(90deg, #f85149 0%, #e3b341 40%, #3fb950 60%, #f85149 100%); opacity: 0.7; position: absolute; }
-.bar-spot { position: absolute; top: -6px; width: 3px; height: 32px; background: #fff; border-radius: 2px; transform: translateX(-50%); }
-.bar-spot-label { position: absolute; top: 30px; transform: translateX(-50%); font-size: 10px; color: #fff; font-weight: 700; white-space: nowrap; }
-.bar-pain { position: absolute; top: -4px; width: 2px; height: 28px; background: #e3b341; border-radius: 2px; transform: translateX(-50%); }
-.bar-pain-label { position: absolute; top: 28px; transform: translateX(-50%); font-size: 10px; color: #e3b341; white-space: nowrap; }
+/* ── Zone Range Bar ── */
+.zone-header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:14px; }
+.zone-range-val { font-size:22px; font-weight:800; color:#f0f6fc; letter-spacing:-0.5px; }
+.zone-range-sub { font-size:11px; color:#8b949e; }
+.zone-bar-outer { position:relative; height:32px; border-radius:16px; display:flex; overflow:hidden; margin-bottom:36px; }
+.zseg-danger { flex-shrink:0; background: linear-gradient(90deg,rgba(220,38,38,0.9),rgba(220,38,38,0.6)); }
+.zseg-warn { flex-shrink:0; background: rgba(227,179,65,0.4); }
+.zseg-safe { flex-shrink:0; background: linear-gradient(90deg,rgba(22,163,74,0.7),rgba(34,197,94,0.9),rgba(22,163,74,0.7)); }
+.zseg-warn2 { flex-shrink:0; background: rgba(227,179,65,0.4); }
+.zseg-danger2 { flex-shrink:0; background: linear-gradient(90deg,rgba(220,38,38,0.6),rgba(220,38,38,0.9)); }
+/* zone labels inside bar */
+.zone-label-inside { position:absolute; top:50%; transform:translateY(-50%); font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:0.5px; pointer-events:none; }
+/* markers above bar */
+.zone-marker { position:absolute; bottom:-30px; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; pointer-events:none; }
+.zone-marker .zm-tick { width:2px; height:12px; border-radius:1px; }
+.zone-marker .zm-lbl { font-size:10px; font-weight:700; white-space:nowrap; margin-top:2px; }
+/* wall pins on top of bar */
+.zone-wall-pin { position:absolute; top:0; bottom:0; width:2px; transform:translateX(-50%); }
+.zone-wall-label { position:absolute; top:-20px; transform:translateX(-50%); font-size:9px; font-weight:700; white-space:nowrap; }
+/* Zone status pill */
+.zone-status-row { display:flex; align-items:center; justify-content:space-between; margin-top:8px; }
+.zone-pill { font-size:11px; font-weight:700; padding:4px 14px; border-radius:99px; }
+.zone-pill.safe { background:rgba(22,163,74,0.15); color:#4ade80; border:1px solid rgba(22,163,74,0.4); }
+.zone-pill.warn { background:rgba(227,179,65,0.15); color:#fbbf24; border:1px solid rgba(227,179,65,0.4); }
+.zone-pill.danger { background:rgba(220,38,38,0.15); color:#f87171; border:1px solid rgba(220,38,38,0.4); }
+.zone-pct-lbl { font-size:11px; color:#8b949e; }
 
 /* ── Levels row ── */
 .levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
@@ -78,7 +96,6 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .level-val { font-size: 28px; font-weight: 700; color: #f0f6fc; }
 .level-desc { font-size: 11px; color: #8b949e; }
 
-
 /* ── Historical ── */
 .hist-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
 @media (max-width: 600px) { .hist-row { grid-template-columns: 1fr; } }
@@ -86,34 +103,55 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 /* ── Footer note ── */
 .footer-note { font-size: 11px; color: #8b949e; text-align: center; padding: 12px 0 24px; }
 
-/* ── Skeleton / placeholder ── */
+/* ── Skeleton ── */
 .skeleton { background: linear-gradient(90deg, #1c2128 25%, #21262d 50%, #1c2128 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 6px; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 .skel-val { height: 28px; width: 70%; margin-bottom: 6px; }
 .skel-sub { height: 14px; width: 50%; }
 
 /* ── Sell setup card ── */
-.sell-card { background: #161b22; border: 1px solid rgba(248,81,73,0.3); border-radius: 14px; padding: 24px 28px; margin-bottom: 20px; }
-.sell-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
+.sell-card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px 28px; margin-bottom: 20px; }
+.sell-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
 .sell-title { font-size: 15px; font-weight: 700; color: #f0f6fc; display: flex; align-items: center; gap: 10px; }
 .prob-badge { font-size: 12px; font-weight: 700; padding: 3px 12px; border-radius: 99px; }
 .prob-high { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
 .prob-med  { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
 .prob-low  { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
 
-.sell-legs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-@media (max-width: 600px) { .sell-legs { grid-template-columns: 1fr; } }
-.sell-leg { background: rgba(248,81,73,0.07); border: 1px solid rgba(248,81,73,0.2); border-radius: 8px; padding: 14px 16px; }
-.sell-leg-label { font-size: 10px; color: #f85149; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-.sell-leg-strike { font-size: 22px; font-weight: 700; color: #f0f6fc; }
-.sell-leg-meta { font-size: 11px; color: #8b949e; margin-top: 3px; }
+/* ── Strategy Legs Table (like Zerodha) ── */
+.strat-legs-wrap { margin-bottom:18px; border:1px solid #21262d; border-radius:10px; overflow:hidden; }
+.strat-legs-hdr { display:grid; grid-template-columns:36px 80px 1fr 52px 70px 90px 28px; align-items:center; padding:7px 12px; background:#0d1117; border-bottom:1px solid #21262d; gap:8px; }
+.strat-legs-hdr span { font-size:10px; color:#8b949e; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; }
+.strat-leg-row { display:grid; grid-template-columns:36px 80px 1fr 52px 70px 90px 28px; align-items:center; padding:11px 12px; border-bottom:1px solid #1c2128; gap:8px; transition:background 0.15s; }
+.strat-leg-row:last-child { border-bottom:none; }
+.strat-leg-row:hover { background:#1c2128; }
+.sell-badge { background:rgba(248,81,73,0.15); color:#f85149; border:1px solid rgba(248,81,73,0.35); padding:3px 8px; border-radius:5px; font-size:11px; font-weight:800; text-align:center; }
+.strat-expiry { font-size:12px; color:#8b949e; }
+.strat-strike-cell { display:flex; align-items:center; gap:6px; }
+.strat-strike { font-size:15px; font-weight:800; color:#f0f6fc; }
+.strat-type-ce { font-size:11px; font-weight:700; color:#f85149; background:rgba(248,81,73,0.12); padding:2px 7px; border-radius:4px; }
+.strat-type-pe { font-size:11px; font-weight:700; color:#3fb950; background:rgba(63,185,80,0.12); padding:2px 7px; border-radius:4px; }
+.strat-lots { font-size:13px; color:#c9d1d9; text-align:center; }
+.strat-price { font-size:14px; font-weight:700; color:#58a6ff; text-align:right; }
+.strat-sl { font-size:11px; color:#f85149; }
 
+/* ── Metrics row ── */
 .sell-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
 @media (max-width: 700px) { .sell-metrics { grid-template-columns: repeat(2, 1fr); } }
 .metric { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; }
 .metric-label { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
 .metric-value { font-size: 18px; font-weight: 700; }
 
+/* ── Payoff chart ── */
+.payoff-wrap { background:#0d1117; border:1px solid #21262d; border-radius:12px; padding:18px 18px 10px; margin-bottom:18px; }
+.payoff-hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+.payoff-title { font-size:11px; font-weight:700; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px; }
+.payoff-legend { display:flex; gap:14px; }
+.payoff-legend span { font-size:10px; color:#8b949e; display:flex; align-items:center; gap:5px; }
+.payoff-legend i { width:12px; height:3px; border-radius:2px; display:inline-block; }
+#payoff-canvas { width:100%; display:block; cursor:crosshair; }
+
+/* ── Reasoning ── */
 .reason-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; }
 .reason-item { font-size: 12px; color: #8b949e; padding: 3px 0; }
 .reason-item::before { content: "• "; color: #58a6ff; }
@@ -227,20 +265,34 @@ table.trades-tbl tr:hover td { background: #1c2128; }
       </div>
     </div>
 
-    <!-- Range visualiser -->
+    <!-- Range Zone Visualiser -->
     <div class="range-card">
       <div class="range-title">Predicted Range — <span id="rv-expiry">—</span> (DTE <span id="rv-dte">—</span>)</div>
-      <div class="range-bar-wrap" style="margin-bottom: 56px;">
-        <div class="bar-labels">
-          <span id="rv-lo">—</span>
-          <span style="font-weight:700; color:#f0f6fc; font-size:14px;" id="rv-range">—  –  —</span>
-          <span id="rv-hi">—</span>
+
+      <!-- Header row: range value + spot status pill -->
+      <div class="zone-header">
+        <div>
+          <div class="zone-range-val" id="rv-range">— – —</div>
+          <div class="zone-range-sub">Expected weekly trading band &nbsp;|&nbsp; OI-anchored to PE &amp; CE walls</div>
         </div>
-        <div class="bar-outer" id="bar-outer">
-          <div class="bar-fill" id="bar-fill" style="left:0; right:0;"></div>
-          <div class="bar-spot" id="bar-spot" style="left:50%;"><div class="bar-spot-label" id="spot-lbl">Spot</div></div>
-          <div class="bar-pain" id="bar-pain" style="left:50%;"><div class="bar-pain-label" id="pain-lbl">MaxPain</div></div>
+        <div id="zone-pill-wrap"></div>
+      </div>
+
+      <!-- Zone bar container (all positioning done in JS) -->
+      <div style="position:relative;">
+        <div class="zone-bar-outer" id="zone-bar-outer">
+          <!-- segments injected by JS -->
         </div>
+        <!-- markers injected by JS into this overlay div -->
+        <div id="zone-markers" style="position:absolute;top:0;left:0;width:100%;height:32px;pointer-events:none;"></div>
+        <!-- bottom labels row -->
+        <div id="zone-bottom-labels" style="position:relative; height:42px; margin-top:0;"></div>
+      </div>
+
+      <!-- Zone status row -->
+      <div class="zone-status-row" style="margin-top:8px;">
+        <div id="zone-status-text" style="font-size:11px; color:#8b949e;"></div>
+        <div id="zone-pct-pos" class="zone-pct-lbl"></div>
       </div>
     </div>
 
@@ -300,6 +352,7 @@ table.trades-tbl tr:hover td { background: #1c2128; }
 
     <!-- Sell setup card -->
     <div class="sell-card">
+      <!-- Header -->
       <div class="sell-header">
         <div class="sell-title">
           <span id="ss-title">Short Strangle (Intraday)</span>
@@ -308,18 +361,13 @@ table.trades-tbl tr:hover td { background: #1c2128; }
         <div style="font-size:11px; color:#8b949e;" id="ss-meta">Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS</div>
       </div>
 
-      <!-- Legs -->
-      <div class="sell-legs">
-        <div class="sell-leg">
-          <div class="sell-leg-label">Sell CE (Resistance side)</div>
-          <div class="sell-leg-strike" id="ss-ce">—</div>
-          <div class="sell-leg-meta">LTP: <span id="ss-ce-ltp">—</span> pts &nbsp;|&nbsp; SL: <span id="ss-ce-sl">—</span> pts</div>
+      <!-- Strategy Legs Table (Zerodha-style) -->
+      <div class="strat-legs-wrap" id="ss-legs-table">
+        <div class="strat-legs-hdr">
+          <span>B/S</span><span>Expiry</span><span>Strike</span>
+          <span>Type</span><span>Lots</span><span>Price</span><span></span>
         </div>
-        <div class="sell-leg">
-          <div class="sell-leg-label">Sell PE (Support side)</div>
-          <div class="sell-leg-strike" id="ss-pe">—</div>
-          <div class="sell-leg-meta">LTP: <span id="ss-pe-ltp">—</span> pts &nbsp;|&nbsp; SL: <span id="ss-pe-sl">—</span> pts</div>
-        </div>
+        <!-- rows injected by JS -->
       </div>
 
       <!-- Metrics -->
@@ -342,8 +390,22 @@ table.trades-tbl tr:hover td { background: #1c2128; }
         </div>
       </div>
 
+      <!-- P&L Payoff Chart -->
+      <div class="payoff-wrap">
+        <div class="payoff-hdr">
+          <div class="payoff-title">P&amp;L at Expiry — Short Strangle</div>
+          <div class="payoff-legend">
+            <span><i style="background:#3fb950;"></i> Profit zone</span>
+            <span><i style="background:#f85149;"></i> Loss zone</span>
+            <span><i style="background:#fff;height:2px;"></i> Current price</span>
+          </div>
+        </div>
+        <canvas id="payoff-canvas" height="200"></canvas>
+        <div id="payoff-stats" style="display:flex; justify-content:space-between; padding:8px 4px 0; font-size:11px; color:#8b949e; flex-wrap:wrap; gap:8px;"></div>
+      </div>
+
       <!-- Tech signal badges -->
-      <div id="ss-tech-badges" style="display:none; margin-bottom:12px; display:flex; flex-wrap:wrap; gap:8px;"></div>
+      <div id="ss-tech-badges" style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:8px;"></div>
 
       <!-- Reasoning -->
       <div class="reason-box" id="ss-reasons"></div>
@@ -476,13 +538,9 @@ function fetchSpot() {
 }
 
 function updateBarSpot(spot, d) {
-  var lo = d.iv_range.lo, hi = d.iv_range.hi;
-  var pad = (hi - lo) * 0.15;
-  var barLo = lo - pad, barHi = hi + pad, span = barHi - barLo;
-  if (span <= 0) return;
-  var spotPct = ((spot - barLo) / span * 100).toFixed(1) + '%';
-  document.getElementById('bar-spot').style.left = spotPct;
-  document.getElementById('spot-lbl').textContent = fmt(spot, 0);
+  // Update live spot position on zone bar
+  _lastRangeData = Object.assign({}, d, { spot: spot });
+  renderZoneBar(_lastRangeData);
 }
 
 // ── Run analysis ────────────────────────────────────────────────────────────
@@ -518,17 +576,15 @@ function runAnalysis() {
 
 // ── Render ──────────────────────────────────────────────────────────────────
 function renderData(d) {
-  _lastRangeData = d;  // cache for bar-spot live updates
+  _lastRangeData = d;
 
   var instrLabel = d.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
   document.getElementById('c-spot-label').textContent = instrLabel + ' Spot';
   document.getElementById('page-sub').textContent =
     instrLabel + ' · Expiry: ' + d.expiry + '  |  As of: ' + (d.as_of || 'N/A');
 
-  // Spot shown from live polling; use DB value as fallback until first poll arrives
   document.getElementById('c-spot').textContent = fmt(d.spot, 2);
   document.getElementById('c-as-of').textContent = d.as_of || '—';
-
   document.getElementById('c-iv').textContent = (d.iv || '—') + '%';
   document.getElementById('c-iv-sub').textContent = d.straddle
     ? 'Straddle: ' + fmt(d.straddle) + ' pts'
@@ -539,34 +595,11 @@ function renderData(d) {
   pcrEl.textContent = pcr ? Number(pcr).toFixed(2) : '—';
   pcrEl.className = 'card-value ' + (pcr > 1.2 ? 'green' : pcr < 0.8 ? 'red' : 'yellow');
   document.getElementById('c-bias').textContent = d.bias || '—';
-
   document.getElementById('c-straddle').textContent = d.straddle ? fmt(d.straddle) + ' pts' : '—';
   document.getElementById('c-move').textContent = '±' + fmt(d.expected_move) + ' pts expected';
 
-  // Range bar
-  var lo = d.iv_range.lo, hi = d.iv_range.hi, spot = d.spot;
-  var pad = (hi - lo) * 0.15;
-  var barLo = lo - pad, barHi = hi + pad, span = barHi - barLo;
-
   document.getElementById('rv-expiry').textContent = d.expiry;
   document.getElementById('rv-dte').textContent = d.dte;
-  document.getElementById('rv-range').textContent = fmt(d.pred_range.lo) + '  –  ' + fmt(d.pred_range.hi);
-  document.getElementById('rv-lo').textContent = fmt(lo);
-  document.getElementById('rv-hi').textContent = fmt(hi);
-
-  var fillLeft  = ((d.pred_range.lo - barLo) / span * 100).toFixed(1) + '%';
-  var fillRight = ((barHi - d.pred_range.hi) / span * 100).toFixed(1) + '%';
-  var fill = document.getElementById('bar-fill');
-  fill.style.left  = fillLeft;
-  fill.style.right = fillRight;
-
-  var spotPct = ((spot - barLo) / span * 100).toFixed(1) + '%';
-  document.getElementById('bar-spot').style.left = spotPct;
-  document.getElementById('spot-lbl').textContent = fmt(spot, 0);
-
-  var painPct = ((d.max_pain - barLo) / span * 100).toFixed(1) + '%';
-  document.getElementById('bar-pain').style.left = painPct;
-  document.getElementById('pain-lbl').textContent = fmt(d.max_pain);
 
   document.getElementById('l-pe').textContent = fmt(d.pe_wall);
   document.getElementById('l-mp').textContent = fmt(d.max_pain);
@@ -580,14 +613,144 @@ function renderData(d) {
     var width = d.pred_range.hi - d.pred_range.lo;
     document.getElementById('h-width').textContent = fmt(width) + ' pts';
     var tag = width < d.avg_weekly_range ? 'LOW volatility week' : 'HIGH volatility week';
-    var tagEl = document.getElementById('h-tag');
-    tagEl.textContent = tag;
-    tagEl.className = 'card-sub ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
+    document.getElementById('h-tag').textContent = tag;
+    document.getElementById('h-tag').className = 'card-sub ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
     document.getElementById('h-width').className = 'card-value ' + (width < d.avg_weekly_range ? 'green' : 'yellow');
   }
 
+  renderZoneBar(d);
+
   document.getElementById('content').style.display = 'block';
   document.getElementById('footer-note').style.display = 'block';
+}
+
+// ── Zone Bar Renderer ─────────────────────────────────────────────────────────
+function renderZoneBar(d) {
+  var spot    = d.spot;
+  var pe      = d.pe_wall  || d.pred_range.lo;
+  var ce      = d.ce_wall  || d.pred_range.hi;
+  var pain    = d.max_pain || ((pe + ce) / 2);
+  var plo     = d.pred_range.lo;
+  var phi     = d.pred_range.hi;
+
+  // Bar span: a bit wider than the predicted range for context
+  var margin  = (phi - plo) * 0.18;
+  var barLo   = plo - margin;
+  var barHi   = phi + margin;
+  var span    = barHi - barLo;
+
+  function pct(v) { return Math.max(0, Math.min(100, (v - barLo) / span * 100)); }
+
+  var pePct   = pct(pe);
+  var cePct   = pct(ce);
+  var spotPct = pct(spot);
+  var painPct = pct(pain);
+  var ploPct  = pct(plo);
+  var phiPct  = pct(phi);
+
+  // Range label
+  document.getElementById('rv-range').textContent = fmt(plo) + ' – ' + fmt(phi);
+
+  // ── Segments ──────────────────────────────────────────────────────────────
+  var outer = document.getElementById('zone-bar-outer');
+  outer.innerHTML = '';
+
+  function seg(cls, widthPct, label, labelColor) {
+    var el = document.createElement('div');
+    el.className = cls;
+    el.style.width = widthPct.toFixed(2) + '%';
+    el.style.position = 'relative';
+    if (label && widthPct > 8) {
+      var lbl = document.createElement('span');
+      lbl.className = 'zone-label-inside';
+      lbl.style.color = labelColor || 'rgba(255,255,255,0.6)';
+      lbl.style.left = '50%';
+      lbl.style.transform = 'translateX(-50%) translateY(-50%)';
+      lbl.textContent = label;
+      el.appendChild(lbl);
+    }
+    outer.appendChild(el);
+  }
+
+  seg('zseg-danger', ploPct,          'LOSS',       'rgba(255,255,255,0.5)');
+  seg('zseg-safe',   phiPct - ploPct, 'SAFE ZONE',  'rgba(255,255,255,0.8)');
+  seg('zseg-danger', 100 - phiPct,    'LOSS',       'rgba(255,255,255,0.5)');
+
+  // ── Wall pins ─────────────────────────────────────────────────────────────
+  var markers = document.getElementById('zone-markers');
+  markers.innerHTML = '';
+
+  function wallPin(pctPos, color, topLabel) {
+    var pin = document.createElement('div');
+    pin.className = 'zone-wall-pin';
+    pin.style.left = pctPos.toFixed(2) + '%';
+    pin.style.background = color;
+    var lbl = document.createElement('div');
+    lbl.className = 'zone-wall-label';
+    lbl.style.left = pctPos.toFixed(2) + '%';
+    lbl.style.color = color;
+    lbl.textContent = topLabel;
+    markers.appendChild(pin);
+    markers.appendChild(lbl);
+  }
+
+  wallPin(ploPct, '#f85149', 'PE Wall');
+  wallPin(phiPct, '#f85149', 'CE Wall');
+
+  // ── Bottom markers: MaxPain & Spot ────────────────────────────────────────
+  var bottomDiv = document.getElementById('zone-bottom-labels');
+  bottomDiv.innerHTML = '';
+
+  function mkMarker(pctPos, color, tickH, label) {
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:absolute;left:' + pctPos.toFixed(2) + '%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;top:0;';
+    var tick = document.createElement('div');
+    tick.style.cssText = 'width:2px;height:' + tickH + 'px;background:' + color + ';border-radius:1px;';
+    var lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:10px;font-weight:700;color:' + color + ';white-space:nowrap;margin-top:3px;';
+    lbl.textContent = label;
+    wrap.appendChild(tick);
+    wrap.appendChild(lbl);
+    bottomDiv.appendChild(wrap);
+  }
+
+  mkMarker(painPct, '#e3b341', 10, fmt(pain));
+  mkMarker(spotPct, '#ffffff', 14, fmt(spot, 0));
+
+  // Add small text labels below the tick values
+  var painLblEl = document.createElement('div');
+  painLblEl.style.cssText = 'position:absolute;left:' + painPct.toFixed(2) + '%;transform:translateX(-50%);font-size:9px;color:#e3b341;top:26px;white-space:nowrap;';
+  painLblEl.textContent = 'Max Pain';
+  bottomDiv.appendChild(painLblEl);
+
+  var spotLblEl = document.createElement('div');
+  spotLblEl.style.cssText = 'position:absolute;left:' + spotPct.toFixed(2) + '%;transform:translateX(-50%);font-size:9px;color:#8b949e;top:26px;white-space:nowrap;';
+  spotLblEl.textContent = 'Spot';
+  bottomDiv.appendChild(spotLblEl);
+
+  // ── Status pill ───────────────────────────────────────────────────────────
+  var inSafe   = spot >= plo && spot <= phi;
+  var nearEdge = (spot >= plo - 200 && spot < plo) || (spot > phi && spot <= phi + 200);
+  var pillHtml = '';
+  var statusTxt = '';
+  var pctFromLo = ((spot - plo) / (phi - plo) * 100);
+
+  if (inSafe) {
+    var fromEdge = Math.min(spot - plo, phi - spot);
+    pillHtml  = '<span class="zone-pill safe">✓ Inside Range</span>';
+    statusTxt = 'Spot is ' + fmt(fromEdge, 0) + ' pts from nearest wall';
+  } else if (nearEdge) {
+    pillHtml  = '<span class="zone-pill warn">⚠ Near Boundary</span>';
+    statusTxt = spot < plo ? 'Spot is ' + fmt(plo - spot, 0) + ' pts below PE wall' : 'Spot is ' + fmt(spot - phi, 0) + ' pts above CE wall';
+  } else {
+    pillHtml  = '<span class="zone-pill danger">✗ Outside Range</span>';
+    statusTxt = spot < plo ? 'Spot broke below PE wall by ' + fmt(plo - spot, 0) + ' pts' : 'Spot broke above CE wall by ' + fmt(spot - phi, 0) + ' pts';
+  }
+
+  document.getElementById('zone-pill-wrap').innerHTML   = pillHtml;
+  document.getElementById('zone-status-text').textContent = statusTxt;
+  document.getElementById('zone-pct-pos').textContent =
+    'Range used: ' + (inSafe ? Math.round(Math.min(pctFromLo, 100 - pctFromLo) * 2) : '—') + '%';
 }
 
 // ── Status strip ─────────────────────────────────────────────────────────────
@@ -658,7 +821,6 @@ function loadSellSetup() {
 }
 
 function renderSellSetup(d) {
-  // Section header + card title
   var instrLabel = d.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
   var f = getFilters();
   var expiryLabel = f.expiry_type === 'monthly' ? 'Monthly' : 'Weekly';
@@ -676,44 +838,271 @@ function renderSellSetup(d) {
   badge.textContent = prob + '% win probability';
   badge.className = 'prob-badge ' + (prob >= 75 ? 'prob-high' : prob >= 65 ? 'prob-med' : 'prob-low');
 
-  // Legs
-  document.getElementById('ss-ce').textContent = fmt(d.sell_ce) + ' CE';
-  document.getElementById('ss-pe').textContent = fmt(d.sell_pe) + ' PE';
-  document.getElementById('ss-ce-ltp').textContent = d.ce_ltp != null ? d.ce_ltp : '—';
-  document.getElementById('ss-pe-ltp').textContent = d.pe_ltp != null ? d.pe_ltp : '—';
-  document.getElementById('ss-ce-sl').textContent = d.ce_sl != null ? d.ce_sl : '—';
-  document.getElementById('ss-pe-sl').textContent = d.pe_sl != null ? d.pe_sl : '—';
+  // ── Strategy Legs Table (Zerodha-style) ────────────────────────────────────
+  var spot = (_lastRangeData && _lastRangeData.spot) ? _lastRangeData.spot : 0;
+  var expiryShort = (d.expiry || '').replace(/^\d{4}-/, '').replace('-', ' ');
+  // Try to format like "07 Apr"
+  try {
+    var parts = (d.expiry || '').split('-');
+    if (parts.length === 3) {
+      var mon = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      expiryShort = parts[2] + ' ' + mon[parseInt(parts[1])];
+    }
+  } catch(e) {}
 
-  // Metrics
+  var legsHtml = '';
+  [{strike: d.sell_ce, type:'CE', ltp: d.ce_ltp, sl: d.ce_sl},
+   {strike: d.sell_pe, type:'PE', ltp: d.pe_ltp, sl: d.pe_sl}].forEach(function(leg) {
+    var typeClass = leg.type === 'CE' ? 'strat-type-ce' : 'strat-type-pe';
+    legsHtml +=
+      '<div class="strat-leg-row">' +
+        '<div><span class="sell-badge">S</span></div>' +
+        '<div class="strat-expiry">' + expiryShort + '</div>' +
+        '<div class="strat-strike-cell">' +
+          '<span class="strat-strike">' + fmt(leg.strike) + '</span>' +
+        '</div>' +
+        '<div><span class="' + typeClass + '">' + leg.type + '</span></div>' +
+        '<div class="strat-lots">1</div>' +
+        '<div class="strat-price">' + (leg.ltp != null ? leg.ltp.toFixed(1) : '—') + '</div>' +
+        '<div class="strat-sl" title="SL: ' + (leg.sl || '—') + '">SL&nbsp;' + (leg.sl != null ? leg.sl.toFixed(1) : '—') + '</div>' +
+      '</div>';
+  });
+
+  var table = document.getElementById('ss-legs-table');
+  // keep header, replace rows
+  var hdr = table.querySelector('.strat-legs-hdr');
+  table.innerHTML = '';
+  if (hdr) table.appendChild(hdr);
+  table.insertAdjacentHTML('beforeend', legsHtml);
+
+  // ── Metrics ────────────────────────────────────────────────────────────────
   document.getElementById('ss-premium').textContent   = d.total_premium + ' pts';
   document.getElementById('ss-target').textContent    = '+' + d.target_pts + ' pts (₹' + fmt(d.target_inr) + ')';
   document.getElementById('ss-sl').textContent        = '-' + d.sl_pts + ' pts (₹' + fmt(d.sl_inr) + ')';
   document.getElementById('ss-maxprofit').textContent = '₹' + fmt(d.max_profit_inr) + ' / lot';
 
-  // Tech signal badges
+  // ── Tech badges ────────────────────────────────────────────────────────────
   var tb = document.getElementById('ss-tech-badges');
   var t = d.tech || {};
+  var badges = [];
   if (t.trend) {
-    var badges = [];
-    var tcolor = t.trend === 'BULLISH' ? '#3fb950' : t.trend === 'BEARISH' ? '#f85149' : '#e3b341';
-    badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:#58a6ff;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">Trend: ' + t.trend + '</span>');
-    if (t.vwap_bias) badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:#58a6ff;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">VWAP: ' + t.vwap_bias + '</span>');
-    if (t.rsi15 != null) {
-      var rc = t.rsi15 > 72 ? '#f85149' : t.rsi15 < 28 ? '#f85149' : '#3fb950';
-      badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:' + rc + ';padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">RSI ' + t.rsi15 + '</span>');
-    }
-    if (t.bb_squeeze) badges.push('<span style="background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:#f85149;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">⚠ BB Squeeze</span>');
-    tb.innerHTML = badges.join('');
-    tb.style.display = 'flex';
-  } else {
-    tb.style.display = 'none';
+    var tc = t.trend === 'BULLISH' ? '#3fb950' : t.trend === 'BEARISH' ? '#f85149' : '#e3b341';
+    badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:' + tc + ';padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">Trend: ' + t.trend + '</span>');
   }
+  if (t.vwap_bias) badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:#58a6ff;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">VWAP: ' + t.vwap_bias + '</span>');
+  if (t.rsi15 != null) {
+    var rc = t.rsi15 > 72 ? '#f85149' : t.rsi15 < 28 ? '#f85149' : '#3fb950';
+    badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:' + rc + ';padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">RSI ' + t.rsi15 + '</span>');
+  }
+  if (t.bb_squeeze) badges.push('<span style="background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:#f85149;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">⚠ BB Squeeze</span>');
+  tb.innerHTML = badges.join('');
+  tb.style.display = badges.length ? 'flex' : 'none';
 
-  // Reasoning
-  var box = document.getElementById('ss-reasons');
-  box.innerHTML = (d.reasoning || []).map(function(r) {
+  // ── Reasoning ──────────────────────────────────────────────────────────────
+  document.getElementById('ss-reasons').innerHTML = (d.reasoning || []).map(function(r) {
     return '<div class="reason-item">' + r + '</div>';
   }).join('');
+
+  // ── Payoff Chart ───────────────────────────────────────────────────────────
+  drawPayoffChart(d);
+}
+
+// ── P&L Payoff Chart (Canvas) ─────────────────────────────────────────────────
+function drawPayoffChart(d) {
+  var canvas = document.getElementById('payoff-canvas');
+  if (!canvas || !canvas.getContext) return;
+
+  // Resize canvas to match CSS width
+  canvas.width  = canvas.offsetWidth || 700;
+  canvas.height = 220;
+
+  var ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  var spot    = (_lastRangeData && _lastRangeData.spot) ? _lastRangeData.spot : d.atm;
+  var ce      = d.sell_ce,  pe      = d.sell_pe;
+  var ce_ltp  = d.ce_ltp || 0, pe_ltp = d.pe_ltp || 0;
+  var lot     = d.lot_size || 75;
+  var sigma   = d.sigma_pts || 300;
+
+  var total_premium = ce_ltp + pe_ltp;
+  var be_upper = ce + total_premium;   // upper breakeven
+  var be_lower = pe - total_premium;   // lower breakeven
+  var max_profit_inr = total_premium * lot;
+
+  // X axis: spot ± 2.5σ, widened to include breakevens
+  var x_lo = Math.min(spot - 2.5 * sigma, be_lower - 100);
+  var x_hi = Math.max(spot + 2.5 * sigma, be_upper + 100);
+
+  // P&L at expiry
+  function pnl(s) {
+    return ((ce_ltp - Math.max(s - ce, 0)) + (pe_ltp - Math.max(pe - s, 0))) * lot;
+  }
+
+  var N = 200;
+  var xs = [], ys = [];
+  for (var i = 0; i <= N; i++) {
+    var s = x_lo + (x_hi - x_lo) * i / N;
+    xs.push(s); ys.push(pnl(s));
+  }
+  var yMax =  max_profit_inr * 1.15;
+  var yMin = -max_profit_inr * 2.2;
+
+  // Canvas layout
+  var W = canvas.width, H = canvas.height;
+  var pad = {top: 32, right: 28, bottom: 40, left: 68};
+  var pw = W - pad.left - pad.right;
+  var ph = H - pad.top - pad.bottom;
+
+  function cx(s)  { return pad.left + (s - x_lo) / (x_hi - x_lo) * pw; }
+  function cy(v)  { return pad.top  + (1 - (v - yMin) / (yMax - yMin)) * ph; }
+  var y0 = cy(0);
+
+  // ── Background ────────────────────────────────────────────────────────────
+  // Profit zone fill
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cx(xs[0]), y0);
+  for (var i = 0; i <= N; i++) ctx.lineTo(cx(xs[i]), Math.min(cy(ys[i]), y0));
+  ctx.lineTo(cx(xs[N]), y0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(63,185,80,0.18)';
+  ctx.fill();
+
+  // Loss zone fill
+  ctx.beginPath();
+  ctx.moveTo(cx(xs[0]), y0);
+  for (var i = 0; i <= N; i++) ctx.lineTo(cx(xs[i]), Math.max(cy(ys[i]), y0));
+  ctx.lineTo(cx(xs[N]), y0);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(248,81,73,0.15)';
+  ctx.fill();
+  ctx.restore();
+
+  // ── SD band markers ───────────────────────────────────────────────────────
+  [[-2,'−2σ'],[-1,'−1σ'],[1,'1σ'],[2,'2σ']].forEach(function(pair) {
+    var mult = pair[0], label = pair[1];
+    var sx = cx(spot + mult * sigma);
+    if (sx < pad.left || sx > pad.left + pw) return;
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(88,166,255,0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx, pad.top); ctx.lineTo(sx, pad.top + ph); ctx.stroke();
+    ctx.fillStyle = 'rgba(88,166,255,0.6)';
+    ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(label, sx, pad.top - 4);
+    ctx.restore();
+  });
+
+  // ── Zero line ─────────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad.left, y0); ctx.lineTo(pad.left + pw, y0); ctx.stroke();
+  ctx.restore();
+
+  // ── Breakeven lines ───────────────────────────────────────────────────────
+  [be_lower, be_upper].forEach(function(bx) {
+    var sx = cx(bx);
+    if (sx < pad.left || sx > pad.left + pw) return;
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = 'rgba(227,179,65,0.6)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx, pad.top); ctx.lineTo(sx, pad.top + ph); ctx.stroke();
+    ctx.fillStyle = '#e3b341';
+    ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('BE', sx, pad.top + ph + 14);
+    ctx.restore();
+  });
+
+  // ── P&L curve ─────────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  // Draw green segment (profit) and red segment (loss) separately
+  for (var pass = 0; pass < 2; pass++) {
+    ctx.beginPath();
+    var started = false;
+    for (var i = 0; i <= N; i++) {
+      var isProfit = ys[i] >= 0;
+      if ((pass === 0 && isProfit) || (pass === 1 && !isProfit)) {
+        if (!started) { ctx.moveTo(cx(xs[i]), cy(ys[i])); started = true; }
+        else ctx.lineTo(cx(xs[i]), cy(ys[i]));
+      } else if (started) {
+        ctx.stroke();
+        ctx.beginPath(); started = false;
+      }
+    }
+    if (started) ctx.stroke();
+    ctx.strokeStyle = pass === 0 ? '#3fb950' : '#f85149';
+  }
+  ctx.restore();
+
+  // ── Current spot line ─────────────────────────────────────────────────────
+  var sx = cx(spot);
+  ctx.save();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(sx, pad.top); ctx.lineTo(sx, pad.top + ph); ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('▼ ' + fmt(spot, 0), sx, pad.top - 4);
+  ctx.restore();
+
+  // ── Max profit annotation ─────────────────────────────────────────────────
+  var mpX = cx((pe + ce) / 2), mpY = cy(max_profit_inr);
+  ctx.save();
+  ctx.fillStyle = '#3fb950';
+  ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Max Profit ₹' + fmt(max_profit_inr), mpX, Math.max(mpY - 8, pad.top + 14));
+  ctx.restore();
+
+  // ── Y-axis labels ─────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.fillStyle = '#8b949e'; ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
+  var yTicks = [0, max_profit_inr, -max_profit_inr];
+  yTicks.forEach(function(v) {
+    var tyc = cy(v);
+    if (tyc < pad.top || tyc > pad.top + ph) return;
+    ctx.fillText((v >= 0 ? '+' : '') + '₹' + Math.abs(Math.round(v / 1000)).toLocaleString('en-IN') + 'k', pad.left - 6, tyc + 3);
+  });
+  ctx.restore();
+
+  // ── X-axis labels ─────────────────────────────────────────────────────────
+  ctx.save();
+  ctx.fillStyle = '#8b949e'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+  [pe - total_premium, pe, spot, ce, ce + total_premium].forEach(function(v) {
+    var xc = cx(v);
+    if (xc < pad.left + 10 || xc > pad.left + pw - 10) return;
+    ctx.fillText(fmt(Math.round(v)), xc, pad.top + ph + 26);
+  });
+  ctx.restore();
+
+  // ── Strike labels on bar ──────────────────────────────────────────────────
+  [[ce, 'CE', '#f85149'], [pe, 'PE', '#3fb950']].forEach(function(item) {
+    var v = item[0], label = item[1], color = item[2];
+    var xc = cx(v);
+    if (xc < pad.left || xc > pad.left + pw) return;
+    ctx.save();
+    ctx.strokeStyle = color; ctx.setLineDash([2,3]); ctx.lineWidth = 1; ctx.globalAlpha = 0.4;
+    ctx.beginPath(); ctx.moveTo(xc, pad.top); ctx.lineTo(xc, pad.top + ph); ctx.stroke();
+    ctx.fillStyle = color; ctx.globalAlpha = 1;
+    ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Sell ' + label + ' ' + fmt(v), xc, pad.top + 10);
+    ctx.restore();
+  });
+
+  // ── Payoff stats row ──────────────────────────────────────────────────────
+  var statsDiv = document.getElementById('payoff-stats');
+  if (statsDiv) {
+    statsDiv.innerHTML =
+      '<span>BE Upper: <b style="color:#e3b341">' + fmt(Math.round(be_upper)) + '</b></span>' +
+      '<span>Max Profit: <b style="color:#3fb950">₹' + fmt(max_profit_inr) + '</b></span>' +
+      '<span>Strangle Width: <b style="color:#58a6ff">' + fmt(ce - pe) + ' pts</b></span>' +
+      '<span>BE Lower: <b style="color:#e3b341">' + fmt(Math.round(be_lower)) + '</b></span>';
+  }
 }
 
 function showSetupStatus(type, msg) {
