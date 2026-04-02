@@ -1093,6 +1093,10 @@ function drawPayoffChart(d) {
   ctx.beginPath(); ctx.moveTo(pad.left, y0); ctx.lineTo(pad.left + pw, y0); ctx.stroke();
   ctx.restore();
 
+  // Iron Fly breakevens: ATM ± net_premium
+  var be_upper = atm + net_premium;
+  var be_lower = atm - net_premium;
+
   // ── Breakeven lines ───────────────────────────────────────────────────────
   [be_lower, be_upper].forEach(function(bx) {
     var sx = cx(bx);
