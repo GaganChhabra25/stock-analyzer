@@ -1146,8 +1146,8 @@ function drawPayoffChart(d) {
   ctx.fillText('▼ ' + fmt(spot, 0), sx, pad.top - 4);
   ctx.restore();
 
-  // ── Max profit annotation ─────────────────────────────────────────────────
-  var mpX = cx((pe + ce) / 2), mpY = cy(max_profit_inr);
+  // ── Max profit annotation (at ATM = peak of tent) ────────────────────────
+  var mpX = cx(atm), mpY = cy(max_profit_inr);
   ctx.save();
   ctx.fillStyle = '#3fb950';
   ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
@@ -1157,7 +1157,7 @@ function drawPayoffChart(d) {
   // ── Y-axis labels ─────────────────────────────────────────────────────────
   ctx.save();
   ctx.fillStyle = '#8b949e'; ctx.font = '9px sans-serif'; ctx.textAlign = 'right';
-  var yTicks = [0, max_profit_inr, -max_profit_inr];
+  var yTicks = [0, max_profit_inr, -max_loss_inr];
   yTicks.forEach(function(v) {
     var tyc = cy(v);
     if (tyc < pad.top || tyc > pad.top + ph) return;
@@ -1165,18 +1165,20 @@ function drawPayoffChart(d) {
   });
   ctx.restore();
 
-  // ── X-axis labels ─────────────────────────────────────────────────────────
+  // ── X-axis labels ─────────────────────────────────────────────name────────
   ctx.save();
   ctx.fillStyle = '#8b949e'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
-  [pe - total_premium, pe, spot, ce, ce + total_premium].forEach(function(v) {
+  [atm - wing, atm, spot, atm + wing].forEach(function(v) {
     var xc = cx(v);
     if (xc < pad.left + 10 || xc > pad.left + pw - 10) return;
     ctx.fillText(fmt(Math.round(v)), xc, pad.top + ph + 26);
   });
   ctx.restore();
 
-  // ── Strike labels on bar ──────────────────────────────────────────────────
-  [[ce, 'CE', '#f85149'], [pe, 'PE', '#3fb950']].forEach(function(item) {
+  // ── Strike labels: sell strikes (ATM) and buy wings ───────────────────────
+  [[atm,        'ATM',   '#e3b341'],
+   [atm + wing, '+Wing', '#f85149'],
+   [atm - wing, '−Wing', '#3fb950']].forEach(function(item) {
     var v = item[0], label = item[1], color = item[2];
     var xc = cx(v);
     if (xc < pad.left || xc > pad.left + pw) return;
@@ -1185,7 +1187,7 @@ function drawPayoffChart(d) {
     ctx.beginPath(); ctx.moveTo(xc, pad.top); ctx.lineTo(xc, pad.top + ph); ctx.stroke();
     ctx.fillStyle = color; ctx.globalAlpha = 1;
     ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Sell ' + label + ' ' + fmt(v), xc, pad.top + 10);
+    ctx.fillText(label + ' ' + fmt(v), xc, pad.top + 10);
     ctx.restore();
   });
 
@@ -1194,8 +1196,8 @@ function drawPayoffChart(d) {
   if (statsDiv) {
     statsDiv.innerHTML =
       '<span>BE Upper: <b style="color:#e3b341">' + fmt(Math.round(be_upper)) + '</b></span>' +
-      '<span>Max Profit: <b style="color:#3fb950">₹' + fmt(max_profit_inr) + '</b></span>' +
-      '<span>Strangle Width: <b style="color:#58a6ff">' + fmt(ce - pe) + ' pts</b></span>' +
+      '<span>Max Profit: <b style="color:#3fb950">₹' + fmt(max_profit_inr) + '</b> (at ATM)</span>' +
+      '<span>Max Loss: <b style="color:#f85149">₹' + fmt(max_loss_inr) + '</b> (beyond wings)</span>' +
       '<span>BE Lower: <b style="color:#e3b341">' + fmt(Math.round(be_lower)) + '</b></span>';
   }
 }
