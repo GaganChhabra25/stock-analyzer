@@ -1071,9 +1071,9 @@ function drawPayoffChart(d) {
   ctx.restore();
 
   // ── SD band markers ───────────────────────────────────────────────────────
-  [[-2,'−2σ'],[-1,'−1σ'],[1,'1σ'],[2,'2σ']].forEach(function(pair) {
+  [[-1,'−wing'],[0,'ATM'],[1,'+wing']].forEach(function(pair) {
     var mult = pair[0], label = pair[1];
-    var sx = cx(spot + mult * sigma);
+    var sx = cx(atm + mult * wing);
     if (sx < pad.left || sx > pad.left + pw) return;
     ctx.save();
     ctx.setLineDash([4, 4]);
