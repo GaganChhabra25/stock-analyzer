@@ -312,6 +312,7 @@ def compute_iron_fly_setup(
         "total_pnl_inr":    total_pnl_inr,
         "backtest_days":    backtest_days,
         "backtest_quality": bt_quality,
+        "daily_results":    bt.get("per_day", []),
 
         # Market condition gates
         "vix_warning":          vix_check,

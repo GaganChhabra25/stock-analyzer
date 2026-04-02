@@ -394,7 +394,8 @@ table.trades-tbl tr:hover td { background: #1c2128; }
           </div>
           <div style="text-align:center; border-left:1px solid #30363d; padding-left:10px;">
             <div style="font-size:16px; font-weight:700;" id="bt-total-pnl">—</div>
-            <div style="font-size:10px; color:#8b949e;" id="bt-total-pnl-label">Total P&amp;L</div>
+            <div style="font-size:10px; color:#8b949e; margin-top:2px;" id="bt-total-pnl-label">Total P&amp;L</div>
+            <button onclick="openDailyInsights()" style="margin-top:5px; background:none; border:1px solid rgba(88,166,255,0.3); color:#58a6ff; font-size:10px; padding:2px 8px; border-radius:99px; cursor:pointer; font-weight:600;">📊 Daily Insights</button>
           </div>
         </div>
       </div>
@@ -1411,6 +1412,88 @@ function renderHistory(rows) {
   html += '</tbody></table>';
   body.innerHTML = html;
 }
+
+// ── Daily Insights Modal ───────────────────────────────────────────────────────
+function openDailyInsights() {
+  var d = _currentSetup;
+  if (!d || !d.daily_results || !d.daily_results.length) {
+    alert('No daily data available yet.'); return;
+  }
+  document.getElementById('daily-modal').style.display = 'flex';
+  renderDailyTable(d.daily_results, d.lot_size || 75);
+}
+
+function closeDailyInsights() {
+  document.getElementById('daily-modal').style.display = 'none';
+}
+
+function renderDailyTable(rows, lot) {
+  var body = document.getElementById('daily-tbody');
+  var html = '';
+  // rows sorted newest first already
+  rows.forEach(function(r) {
+    var win     = r.win;
+    var slHit   = r.sl_hit;
+    var pnlCls  = win ? 'color:#3fb950;font-weight:700;' : 'color:#f85149;font-weight:700;';
+    var tag     = slHit ? '<span style="font-size:10px;color:#f85149;border:1px solid rgba(248,81,73,0.4);padding:1px 6px;border-radius:4px;">SL</span>'
+                        : win ? '<span style="font-size:10px;color:#3fb950;border:1px solid rgba(63,185,80,0.4);padding:1px 6px;border-radius:4px;">WIN</span>'
+                              : '<span style="font-size:10px;color:#f85149;border:1px solid rgba(248,81,73,0.4);padding:1px 6px;border-radius:4px;">LOSS</span>';
+    var sign    = r.pnl_inr >= 0 ? '+' : '';
+    html +=
+      '<tr style="border-bottom:1px solid #21262d;">' +
+        '<td style="padding:8px 10px;color:#c9d1d9;font-size:12px;">' + r.date + '</td>' +
+        '<td style="padding:8px 10px;text-align:center;font-size:13px;font-weight:700;">' + fmt(r.atm) + '</td>' +
+        '<td style="padding:8px 10px;text-align:center;color:#58a6ff;font-size:13px;">' + r.net_premium + '</td>' +
+        '<td style="padding:8px 10px;text-align:right;font-size:13px;' + pnlCls + '">' + (r.pnl_pts >= 0 ? '+' : '') + r.pnl_pts + '</td>' +
+        '<td style="padding:8px 10px;text-align:right;font-size:13px;' + pnlCls + '">' + sign + '₹' + fmt(Math.abs(r.pnl_inr)) + '</td>' +
+        '<td style="padding:8px 10px;text-align:center;">' + tag + '</td>' +
+      '</tr>';
+  });
+
+  // Running total row
+  var total = rows.reduce(function(s, r) { return s + r.pnl_inr; }, 0);
+  var totalCls = total >= 0 ? 'color:#3fb950;' : 'color:#f85149;';
+  html +=
+    '<tr style="background:#161b22;border-top:2px solid #30363d;">' +
+      '<td colspan="3" style="padding:10px;font-size:12px;font-weight:700;color:#8b949e;">TOTAL (' + rows.length + ' days)</td>' +
+      '<td></td>' +
+      '<td style="padding:10px;text-align:right;font-size:15px;font-weight:900;' + totalCls + '">' + (total >= 0 ? '+' : '') + '₹' + fmt(Math.abs(Math.round(total))) + '</td>' +
+      '<td></td>' +
+    '</tr>';
+
+  body.innerHTML = html;
+}
 </script>
+
+<!-- Daily Insights Modal -->
+<div id="daily-modal" onclick="if(event.target===this)closeDailyInsights()" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1000; align-items:center; justify-content:center; padding:16px;">
+  <div style="background:#161b22; border:1px solid #30363d; border-radius:14px; width:100%; max-width:680px; max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+    <!-- Modal header -->
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:18px 22px; border-bottom:1px solid #30363d;">
+      <div>
+        <div style="font-size:15px; font-weight:700; color:#f0f6fc;">Daily Iron Fly Results</div>
+        <div style="font-size:11px; color:#8b949e; margin-top:2px;">Entry 9:20 AM · Exit 3:10 PM · 1 lot · ±200 pts wing</div>
+      </div>
+      <button onclick="closeDailyInsights()" style="background:none;border:none;color:#8b949e;font-size:20px;cursor:pointer;padding:4px 8px;">✕</button>
+    </div>
+    <!-- Table -->
+    <div style="overflow-y:auto; flex:1;">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr style="background:#0d1117; border-bottom:1px solid #30363d;">
+            <th style="padding:8px 10px; text-align:left; font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px;">Date</th>
+            <th style="padding:8px 10px; text-align:center; font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px;">ATM</th>
+            <th style="padding:8px 10px; text-align:center; font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px;">Net Premium</th>
+            <th style="padding:8px 10px; text-align:right; font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px;">P&amp;L (pts)</th>
+            <th style="padding:8px 10px; text-align:right; font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px;">P&amp;L (₹)</th>
+            <th style="padding:8px 10px; text-align:center; font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:0.5px;">Result</th>
+          </tr>
+        </thead>
+        <tbody id="daily-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
