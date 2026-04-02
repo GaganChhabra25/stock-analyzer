@@ -98,7 +98,8 @@ def get_option_tokens(
     n_strikes: int = 6,
 ) -> dict:
     """
-    Return {(strike, option_type): instrument_token} for ATM ± n_strikes.
+    Return {(strike, option_type): tradingsymbol} for ATM ± n_strikes.
+    Kite quote() API requires 'NFO:tradingsymbol' format, not token IDs.
     """
     step    = STRIKE_STEP.get(symbol, 50)
     strikes = [atm_strike + i * step for i in range(-n_strikes, n_strikes + 1)]
@@ -111,7 +112,7 @@ def get_option_tokens(
     ]
 
     return {
-        (int(row["strike"]), row["instrument_type"]): int(row["instrument_token"])
+        (int(row["strike"]), row["instrument_type"]): row["tradingsymbol"]
         for _, row in subset.iterrows()
     }
 

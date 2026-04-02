@@ -228,9 +228,9 @@ def collect_once():
         expiry = weekly_expiry   # snapshot uses weekly expiry
 
         for token_str, quote in option_quotes.items():
-            # token_str is like "NFO:12345678"
+            # token_str is like "NFO:NIFTY2640722400CE"
             try:
-                raw_token = int(token_str.split(":")[1])
+                raw_token = token_str.split(":")[1]
             except Exception:
                 continue
 
