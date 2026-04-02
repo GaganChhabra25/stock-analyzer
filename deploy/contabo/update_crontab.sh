@@ -1,30 +1,21 @@
 #!/bin/bash
 # =============================================================================
-# Stock Analyzer — Update Crontab on Contabo VPS
-# Run as: root
-# All times in UTC (server is UTC). IST = UTC+5:30
+# Stock Analyzer — Apply crontab from deploy/contabo/crontab to Contabo VPS
+# Run from repo root: bash deploy/contabo/update_crontab.sh
+# Or via: python scripts/server.py cron-apply
 # =============================================================================
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CRONTAB_FILE="$SCRIPT_DIR/crontab"
 APP_USER="stockapp"
-APP_DIR="/home/$APP_USER/stock-analyzer"
-VENV="$APP_DIR/venv"
-LOG="$APP_DIR/logs"
 
-echo "[INFO] Updating crontab for $APP_USER..."
+if [ ! -f "$CRONTAB_FILE" ]; then
+    echo "[ERROR] Crontab file not found: $CRONTAB_FILE"
+    exit 1
+fi
 
-crontab -u "$APP_USER" - <<EOF
-# ── Screener: 9:00 AM IST Mon-Sat = 3:30 AM UTC ──────────────────────────────
-30 3 * * 1-6 cd $APP_DIR && $VENV/bin/python run_screener.py --no-open >> $LOG/screener.log 2>&1
+echo "[INFO] Applying crontab for $APP_USER from $CRONTAB_FILE ..."
+crontab -u "$APP_USER" "$CRONTAB_FILE"
 
-# ── Kite reminder: 9:00 AM IST = 3:30 AM UTC ─────────────────────────────────
-30 3 * * 1-5 cd $APP_DIR && $VENV/bin/python -c "from options.kite_auth import send_daily_reminder; send_daily_reminder()" >> $LOG/kite.log 2>&1
-
-# ── Options collector: every minute 9:14 AM–3:31 PM IST = 3:44–10:01 AM UTC ──
-*/1 3-10 * * 1-5 cd $APP_DIR && $VENV/bin/python options/collector.py >> $LOG/options.log 2>&1
-
-# ── EOD summary Telegram: 3:35 PM IST = 10:05 AM UTC ─────────────────────────
-5 10 * * 1-5 cd $APP_DIR && $VENV/bin/python options/collector.py --eod >> $LOG/options.log 2>&1
-EOF
-
-echo "[OK] Crontab updated:"
+echo "[OK] Crontab applied:"
 crontab -u "$APP_USER" -l
