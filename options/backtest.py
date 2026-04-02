@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 IST = ZoneInfo("Asia/Kolkata")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-MIN_DAYS_REQUIRED  = 5
-MIN_DAYS_RELIABLE  = 15
-ENTRY_WINDOW_MIN   = 5      # ±5 min around 9:20 AM
-EXIT_WINDOW_MIN    = 10     # ±10 min around 3:10 PM
+MIN_DAYS_REQUIRED  = 3
+MIN_DAYS_RELIABLE  = 10
+ENTRY_WINDOW_MIN   = 15     # ±15 min around 9:20 AM (9:05–9:35)
+EXIT_WINDOW_MIN    = 20     # ±20 min around 3:10 PM (2:50–3:30)
 DEFAULT_WING       = 200    # points for NIFTY
 _STRIKE_STEP       = {"NIFTY": 50, "BANKNIFTY": 100}
 _LOT_SIZE          = {"NIFTY": 75, "BANKNIFTY": 15}
 
 # ── In-process cache (4-hour TTL) ──────────────────────────────────────────────
 _cache: dict = {}
-_CACHE_TTL   = 4 * 3600
+_CACHE_TTL   = 2 * 3600
 
 
 def _cache_key(instrument: str, wing: int, days: int) -> str:
@@ -148,14 +148,23 @@ def backtest_iron_fly(
         with _get_conn() as conn:
             with conn.cursor() as cur:
                 # ── 1. Get trading days ─────────────────────────────────────
+                # Include today only if we have data past 3:10 PM (market closed)
                 cur.execute("""
                     SELECT DISTINCT ts::date AS trade_date
                     FROM option_chain
                     WHERE instrument = %s
-                      AND ts::date   < CURRENT_DATE
                       AND ts::date  >= CURRENT_DATE - (%s || ' days')::INTERVAL
+                      AND (
+                          ts::date < CURRENT_DATE
+                          OR EXISTS (
+                              SELECT 1 FROM option_chain oc2
+                              WHERE oc2.instrument = %s
+                                AND oc2.ts::date = CURRENT_DATE
+                                AND oc2.ts::time >= '15:00:00'
+                          )
+                      )
                     ORDER BY trade_date DESC
-                """, (instr, lookback_days + 5))
+                """, (instr, lookback_days + 5, instr))
                 trade_dates = [r[0] for r in cur.fetchall()]
 
                 if not trade_dates:
