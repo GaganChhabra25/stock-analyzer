@@ -30,6 +30,9 @@ def upsert_user(zerodha_user_id: str, email: str, full_name: str) -> None:
     """Insert or update user row on login."""
     from screener.db import _get_conn
     with _get_conn() as conn:
+        if conn is None:
+            logger.warning("upsert_user: DB unavailable, skipping.")
+            return
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO users (zerodha_user_id, email, full_name, created_at, last_login_at)
@@ -40,7 +43,6 @@ def upsert_user(zerodha_user_id: str, email: str, full_name: str) -> None:
                     full_name     = EXCLUDED.full_name,
                     last_login_at = NOW()
             """, (zerodha_user_id, email, full_name))
-        conn.commit()
     logger.info("User upserted: %s (%s)", zerodha_user_id, email)
 
 
@@ -68,6 +70,8 @@ def load_access_token(user_id: str) -> Optional[str]:
     from screener.db import _get_conn
     try:
         with _get_conn() as conn:
+            if conn is None:
+                return None
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT access_token FROM kite_tokens WHERE zerodha_user_id = %s AND token_date = %s",
@@ -84,6 +88,9 @@ def save_access_token(user_id: str, access_token: str) -> None:
     """Persist today's access token for a user (upsert)."""
     from screener.db import _get_conn
     with _get_conn() as conn:
+        if conn is None:
+            logger.warning("save_access_token: DB unavailable, skipping.")
+            return
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO kite_tokens (zerodha_user_id, token_date, access_token, created_at)
@@ -92,7 +99,6 @@ def save_access_token(user_id: str, access_token: str) -> None:
                 DO UPDATE SET access_token = EXCLUDED.access_token,
                               created_at   = NOW()
             """, (user_id, date.today(), access_token))
-        conn.commit()
     logger.info("Kite token saved for user %s on %s", user_id, date.today())
 
 

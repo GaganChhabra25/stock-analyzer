@@ -70,7 +70,8 @@ def _get_conn():
             except Exception:
                 pass
         logger.warning("DB error: %s", exc)
-        yield None
+        # Do NOT yield here — a @contextmanager can only yield once.
+        # Returning here suppresses the exception cleanly.
     finally:
         if conn:
             try:
