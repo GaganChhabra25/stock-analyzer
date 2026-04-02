@@ -163,9 +163,11 @@ def auth_callback():
 
     session.permanent = True
     session["user"] = {
-        "email": email,
-        "name":  userinfo.get("name", email),
+        "zerodha_user_id": None,   # not linked yet — user must visit /kite/login
+        "email":   email,
+        "name":    userinfo.get("name", email),
         "picture": userinfo.get("picture", ""),
+        "via":     "google",
     }
     return redirect(url_for("index"))
 
@@ -208,26 +210,31 @@ def kite_callback():
 
     try:
         from options.kite_auth import generate_access_token, get_kite, send_auth_success_telegram
-        generate_access_token(request_token)
-        # Notify via Telegram that auth succeeded
-        threading.Thread(target=send_auth_success_telegram, daemon=True).start()
+        from kiteconnect import KiteConnect
+        # Exchange token; internally fetches profile, upserts user row, saves token
+        access_token = generate_access_token(request_token)
+
+        # Re-use the same access_token to build the Flask session (no extra API call)
+        _kite = KiteConnect(api_key=os.environ.get("KITE_API_KEY", ""))
+        _kite.set_access_token(access_token)
+        profile = _kite.profile()
+        zerodha_user_id = profile.get("user_id", "")
+
+        session.permanent = True
+        session["user"] = {
+            "zerodha_user_id": zerodha_user_id,
+            "email":           profile.get("email", zerodha_user_id),
+            "name":            profile.get("user_name", zerodha_user_id),
+            "picture":         "",
+            "via":             "zerodha",
+        }
+        threading.Thread(
+            target=send_auth_success_telegram,
+            kwargs={"user_name": profile.get("user_name", zerodha_user_id)},
+            daemon=True,
+        ).start()
     except Exception as exc:
         return render_template("login.html", error=f"Zerodha auth failed: {exc}"), 500
-
-    # Set Flask session so the user is logged in
-    if "user" not in session:
-        try:
-            kite    = get_kite()
-            profile = kite.profile()
-            session.permanent = True
-            session["user"] = {
-                "email":   profile.get("email", profile.get("user_id", "zerodha-user")),
-                "name":    profile.get("user_name", profile.get("user_id", "Zerodha User")),
-                "picture": "",
-                "via":     "zerodha",
-            }
-        except Exception:
-            pass  # Token saved; session login optional
 
     return redirect(url_for("index"))
 
@@ -237,7 +244,8 @@ def kite_callback():
 def kite_status():
     """Show Kite Connect authorization status."""
     from options.kite_auth import get_kite, get_login_url
-    kite = get_kite()
+    user_id = session.get("user", {}).get("zerodha_user_id")
+    kite = get_kite(user_id)
     if kite:
         try:
             profile = kite.profile()
@@ -660,7 +668,7 @@ def api_sell_setup():
             (setup["sell_ce"], "CE"), (setup["sell_pe"], "PE"),
             (setup["buy_ce"],  "CE"), (setup["buy_pe"],  "PE"),
         ]
-        kite = get_kite()
+        kite = get_kite(session.get("user", {}).get("zerodha_user_id"))
         prices = {}
         ltp_source = setup.get("ltp_source", "bs_approx")
 
@@ -847,7 +855,7 @@ def api_spot_price():
     if not sym:
         return jsonify({"error": "Unknown instrument"}), 400
 
-    kite = get_kite()
+    kite = get_kite(session.get("user", {}).get("zerodha_user_id"))
     if kite is None:
         return jsonify({"error": "Kite not authorized — visit /kite/login"}), 503
 

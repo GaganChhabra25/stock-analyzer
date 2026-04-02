@@ -393,9 +393,9 @@ def auto_exit_check():
         return
 
     now_ist = _ist_now()
-    # Only during market hours 9:15 AM – 3:20 PM
+    # Only during market hours 9:15 AM – 3:15 PM
     market_open  = now_ist.replace(hour=9,  minute=15, second=0, microsecond=0)
-    hard_exit_at = now_ist.replace(hour=15, minute=15, second=0, microsecond=0)
+    hard_exit_at = now_ist.replace(hour=15, minute=10, second=0, microsecond=0)
 
     if now_ist < market_open:
         return

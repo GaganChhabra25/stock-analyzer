@@ -2,21 +2,38 @@
 --  Options Data Schema
 --  Run ONCE against the stock_analyzer database:
 --    psql -U stockanalyzer -d stock_analyzer -h localhost -f options/schema.sql
+--
+--  Existing installs: run the migration block at the bottom.
 -- ============================================================
 
 
--- ── Kite Connect daily tokens ─────────────────────────────────────────────────
+-- ── Users (one row per Zerodha account) ───────────────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+    zerodha_user_id  VARCHAR(20)  PRIMARY KEY,   -- e.g. "AB1234" from kite.profile()
+    email            TEXT,
+    full_name        TEXT,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_login_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE users IS
+    'One row per Zerodha account. Populated on first /kite/callback login.';
+
+
+-- ── Kite Connect daily tokens (per user) ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS kite_tokens (
-    token_date    DATE        PRIMARY KEY,
-    access_token  TEXT        NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    zerodha_user_id  VARCHAR(20)  NOT NULL REFERENCES users(zerodha_user_id) ON DELETE CASCADE,
+    token_date       DATE         NOT NULL,
+    access_token     TEXT         NOT NULL,
+    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (zerodha_user_id, token_date)
 );
 
 COMMENT ON TABLE kite_tokens IS
-    'One row per day. access_token expires at midnight; regenerated each morning via /kite/login.';
+    'One row per user per day. access_token expires at midnight; regenerated each morning via /kite/login.';
 
 
--- ── Per-minute option chain snapshots ────────────────────────────────────────
+-- ── Per-minute option chain snapshots (shared market data) ───────────────────
 CREATE TABLE IF NOT EXISTS option_chain (
     id              BIGSERIAL       PRIMARY KEY,
     ts              TIMESTAMPTZ     NOT NULL,
@@ -34,23 +51,21 @@ CREATE TABLE IF NOT EXISTS option_chain (
     delta           NUMERIC(7,4),
     gamma           NUMERIC(9,6),
     theta           NUMERIC(9,4),
-    vega            NUMERIC(9,4),
+    vega             NUMERIC(9,4),
     underlying_ltp  NUMERIC(10,2)               -- Nifty/BankNifty spot at capture time
 );
 
--- Primary query pattern: fetch all strikes for a symbol at a given minute
 CREATE INDEX IF NOT EXISTS idx_oc_lookup
     ON option_chain (instrument, ts DESC, expiry, strike, option_type);
 
--- Range queries for backtesting
 CREATE INDEX IF NOT EXISTS idx_oc_ts
     ON option_chain (ts DESC);
 
 COMMENT ON TABLE option_chain IS
-    'Per-minute option chain. ~52 rows/min (NIFTY+BankNifty, ATM±6, CE+PE). ~5M rows/year.';
+    'Per-minute option chain. Shared across all users (market data). ~52 rows/min. ~5M rows/year.';
 
 
--- ── Per-minute market snapshots ────────────────────────────────────────────────
+-- ── Per-minute market snapshots (shared market data) ──────────────────────────
 CREATE TABLE IF NOT EXISTS market_snapshot (
     id              BIGSERIAL       PRIMARY KEY,
     ts              TIMESTAMPTZ     NOT NULL,
@@ -69,7 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_ms_lookup
     ON market_snapshot (instrument, ts DESC);
 
 COMMENT ON TABLE market_snapshot IS
-    'Derived market-level metrics per minute. Used for range prediction model.';
+    'Derived market-level metrics per minute. Shared across all users. Used for range prediction model.';
 
 
 -- ── Sanity check ──────────────────────────────────────────────────────────────
@@ -77,4 +92,24 @@ SELECT
     'Options schema ready' AS status,
     (SELECT COUNT(*) FROM information_schema.tables
      WHERE table_schema = 'public'
-       AND table_name IN ('kite_tokens', 'option_chain', 'market_snapshot')) AS tables_created;
+       AND table_name IN ('users', 'kite_tokens', 'option_chain', 'market_snapshot')) AS tables_created;
+
+
+-- ============================================================
+--  MIGRATION (existing installs only)
+--  Run these if kite_tokens already exists without user support:
+-- ============================================================
+--
+--  ALTER TABLE kite_tokens DROP CONSTRAINT kite_tokens_pkey;
+--  ALTER TABLE kite_tokens ADD COLUMN zerodha_user_id VARCHAR(20);
+--
+--  -- Create users table first, then insert a placeholder for existing tokens:
+--  -- INSERT INTO users (zerodha_user_id, email, full_name)
+--  --   VALUES ('ADMIN', 'admin@example.com', 'Admin')
+--  --   ON CONFLICT DO NOTHING;
+--  -- UPDATE kite_tokens SET zerodha_user_id = 'ADMIN' WHERE zerodha_user_id IS NULL;
+--
+--  ALTER TABLE kite_tokens ALTER COLUMN zerodha_user_id SET NOT NULL;
+--  ALTER TABLE kite_tokens ADD PRIMARY KEY (zerodha_user_id, token_date);
+--  ALTER TABLE kite_tokens ADD CONSTRAINT fk_kt_user
+--      FOREIGN KEY (zerodha_user_id) REFERENCES users(zerodha_user_id) ON DELETE CASCADE;
