@@ -379,18 +379,22 @@ table.trades-tbl tr:hover td { background: #1c2128; }
           </div>
           <div style="font-size:11px; color:#8b949e; align-self:center;" id="bt-days"></div>
         </div>
-        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px;">
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px;">
           <div style="text-align:center;">
-            <div style="font-size:16px; font-weight:700;" class="green" id="bt-avg-profit">—</div>
+            <div style="font-size:16px; font-weight:700; color:#3fb950;" id="bt-avg-profit">—</div>
             <div style="font-size:10px; color:#8b949e;">Avg Win / lot</div>
           </div>
           <div style="text-align:center;">
-            <div style="font-size:16px; font-weight:700;" class="red" id="bt-avg-loss">—</div>
+            <div style="font-size:16px; font-weight:700; color:#f85149;" id="bt-avg-loss">—</div>
             <div style="font-size:10px; color:#8b949e;">Avg Loss / lot</div>
           </div>
           <div style="text-align:center;">
             <div style="font-size:16px; font-weight:700;" id="bt-expectancy">—</div>
             <div style="font-size:10px; color:#8b949e;">Expectancy / lot</div>
+          </div>
+          <div style="text-align:center; border-left:1px solid #30363d; padding-left:10px;">
+            <div style="font-size:16px; font-weight:700;" id="bt-total-pnl">—</div>
+            <div style="font-size:10px; color:#8b949e;" id="bt-total-pnl-label">Total P&amp;L</div>
           </div>
         </div>
       </div>
@@ -906,6 +910,13 @@ function renderSellSetup(d) {
     var exp = d.expectancy_inr;
     ex.textContent = exp != null ? (exp >= 0 ? '+' : '') + '₹' + fmt(Math.round(exp)) : '—';
     ex.style.color = exp > 0 ? '#3fb950' : exp < 0 ? '#f85149' : '#8b949e';
+    var totalPnl = document.getElementById('bt-total-pnl');
+    var totalPnlLabel = document.getElementById('bt-total-pnl-label');
+    if (d.total_pnl_inr != null) {
+      totalPnl.textContent = (d.total_pnl_inr >= 0 ? '+' : '') + '₹' + fmt(Math.abs(Math.round(d.total_pnl_inr)));
+      totalPnl.style.color = d.total_pnl_inr >= 0 ? '#3fb950' : '#f85149';
+      totalPnlLabel.textContent = 'Total P&L (' + (d.backtest_days || 0) + ' days)';
+    }
   } else {
     btEl.textContent = 'Calculating…';
     btEl.style.color = '#8b949e';
