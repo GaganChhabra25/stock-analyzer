@@ -76,32 +76,48 @@ def _init_schema():
 
 def place_paper_trade(setup: dict) -> dict:
     """
-    Insert 2 legs (CE + PE) for a short strangle paper trade.
-    Returns {"ok": True, "group_id": ..., "ids": [ce_id, pe_id]}
+    Insert legs for a paper trade. Supports both Iron Fly (4 legs) and
+    legacy Short Strangle (2 legs) via setup["legs"] list.
+    Returns {"ok": True, "group_id": ..., "ids": [...]}
     """
     if not is_available():
         return {"ok": False, "error": "Database not available"}
 
     _init_schema()
-    group_id = f"PT-{date.today().strftime('%y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    group_id   = f"PT-{date.today().strftime('%y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    instrument = setup.get("instrument", "NIFTY")
+    lot_size   = setup.get("lot_size", LOT_SIZE)
+    strategy   = setup.get("strategy", "IRON_FLY")
+    net_premium = setup.get("net_premium") or setup.get("total_premium") or 0
 
-    legs = [
-        {
-            "strike":      setup["sell_ce"],
-            "option_type": "CE",
-            "entry_price": setup["ce_ltp"],
-            "sl_price":    setup["ce_sl"],
-            # Individual leg target: 35% of leg premium
-            "target_price": round(setup["ce_ltp"] * 0.65, 1),   # price drops to 65% of entry
-        },
-        {
-            "strike":      setup["sell_pe"],
-            "option_type": "PE",
-            "entry_price": setup["pe_ltp"],
-            "sl_price":    setup["pe_sl"],
-            "target_price": round(setup["pe_ltp"] * 0.65, 1),
-        },
-    ]
+    # Build legs from setup["legs"] (Iron Fly) or fallback to old 2-leg strangle
+    if "legs" in setup:
+        legs_config = []
+        for leg in setup["legs"]:
+            is_sell = leg["action"] == "SELL"
+            ltp     = leg["ltp"] or 0
+            legs_config.append({
+                "strike":       leg["strike"],
+                "option_type":  leg["type"],
+                "direction":    leg["action"],
+                "entry_price":  ltp,
+                "sl_price":     leg.get("sl") or (round(ltp * 2.5, 1) if is_sell else None),
+                "target_price": round(ltp * 0.50, 1) if is_sell else round(ltp * 1.50, 1),
+            })
+    else:
+        # Legacy 2-leg strangle
+        legs_config = [
+            {
+                "strike": setup["sell_ce"], "option_type": "CE", "direction": "SELL",
+                "entry_price": setup["ce_ltp"], "sl_price": setup["ce_sl"],
+                "target_price": round(setup["ce_ltp"] * 0.65, 1),
+            },
+            {
+                "strike": setup["sell_pe"], "option_type": "PE", "direction": "SELL",
+                "entry_price": setup["pe_ltp"], "sl_price": setup["pe_sl"],
+                "target_price": round(setup["pe_ltp"] * 0.65, 1),
+            },
+        ]
 
     ids = []
     try:
@@ -109,30 +125,27 @@ def place_paper_trade(setup: dict) -> dict:
             if conn is None:
                 return {"ok": False, "error": "DB connection failed"}
             with conn.cursor() as cur:
-                for leg in legs:
+                for leg in legs_config:
                     cur.execute("""
                         INSERT INTO intraday_trades
                             (group_id, strategy, trade_type, instrument, expiry,
                              strike, option_type, direction, lots, lot_size,
                              entry_price, target_price, sl_price,
-                             status, setup_prob,
-                             notes)
-                        VALUES (%s,%s,'PAPER','NIFTY',%s,
-                                %s,%s,'SELL',1,%s,
+                             status, setup_prob, notes)
+                        VALUES (%s,%s,'PAPER',%s,%s,
+                                %s,%s,%s,1,%s,
                                 %s,%s,%s,
-                                'OPEN',%s,
-                                %s)
+                                'OPEN',%s,%s)
                         RETURNING id
                     """, (
-                        group_id,
-                        setup["strategy"],
-                        setup["expiry"],
-                        leg["strike"], leg["option_type"],
-                        setup["lot_size"],
+                        group_id, strategy, instrument, setup["expiry"],
+                        leg["strike"], leg["option_type"], leg["direction"],
+                        lot_size,
                         leg["entry_price"], leg["target_price"], leg["sl_price"],
-                        setup["probability"],
-                        f"Entry: {setup['total_premium']:.1f} pts total premium. "
-                        f"Group target: +{setup['target_pts']} pts / SL: -{setup['sl_pts']} pts",
+                        None,   # no fake probability
+                        f"Net premium: {net_premium} pts | "
+                        f"Target: +{setup.get('target_pts',0)} pts | "
+                        f"SL: -{setup.get('sl_pts',0)} pts",
                     ))
                     ids.append(cur.fetchone()[0])
             conn.commit()
@@ -208,14 +221,21 @@ def get_open_trades() -> list:
         t["current_ltp"] = ltp
 
         if ltp is not None and t["entry_price"]:
-            # SELL direction: profit when LTP falls below entry
-            pnl_pts = float(t["entry_price"]) - float(ltp)
+            # Direction-aware P&L: SELL profits when price falls, BUY profits when price rises
+            if t.get("direction", "SELL") == "BUY":
+                pnl_pts = float(ltp) - float(t["entry_price"])
+            else:
+                pnl_pts = float(t["entry_price"]) - float(ltp)
             t["pnl_pts"] = round(pnl_pts, 1)
             t["pnl_inr"] = round(pnl_pts * t["lot_size"] * t["lots"], 0)
 
-            # SL check per leg
-            t["sl_breached"]     = ltp >= float(t["sl_price"])
-            t["target_reached"]  = ltp <= float(t["target_price"])
+            # SL / target check (only meaningful for SELL legs)
+            if t.get("direction", "SELL") == "SELL" and t["sl_price"]:
+                t["sl_breached"]    = ltp >= float(t["sl_price"])
+                t["target_reached"] = ltp <= float(t["target_price"])
+            else:
+                t["sl_breached"]    = False
+                t["target_reached"] = False
         else:
             t["pnl_pts"] = None
             t["pnl_inr"] = None
@@ -300,19 +320,22 @@ def exit_trade(trade_id: int, reason: str = "MANUAL") -> dict:
             with conn.cursor() as cur:
                 # Fetch trade details
                 cur.execute("""
-                    SELECT expiry, strike, option_type, entry_price, lot_size, lots
+                    SELECT expiry, strike, option_type, direction, entry_price, lot_size, lots
                     FROM intraday_trades WHERE id = %s AND status = 'OPEN'
                 """, (trade_id,))
                 row = cur.fetchone()
                 if not row:
                     return {"ok": False, "error": "Trade not found or already closed"}
-                expiry, strike, otype, entry_price, lot_size, lots = row
+                expiry, strike, otype, direction, entry_price, lot_size, lots = row
 
                 ltp = _get_current_ltp(expiry, strike, otype)
                 if ltp is None:
                     ltp = float(entry_price)  # fallback: exit at entry (flat)
 
-                pnl_pts = float(entry_price) - ltp
+                if (direction or "SELL") == "BUY":
+                    pnl_pts = float(ltp) - float(entry_price)
+                else:
+                    pnl_pts = float(entry_price) - float(ltp)
                 pnl_inr = pnl_pts * lot_size * lots
 
                 cur.execute("""

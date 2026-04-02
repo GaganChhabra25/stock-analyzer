@@ -613,70 +613,112 @@ def _fetch_live_ltps(kite, instrument: str, expiry, strikes_types: list) -> dict
         return {"_debug": debug, "_error": str(exc)}
 
 
+@app.route("/api/backtest")
+@login_required
+def api_backtest():
+    """Run Iron Fly backtest using actual DB history. Cached 4 hours server-side."""
+    from options.backtest import backtest_iron_fly, find_optimal_wing_width
+    instrument = request.args.get("instrument", "NIFTY").upper()
+    wing_width = int(request.args.get("wing_width", 200))
+    lookback   = min(int(request.args.get("lookback", 60)), 90)
+    wing_scan  = request.args.get("wing_scan", "false").lower() == "true"
+
+    if wing_scan:
+        result = find_optimal_wing_width(instrument, lookback_days=lookback)
+    else:
+        result = backtest_iron_fly(instrument, wing_width, lookback)
+    return jsonify(result)
+
+
 @app.route("/api/sell-setup")
 @login_required
 def api_sell_setup():
-    """Sell setup with live LTP from Kite for the selected strikes."""
+    """Iron Fly intraday setup with real backtested win rate and live LTPs."""
     import traceback
     try:
         from options.range_predict import fetch_summary, get_nearest_db_expiry
-        from options.intraday_setup import compute_sell_setup
+        from options.intraday_setup import compute_iron_fly_setup
+        from options.backtest import backtest_iron_fly
         from options.kite_auth import get_kite
 
         instrument  = request.args.get("instrument", "NIFTY").upper()
         expiry_type = request.args.get("expiry_type", "weekly").lower()
+        wing_width  = int(request.args.get("wing_width", 200))
 
         expiry = get_nearest_db_expiry(instrument, expiry_type)
-
-        snap = fetch_summary(expiry, instrument)
+        snap   = fetch_summary(expiry, instrument)
         if not snap:
             return jsonify({"error": "DB unavailable or no data yet"}), 503
 
-        setup = compute_sell_setup(snap, expiry, instrument)
+        # Fetch backtest (uses its own 4-hour in-process cache)
+        bt = backtest_iron_fly(instrument, wing_width, lookback_days=60)
+
+        setup = compute_iron_fly_setup(snap, expiry, instrument, wing_width, cached_backtest=bt)
 
         # ── Override LTPs: Kite live → DB last-known → BS approx ─────────────
-        strikes_types = [(setup["sell_ce"], "CE"), (setup["sell_pe"], "PE")]
-        lot = setup["lot_size"]
-
-        # 1. Try Kite live prices (works during + after market hours)
+        all_strikes = [
+            (setup["sell_ce"], "CE"), (setup["sell_pe"], "PE"),
+            (setup["buy_ce"],  "CE"), (setup["buy_pe"],  "PE"),
+        ]
         kite = get_kite()
         prices = {}
-        ltp_source = "bs_approx"
-        if kite:
-            live = _fetch_live_ltps(kite, instrument, expiry, strikes_types)
-            setup["_ltp_debug"] = live.get("_debug", {})
-            prices = {k: v for k, v in live.items() if k != "_debug" and not isinstance(k, str)}
-            if prices:
-                ltp_source = "kite_live" if len(prices) == 2 else "kite_partial"
+        ltp_source = setup.get("ltp_source", "bs_approx")
 
-        # 2. DB fallback: use last collected LTP from option_chain (closing price after hours)
-        if len(prices) < 2:
-            db_prices = _fetch_db_ltps(instrument, expiry, strikes_types)
+        # 1. Kite live
+        if kite:
+            live = _fetch_live_ltps(kite, instrument, expiry, all_strikes)
+            setup["_ltp_debug"] = live.get("_debug", {})
+            prices = {k: v for k, v in live.items()
+                      if k != "_debug" and not isinstance(k, str)}
+            if prices:
+                ltp_source = "kite_live" if len(prices) == 4 else "kite_partial"
+
+        # 2. DB fallback
+        if len(prices) < 4:
+            db_prices = _fetch_db_ltps(instrument, expiry, all_strikes)
             for key, val in db_prices.items():
                 if key not in prices:
                     prices[key] = val
             if db_prices:
-                ltp_source = "db_last" if not prices or ltp_source == "bs_approx" else "kite_partial+db"
+                ltp_source = "db_last" if ltp_source == "bs_approx" else "kite_partial+db"
 
-        # Apply fetched prices to setup
-        ce_price = prices.get((setup["sell_ce"], "CE"))
-        pe_price = prices.get((setup["sell_pe"], "PE"))
-        if ce_price:
-            setup["ce_ltp"] = round(ce_price, 1)
-            setup["ce_sl"]  = round(setup["ce_ltp"] * 3.0, 1)
-        if pe_price:
-            setup["pe_ltp"] = round(pe_price, 1)
-            setup["pe_sl"]  = round(setup["pe_ltp"] * 3.0, 1)
+        # Apply prices to all 4 legs
+        lot = setup["lot_size"]
+        ce_p  = prices.get((setup["sell_ce"], "CE"))
+        pe_p  = prices.get((setup["sell_pe"], "PE"))
+        bce_p = prices.get((setup["buy_ce"],  "CE"))
+        bpe_p = prices.get((setup["buy_pe"],  "PE"))
 
-        # Recompute all derived values
-        total = round((setup["ce_ltp"] or 0) + (setup["pe_ltp"] or 0), 1)
-        setup["total_premium"]   = total
-        setup["target_pts"]      = round(total * 0.35, 1)
-        setup["sl_pts"]          = round(total * 2.0,  1)
-        setup["target_inr"]      = int(setup["target_pts"] * lot)
-        setup["sl_inr"]          = int(setup["sl_pts"]     * lot)
-        setup["max_profit_inr"]  = int(total * lot)
-        setup["ltp_source"]      = ltp_source
+        if ce_p:  setup["ce_ltp"]     = round(ce_p,  1); setup["ce_sl"]  = round(ce_p  * 2.5, 1)
+        if pe_p:  setup["pe_ltp"]     = round(pe_p,  1); setup["pe_sl"]  = round(pe_p  * 2.5, 1)
+        if bce_p: setup["buy_ce_ltp"] = round(bce_p, 1)
+        if bpe_p: setup["buy_pe_ltp"] = round(bpe_p, 1)
+
+        # Recompute net premium + derived values
+        net = round((setup["ce_ltp"] + setup["pe_ltp"])
+                    - (setup["buy_ce_ltp"] + setup["buy_pe_ltp"]), 1)
+        setup["net_premium"]    = net
+        setup["max_profit_pts"] = net
+        setup["max_loss_pts"]   = round(setup["wing_width"] - net, 1)
+        setup["target_pts"]     = round(net * 0.50, 1)
+        setup["sl_pts"]         = round(net, 1)
+        setup["target_inr"]     = int(setup["target_pts"] * lot)
+        setup["sl_inr"]         = int(setup["sl_pts"]     * lot)
+        setup["max_profit_inr"] = int(net * lot)
+        setup["max_loss_inr"]   = int(setup["max_loss_pts"] * lot)
+        setup["ltp_source"]     = ltp_source
+
+        # Rebuild legs with updated prices
+        setup["legs"] = [
+            {"action": "SELL", "strike": setup["sell_ce"], "type": "CE",
+             "ltp": setup["ce_ltp"],    "sl": setup["ce_sl"]},
+            {"action": "SELL", "strike": setup["sell_pe"], "type": "PE",
+             "ltp": setup["pe_ltp"],    "sl": setup["pe_sl"]},
+            {"action": "BUY",  "strike": setup["buy_ce"],  "type": "CE",
+             "ltp": setup["buy_ce_ltp"], "sl": None},
+            {"action": "BUY",  "strike": setup["buy_pe"],  "type": "PE",
+             "ltp": setup["buy_pe_ltp"], "sl": None},
+        ]
 
         setup["expiry"] = str(setup["expiry"])
         return jsonify(setup)
@@ -688,15 +730,17 @@ def api_sell_setup():
 @app.route("/api/paper-trade", methods=["POST"])
 @login_required
 def api_paper_trade():
-    """Place a paper trade for the sell setup."""
+    """Place a paper trade for the Iron Fly setup."""
     from options.range_predict import fetch_summary, get_nearest_db_expiry
-    from options.intraday_setup import compute_sell_setup
+    from options.intraday_setup import compute_iron_fly_setup
+    from options.backtest import backtest_iron_fly
     from options.trade_executor import place_paper_trade
     from datetime import datetime as _dt
 
     data        = request.get_json(silent=True) or {}
     instrument  = data.get("instrument", "NIFTY").upper()
     expiry_type = data.get("expiry_type", "weekly").lower()
+    wing_width  = int(data.get("wing_width", 200))
 
     expiry_str = data.get("expiry")
     if expiry_str:
@@ -708,7 +752,8 @@ def api_paper_trade():
     if not snap:
         return jsonify({"ok": False, "error": "DB unavailable"}), 503
 
-    setup = compute_sell_setup(snap, expiry, instrument)
+    bt    = backtest_iron_fly(instrument, wing_width, lookback_days=60)
+    setup = compute_iron_fly_setup(snap, expiry, instrument, wing_width, cached_backtest=bt)
     result = place_paper_trade(setup)
     return jsonify(result), (200 if result["ok"] else 500)
 

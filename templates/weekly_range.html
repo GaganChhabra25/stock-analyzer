@@ -355,13 +355,47 @@ table.trades-tbl tr:hover td { background: #1c2128; }
       <!-- Header -->
       <div class="sell-header">
         <div class="sell-title">
-          <span id="ss-title">Short Strangle (Intraday)</span>
-          <span class="prob-badge" id="prob-badge">—%</span>
+          <span id="ss-title">Iron Fly (Intraday)</span>
+          <span id="wing-badge" style="font-size:11px; background:rgba(88,166,255,0.1); border:1px solid rgba(88,166,255,0.25); color:#58a6ff; padding:3px 10px; border-radius:99px; font-weight:700;">±200 pts wing</span>
         </div>
-        <div style="font-size:11px; color:#8b949e;" id="ss-meta">Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS</div>
+        <div style="font-size:11px; color:#8b949e;" id="ss-meta">Hard exit: 3:10 PM &nbsp;|&nbsp; Product: MIS &nbsp;|&nbsp; <span id="ss-ltp-src">—</span></div>
       </div>
 
-      <!-- Strategy Legs Table (Zerodha-style) -->
+      <!-- DO NOT TRADE banner (shown when VIX too high) -->
+      <div id="dnt-banner" style="display:none; background:rgba(248,81,73,0.12); border:1px solid rgba(248,81,73,0.4); border-radius:10px; padding:14px 20px; margin-bottom:18px; align-items:center; gap:12px;">
+        <div style="font-size:22px;">🚫</div>
+        <div>
+          <div style="font-size:13px; font-weight:700; color:#f85149;">DO NOT TRADE TODAY</div>
+          <div style="font-size:11px; color:#8b949e; margin-top:2px;" id="dnt-reason">—</div>
+        </div>
+      </div>
+
+      <!-- Backtested Win Rate panel (replaces fake probability) -->
+      <div style="background:#0d1117; border:1px solid #30363d; border-radius:10px; padding:14px 18px; margin-bottom:18px;">
+        <div style="display:flex; align-items:baseline; gap:20px; margin-bottom:10px; flex-wrap:wrap;">
+          <div>
+            <div style="font-size:10px; color:#8b949e; text-transform:uppercase; letter-spacing:0.6px; margin-bottom:2px;">Backtested Win Rate</div>
+            <div id="bt-winrate" style="font-size:32px; font-weight:900; color:#8b949e;">—</div>
+          </div>
+          <div style="font-size:11px; color:#8b949e; align-self:center;" id="bt-days"></div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px;">
+          <div style="text-align:center;">
+            <div style="font-size:16px; font-weight:700;" class="green" id="bt-avg-profit">—</div>
+            <div style="font-size:10px; color:#8b949e;">Avg Win / lot</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:16px; font-weight:700;" class="red" id="bt-avg-loss">—</div>
+            <div style="font-size:10px; color:#8b949e;">Avg Loss / lot</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:16px; font-weight:700;" id="bt-expectancy">—</div>
+            <div style="font-size:10px; color:#8b949e;">Expectancy / lot</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Strategy Legs Table (Zerodha-style, now 4 legs) -->
       <div class="strat-legs-wrap" id="ss-legs-table">
         <div class="strat-legs-hdr">
           <span>B/S</span><span>Expiry</span><span>Strike</span>
@@ -373,27 +407,27 @@ table.trades-tbl tr:hover td { background: #1c2128; }
       <!-- Metrics -->
       <div class="sell-metrics">
         <div class="metric">
-          <div class="metric-label">Total Premium</div>
+          <div class="metric-label">Net Premium</div>
           <div class="metric-value blue" id="ss-premium">—</div>
         </div>
         <div class="metric">
-          <div class="metric-label">Target (+35%)</div>
+          <div class="metric-label">Target (50% decay)</div>
           <div class="metric-value green" id="ss-target">—</div>
         </div>
         <div class="metric">
-          <div class="metric-label">Stop-Loss (2×)</div>
+          <div class="metric-label">Stop-Loss (1× net)</div>
           <div class="metric-value red" id="ss-sl">—</div>
         </div>
         <div class="metric">
-          <div class="metric-label">Max Profit (1 lot)</div>
-          <div class="metric-value" id="ss-maxprofit">—</div>
+          <div class="metric-label">Max Loss (defined)</div>
+          <div class="metric-value red" id="ss-maxloss">—</div>
         </div>
       </div>
 
       <!-- P&L Payoff Chart -->
       <div class="payoff-wrap">
         <div class="payoff-hdr">
-          <div class="payoff-title">P&amp;L at Expiry — Short Strangle</div>
+          <div class="payoff-title">P&amp;L at Expiry — Iron Fly</div>
           <div class="payoff-legend">
             <span><i style="background:#3fb950;"></i> Profit zone</span>
             <span><i style="background:#f85149;"></i> Loss zone</span>
@@ -416,7 +450,7 @@ table.trades-tbl tr:hover td { background: #1c2128; }
           📝 Paper Trade
         </button>
         <span style="font-size:11px; color:#8b949e;">
-          Stores to DB → auto-exit on target / SL / 3:15 PM
+          Stores to DB → auto-exit on target / SL / 3:10 PM
         </span>
       </div>
     </div>
@@ -821,31 +855,69 @@ function loadSellSetup() {
 }
 
 function renderSellSetup(d) {
-  var instrLabel = d.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
-  var f = getFilters();
+  var instrLabel  = d.instrument === 'BANKNIFTY' ? 'Bank Nifty' : 'Nifty';
+  var f           = getFilters();
   var expiryLabel = f.expiry_type === 'monthly' ? 'Monthly' : 'Weekly';
+
   document.getElementById('setup-section-title').textContent =
-    instrLabel + ' — ' + expiryLabel + ' Intraday Sell Setup';
-  document.getElementById('ss-title').textContent =
-    instrLabel + ' Short Strangle (Intraday)';
-  var srcBadge = d.ltp_source === 'kite_live'
-    ? '<span style="color:#3fb950;font-weight:700;">● Live</span>'
-    : '<span style="color:#e3b341;">~ Est.</span>';
+    instrLabel + ' — ' + expiryLabel + ' Intraday Iron Fly';
+  document.getElementById('ss-title').textContent = instrLabel + ' Iron Fly (Intraday)';
+  document.getElementById('wing-badge').textContent = '±' + (d.wing_width || 200) + ' pts wing';
+
+  // LTP source indicator
+  var srcLabel = {
+    'kite_live':       '● Live (Kite)',
+    'kite_partial':    '◑ Partial Live',
+    'db_last':         '○ Last Close (DB)',
+    'kite_partial+db': '◑ Mixed',
+    'bs_approx':       '~ Estimated (BS)',
+  }[d.ltp_source] || d.ltp_source || '—';
+  var srcColor = d.ltp_source === 'kite_live' ? '#3fb950'
+               : d.ltp_source === 'bs_approx' ? '#f85149' : '#e3b341';
+  document.getElementById('ss-ltp-src').innerHTML =
+    '<span style="color:' + srcColor + ';font-weight:700;">' + srcLabel + '</span>';
   document.getElementById('ss-meta').innerHTML =
     'Expiry: <b>' + (d.expiry || '—') + '</b> &nbsp;|&nbsp; Lot: ' + (d.lot_size || '—') +
-    ' &nbsp;|&nbsp; Price: ' + srcBadge +
-    ' &nbsp;|&nbsp; Hard exit: 3:15 PM &nbsp;|&nbsp; Product: MIS';
+    ' &nbsp;|&nbsp; ' + document.getElementById('ss-ltp-src').outerHTML +
+    ' &nbsp;|&nbsp; Hard exit: 3:10 PM &nbsp;|&nbsp; MIS';
 
-  // Probability badge
-  var prob = d.probability;
-  var badge = document.getElementById('prob-badge');
-  badge.textContent = prob + '% win probability';
-  badge.className = 'prob-badge ' + (prob >= 75 ? 'prob-high' : prob >= 65 ? 'prob-med' : 'prob-low');
+  // ── DO NOT TRADE banner ────────────────────────────────────────────────────
+  var dnt = document.getElementById('dnt-banner');
+  if (d.do_not_trade) {
+    dnt.style.display = 'flex';
+    document.getElementById('dnt-reason').textContent = d.do_not_trade_reason || '';
+  } else {
+    dnt.style.display = 'none';
+  }
 
-  // ── Strategy Legs Table (Zerodha-style) ────────────────────────────────────
-  var spot = (_lastRangeData && _lastRangeData.spot) ? _lastRangeData.spot : 0;
+  // ── Backtested Win Rate ────────────────────────────────────────────────────
+  var btEl  = document.getElementById('bt-winrate');
+  var btDay = document.getElementById('bt-days');
+  if (d.win_rate != null) {
+    btEl.textContent = d.win_rate.toFixed(1) + '%';
+    btEl.style.color = d.win_rate >= 60 ? '#3fb950' : d.win_rate >= 45 ? '#e3b341' : '#f85149';
+    var qual = d.backtest_quality === 'limited' ? ' ⚠ limited data' : '';
+    btDay.textContent = 'Based on ' + (d.backtest_days || 0) + ' trading days' + qual;
+    var ap = document.getElementById('bt-avg-profit');
+    var al = document.getElementById('bt-avg-loss');
+    var ex = document.getElementById('bt-expectancy');
+    ap.textContent = d.avg_profit_inr != null ? '₹' + fmt(Math.abs(Math.round(d.avg_profit_inr))) : '—';
+    al.textContent = d.avg_loss_inr   != null ? '−₹' + fmt(Math.abs(Math.round(d.avg_loss_inr)))  : '—';
+    var exp = d.expectancy_inr;
+    ex.textContent = exp != null ? (exp >= 0 ? '+' : '') + '₹' + fmt(Math.round(exp)) : '—';
+    ex.style.color = exp > 0 ? '#3fb950' : exp < 0 ? '#f85149' : '#8b949e';
+  } else {
+    btEl.textContent = 'Calculating…';
+    btEl.style.color = '#8b949e';
+    btDay.textContent = d.backtest_quality === 'insufficient'
+      ? 'Need at least 5 days of DB data' : 'Loading backtest…';
+    ['bt-avg-profit','bt-avg-loss','bt-expectancy'].forEach(function(id) {
+      document.getElementById(id).textContent = '—';
+    });
+  }
+
+  // ── Strategy Legs Table (4 legs) ──────────────────────────────────────────
   var expiryShort = (d.expiry || '').replace(/^\d{4}-/, '').replace('-', ' ');
-  // Try to format like "07 Apr"
   try {
     var parts = (d.expiry || '').split('-');
     if (parts.length === 3) {
@@ -855,39 +927,42 @@ function renderSellSetup(d) {
   } catch(e) {}
 
   var legsHtml = '';
-  [{strike: d.sell_ce, type:'CE', ltp: d.ce_ltp, sl: d.ce_sl},
-   {strike: d.sell_pe, type:'PE', ltp: d.pe_ltp, sl: d.pe_sl}].forEach(function(leg) {
+  (d.legs || []).forEach(function(leg) {
+    var isSell    = leg.action === 'SELL';
+    var badgeHtml = isSell
+      ? '<span class="sell-badge">S</span>'
+      : '<span style="background:rgba(63,185,80,0.15);color:#3fb950;border:1px solid rgba(63,185,80,0.35);padding:3px 8px;border-radius:5px;font-size:11px;font-weight:800;">B</span>';
     var typeClass = leg.type === 'CE' ? 'strat-type-ce' : 'strat-type-pe';
+    var slCell    = (isSell && leg.sl != null)
+      ? '<div class="strat-sl">SL&nbsp;' + leg.sl.toFixed(1) + '</div>'
+      : '<div></div>';
     legsHtml +=
       '<div class="strat-leg-row">' +
-        '<div><span class="sell-badge">S</span></div>' +
+        '<div>' + badgeHtml + '</div>' +
         '<div class="strat-expiry">' + expiryShort + '</div>' +
-        '<div class="strat-strike-cell">' +
-          '<span class="strat-strike">' + fmt(leg.strike) + '</span>' +
-        '</div>' +
+        '<div class="strat-strike-cell"><span class="strat-strike">' + fmt(leg.strike) + '</span></div>' +
         '<div><span class="' + typeClass + '">' + leg.type + '</span></div>' +
         '<div class="strat-lots">1</div>' +
         '<div class="strat-price">' + (leg.ltp != null ? leg.ltp.toFixed(1) : '—') + '</div>' +
-        '<div class="strat-sl" title="SL: ' + (leg.sl || '—') + '">SL&nbsp;' + (leg.sl != null ? leg.sl.toFixed(1) : '—') + '</div>' +
+        slCell +
       '</div>';
   });
 
   var table = document.getElementById('ss-legs-table');
-  // keep header, replace rows
-  var hdr = table.querySelector('.strat-legs-hdr');
+  var hdr   = table.querySelector('.strat-legs-hdr');
   table.innerHTML = '';
   if (hdr) table.appendChild(hdr);
   table.insertAdjacentHTML('beforeend', legsHtml);
 
   // ── Metrics ────────────────────────────────────────────────────────────────
-  document.getElementById('ss-premium').textContent   = d.total_premium + ' pts';
-  document.getElementById('ss-target').textContent    = '+' + d.target_pts + ' pts (₹' + fmt(d.target_inr) + ')';
-  document.getElementById('ss-sl').textContent        = '-' + d.sl_pts + ' pts (₹' + fmt(d.sl_inr) + ')';
-  document.getElementById('ss-maxprofit').textContent = '₹' + fmt(d.max_profit_inr) + ' / lot';
+  document.getElementById('ss-premium').textContent = (d.net_premium || 0) + ' pts';
+  document.getElementById('ss-target').textContent  = '+' + (d.target_pts || 0) + ' pts (₹' + fmt(d.target_inr || 0) + ')';
+  document.getElementById('ss-sl').textContent      = '−' + (d.sl_pts || 0) + ' pts (₹' + fmt(d.sl_inr || 0) + ')';
+  document.getElementById('ss-maxloss').textContent = '₹' + fmt(d.max_loss_inr || 0) + ' / lot';
 
   // ── Tech badges ────────────────────────────────────────────────────────────
-  var tb = document.getElementById('ss-tech-badges');
-  var t = d.tech || {};
+  var tb     = document.getElementById('ss-tech-badges');
+  var t      = d.tech || {};
   var badges = [];
   if (t.trend) {
     var tc = t.trend === 'BULLISH' ? '#3fb950' : t.trend === 'BEARISH' ? '#f85149' : '#e3b341';
@@ -895,10 +970,15 @@ function renderSellSetup(d) {
   }
   if (t.vwap_bias) badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:#58a6ff;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">VWAP: ' + t.vwap_bias + '</span>');
   if (t.rsi15 != null) {
-    var rc = t.rsi15 > 72 ? '#f85149' : t.rsi15 < 28 ? '#f85149' : '#3fb950';
+    var rc = (t.rsi15 > 72 || t.rsi15 < 28) ? '#f85149' : '#3fb950';
     badges.push('<span style="background:rgba(88,166,255,0.1);border:1px solid rgba(88,166,255,0.3);color:' + rc + ';padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">RSI ' + t.rsi15 + '</span>');
   }
   if (t.bb_squeeze) badges.push('<span style="background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:#f85149;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">⚠ BB Squeeze</span>');
+  // VIX warning badge
+  var vw = d.vix_warning || {};
+  if (vw.warn && !d.do_not_trade) {
+    badges.push('<span style="background:rgba(227,179,65,0.1);border:1px solid rgba(227,179,65,0.3);color:#e3b341;padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">⚠ ' + vw.message + '</span>');
+  }
   tb.innerHTML = badges.join('');
   tb.style.display = badges.length ? 'flex' : 'none';
 
@@ -924,23 +1004,30 @@ function drawPayoffChart(d) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   var spot    = (_lastRangeData && _lastRangeData.spot) ? _lastRangeData.spot : d.atm;
-  var ce      = d.sell_ce,  pe      = d.sell_pe;
-  var ce_ltp  = d.ce_ltp || 0, pe_ltp = d.pe_ltp || 0;
-  var lot     = d.lot_size || 75;
-  var sigma   = d.sigma_pts || 300;
+  var atm     = d.atm || spot;
+  var wing    = d.wing_width || 200;
+  var ce_ltp  = d.ce_ltp    || 0;
+  var pe_ltp  = d.pe_ltp    || 0;
+  var bce_ltp = d.buy_ce_ltp || 0;
+  var bpe_ltp = d.buy_pe_ltp || 0;
+  var lot     = d.lot_size  || 75;
 
-  var total_premium = ce_ltp + pe_ltp;
-  var be_upper = ce + total_premium;   // upper breakeven
-  var be_lower = pe - total_premium;   // lower breakeven
-  var max_profit_inr = total_premium * lot;
+  var net_premium  = d.net_premium || (ce_ltp + pe_ltp - bce_ltp - bpe_ltp);
+  var max_loss_pts = wing - net_premium;
+  var max_profit_inr = net_premium * lot;
+  var max_loss_inr   = max_loss_pts * lot;
 
-  // X axis: spot ± 2.5σ, widened to include breakevens
-  var x_lo = Math.min(spot - 2.5 * sigma, be_lower - 100);
-  var x_hi = Math.max(spot + 2.5 * sigma, be_upper + 100);
+  // X axis: ATM ± 1.5× wing
+  var x_lo = atm - wing * 1.6;
+  var x_hi = atm + wing * 1.6;
 
-  // P&L at expiry
+  // Iron Fly P&L at expiry (all 4 legs)
   function pnl(s) {
-    return ((ce_ltp - Math.max(s - ce, 0)) + (pe_ltp - Math.max(pe - s, 0))) * lot;
+    var sell_ce_pnl = ce_ltp  - Math.max(s - atm, 0);
+    var sell_pe_pnl = pe_ltp  - Math.max(atm - s, 0);
+    var buy_ce_pnl  = Math.max(s - (atm + wing), 0) - bce_ltp;
+    var buy_pe_pnl  = Math.max((atm - wing) - s, 0) - bpe_ltp;
+    return (sell_ce_pnl + sell_pe_pnl + buy_ce_pnl + buy_pe_pnl) * lot;
   }
 
   var N = 200;
@@ -949,8 +1036,8 @@ function drawPayoffChart(d) {
     var s = x_lo + (x_hi - x_lo) * i / N;
     xs.push(s); ys.push(pnl(s));
   }
-  var yMax =  max_profit_inr * 1.15;
-  var yMin = -max_profit_inr * 2.2;
+  var yMax =  max_profit_inr * 1.3;
+  var yMin = -max_loss_inr   * 1.4;
 
   // Canvas layout
   var W = canvas.width, H = canvas.height;
@@ -1296,8 +1383,8 @@ function renderHistory(rows) {
     var inr = r.total_pnl_inr != null ? (r.total_pnl_inr >= 0 ? '+₹' : '-₹') + Math.abs(Math.round(r.total_pnl_inr)).toLocaleString('en-IN') : '—';
     html += '<tr>' +
       '<td>' + (r.trade_date || '—') + '</td>' +
-      '<td style="font-size:11px;">Short Strangle</td>' +
-      '<td>' + (r.probability != null ? r.probability + '%' : '—') + '</td>' +
+      '<td style="font-size:11px;">' + (r.strategy || 'Iron Fly') + '</td>' +
+      '<td>—</td>' +
       '<td class="' + pnlCls + '">' + pts + '</td>' +
       '<td class="' + pnlCls + '">' + inr + '</td>' +
       '<td><span class="reason-tag ' + reasonCls + '">' + (r.exit_reason || '—') + '</span></td>' +
