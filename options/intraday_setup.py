@@ -241,6 +241,7 @@ def compute_iron_fly_setup(
     avg_profit_inr  = bt.get("avg_profit_inr")
     avg_loss_inr    = bt.get("avg_loss_inr")
     expectancy_inr  = bt.get("expectancy_inr")
+    total_pnl_inr   = bt.get("total_pnl_inr")
     backtest_days   = bt.get("days_tested")
 
     # ── Reasoning ─────────────────────────────────────────────────────────────
@@ -308,6 +309,7 @@ def compute_iron_fly_setup(
         "avg_profit_inr":   avg_profit_inr,
         "avg_loss_inr":     avg_loss_inr,
         "expectancy_inr":   expectancy_inr,
+        "total_pnl_inr":    total_pnl_inr,
         "backtest_days":    backtest_days,
         "backtest_quality": bt_quality,
 
