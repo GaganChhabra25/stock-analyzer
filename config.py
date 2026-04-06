@@ -58,6 +58,39 @@ REPORT_OUTPUT_FILE    = "reports/analysis_report.txt"
 HTML_REPORT_FILE      = "reports/portfolio_report.html"
 
 # ============================================================
+#  NSE TRADING HOLIDAYS
+#  Update this list each year with official NSE holiday calendar.
+#  Format: "YYYY-MM-DD"
+# ============================================================
+
+NSE_HOLIDAYS = {
+    # 2025
+    "2025-01-26",  # Republic Day
+    "2025-03-14",  # Holi
+    "2025-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
+    "2025-04-18",  # Good Friday
+    "2025-05-01",  # Maharashtra Day
+    "2025-08-15",  # Independence Day
+    "2025-10-02",  # Gandhi Jayanti
+    "2025-10-02",  # Gandhi Jayanti / Mahatma Gandhi Jayanti
+    "2025-10-24",  # Dussehra
+    "2025-11-05",  # Diwali Balipratipada
+    "2025-11-15",  # Gurunanak Jayanti
+    "2025-12-25",  # Christmas
+    # 2026
+    "2026-01-26",  # Republic Day
+    "2026-03-03",  # Holi
+    "2026-04-03",  # Good Friday
+    "2026-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
+    "2026-05-01",  # Maharashtra Day
+    "2026-10-02",  # Gandhi Jayanti
+    "2026-10-22",  # Dussehra (tentative)
+    "2026-11-14",  # Diwali Laxmi Puja (tentative)
+    "2026-11-15",  # Diwali Balipratipada (tentative)
+    "2026-12-25",  # Christmas
+}
+
+# ============================================================
 #  GOOGLE OAUTH — Allowed email addresses
 #  Only these Google accounts can log in to the web app.
 #  You can also set ALLOWED_EMAILS env var (comma-separated)

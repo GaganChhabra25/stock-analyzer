@@ -87,7 +87,7 @@ CONFIRM="${CONFIRM:-Y}"
 echo ""
 
 # ── 1. System packages ────────────────────────────────────────────────────────
-info "[1/9] Installing system packages..."
+info "[1/10] Installing system packages..."
 apt-get update -qq
 apt-get install -y \
     python3 python3-pip python3-venv python3-dev \
@@ -99,7 +99,7 @@ systemctl start  postgresql nginx
 success "System packages installed (Python $(python3 --version), PostgreSQL $(psql --version | awk '{print $3}'))."
 
 # ── 2. App user ───────────────────────────────────────────────────────────────
-info "[2/9] Creating app user '$APP_USER'..."
+info "[2/10] Creating app user '$APP_USER'..."
 if id "$APP_USER" &>/dev/null; then
     info "User '$APP_USER' already exists — skipping."
 else
@@ -108,7 +108,7 @@ else
 fi
 
 # ── 3. Clone repo ─────────────────────────────────────────────────────────────
-info "[3/9] Cloning repo..."
+info "[3/10] Cloning repo..."
 if [ -d "$APP_DIR/.git" ]; then
     info "Repo already exists — pulling latest..."
     sudo -u "$APP_USER" git -C "$APP_DIR" pull
@@ -118,7 +118,7 @@ fi
 success "Repo ready at $APP_DIR"
 
 # ── 4. Python venv + dependencies ────────────────────────────────────────────
-info "[4/9] Setting up Python venv..."
+info "[4/10] Setting up Python venv..."
 sudo -u "$APP_USER" python3 -m venv "$VENV"
 sudo -u "$APP_USER" "$VENV/bin/pip" install --upgrade pip -q
 sudo -u "$APP_USER" "$VENV/bin/pip" install -r "$APP_DIR/requirements.txt" -q
@@ -127,7 +127,7 @@ sudo -u "$APP_USER" "$VENV/bin/pip" install kiteconnect -q
 success "Python environment ready."
 
 # ── 5. PostgreSQL setup + tuning ──────────────────────────────────────────────
-info "[5/9] Configuring PostgreSQL (tuned for 8 GB RAM)..."
+info "[5/10] Configuring PostgreSQL (tuned for 8 GB RAM)..."
 
 # Create user + database
 sudo -u postgres psql <<SQL
@@ -176,7 +176,7 @@ sudo -u "$APP_USER" PGPASSWORD="$DB_PASS" psql \
 success "Schema applied."
 
 # ── 6. Write .env ─────────────────────────────────────────────────────────────
-info "[6/9] Writing .env..."
+info "[6/10] Writing .env..."
 FLASK_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 DB_URL="postgresql://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME"
 
@@ -204,7 +204,7 @@ chown "$APP_USER:$APP_USER" "$APP_DIR/.env"
 success ".env written."
 
 # ── 7. Log directory + systemd service ───────────────────────────────────────
-info "[7/9] Installing systemd service..."
+info "[7/10] Installing systemd service..."
 mkdir -p "$APP_DIR/logs"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR/logs"
 
@@ -244,7 +244,7 @@ else
 fi
 
 # ── 8. Nginx ──────────────────────────────────────────────────────────────────
-info "[8/9] Configuring Nginx..."
+info "[8/10] Configuring Nginx..."
 
 tee /etc/nginx/sites-available/stock-analyzer > /dev/null <<NGINX
 server {
@@ -272,8 +272,20 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 success "Nginx configured."
 
-# ── 9. Cron jobs ──────────────────────────────────────────────────────────────
-info "[9/9] Installing cron jobs..."
+# ── 9. Authorized SSH keys (for DBeaver / remote access) ─────────────────────
+info "[9/10] Adding authorized SSH keys..."
+
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
+
+# Gagan's local machine key — add more keys here as needed
+GAGAN_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPDD6kCCXy5SdITNzO15LkcVjHzFfAPzOJitjpWBdpxz gagan.chhabra1990@gmail.com"
+grep -qxF "$GAGAN_KEY" /root/.ssh/authorized_keys || echo "$GAGAN_KEY" >> /root/.ssh/authorized_keys
+
+success "SSH keys added."
+
+# ── 10. Cron jobs ─────────────────────────────────────────────────────────────
+info "[10/10] Installing cron jobs..."
 
 SCREENER_CRON="0 3 * * 1-6 cd $APP_DIR && $VENV/bin/python run_screener.py --no-open >> $APP_DIR/logs/screener.log 2>&1"
 

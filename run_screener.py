@@ -215,17 +215,18 @@ def main():
         except Exception as e:
             print(f"  DB: save failed — {e}")
 
-    # ── Send Telegram alert ────────────────────────────────────────────────────
-    if tg_configured() and mkt_overview:
-        try:
-            ok = send_predictions(mkt_overview, accuracy_rows)
-            print(f"  Telegram: alert {'sent ✓' if ok else 'failed ✗'}")
-        except Exception as e:
-            print(f"  Telegram: send failed — {e}")
-            try:
-                send_error("run_screener.py", str(e))
-            except Exception:
-                pass
+    # ── Send Telegram alert (disabled) ────────────────────────────────────────
+    # Uncomment to re-enable market prediction alerts on Telegram
+    # if tg_configured() and mkt_overview:
+    #     try:
+    #         ok = send_predictions(mkt_overview, accuracy_rows)
+    #         print(f"  Telegram: alert {'sent ✓' if ok else 'failed ✗'}")
+    #     except Exception as e:
+    #         print(f"  Telegram: send failed — {e}")
+    #         try:
+    #             send_error("run_screener.py", str(e))
+    #         except Exception:
+    #             pass
 
     # ── Generate HTML report ───────────────────────────────────────────────────
     print(f"\n  Generating HTML report…")

@@ -54,10 +54,15 @@ VIX_SYMBOL = "NSE:INDIA VIX"
 
 
 def is_market_open() -> bool:
-    """Return True if current IST time is within market hours."""
+    """Return True if current IST time is within market hours and today is not an NSE holiday."""
     from zoneinfo import ZoneInfo
-    now_ist = datetime.now(ZoneInfo("Asia/Kolkata")).time()
-    return MARKET_OPEN <= now_ist <= MARKET_CLOSE
+    from config import NSE_HOLIDAYS
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    today_str = now_ist.date().strftime("%Y-%m-%d")
+    if today_str in NSE_HOLIDAYS:
+        logger.info("NSE holiday (%s) — skipping collection.", today_str)
+        return False
+    return MARKET_OPEN <= now_ist.time() <= MARKET_CLOSE
 
 
 def days_to_expiry(expiry) -> float:
