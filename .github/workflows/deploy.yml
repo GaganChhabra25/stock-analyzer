@@ -35,8 +35,8 @@ jobs:
             if [ ! -d $DEPLOY_DIR/.git ]; then
               sudo -u stockapp git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git $DEPLOY_DIR
             else
-              sudo -u stockapp git -C $DEPLOY_DIR reset --hard HEAD
-              sudo -u stockapp git -C $DEPLOY_DIR pull https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git
+              sudo -u stockapp git -C $DEPLOY_DIR fetch https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git master
+              sudo -u stockapp git -C $DEPLOY_DIR reset --hard FETCH_HEAD
             fi
             # Install dependencies
             sudo -u stockapp $VENV/bin/pip install -r $DEPLOY_DIR/requirements.txt -q
