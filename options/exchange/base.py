@@ -175,7 +175,6 @@ class ExchangeCollector(ABC):
                 ltp    = quote.get("last_price", 0) or 0
                 volume = quote.get("volume", 0) or 0
                 oi     = quote.get("oi", 0) or 0
-                oi_chg = (quote.get("oi", 0) or 0) - (quote.get("oi_day_low", 0) or 0)
                 depth  = quote.get("depth", {})
                 bid    = depth.get("buy",  [{}])[0].get("price") if depth else None
                 ask    = depth.get("sell", [{}])[0].get("price") if depth else None
@@ -189,7 +188,7 @@ class ExchangeCollector(ABC):
                     "ts": ts, "instrument": symbol, "expiry": row_expiry,
                     "strike": strike, "option_type": opt_type,
                     "ltp": ltp, "bid": bid, "ask": ask,
-                    "oi": oi, "oi_change": oi_chg, "volume": volume,
+                    "oi": oi, "oi_change": 0, "volume": volume,  # oi_change filled below
                     "iv": iv,
                     "delta": greeks["delta"], "gamma": greeks["gamma"],
                     "theta": greeks["theta"], "vega": greeks["vega"],
@@ -205,6 +204,9 @@ class ExchangeCollector(ABC):
             if not option_rows:
                 continue
 
+            # Fill per-minute OI change by comparing against last stored OI
+            self._fill_oi_changes(ts, symbol, option_rows)
+
             self._insert_option_rows(option_rows)
             rows_inserted += len(option_rows)
             self._insert_snapshot(ts, symbol, spot, vix, atm, option_rows, call_oi, put_oi)
@@ -218,6 +220,41 @@ class ExchangeCollector(ABC):
         return rows_inserted
 
     # ── DB writers (shared, not overridable) ──────────────────────────────────
+
+    @staticmethod
+    def _fill_oi_changes(ts: datetime, symbol: str, option_rows: list) -> None:
+        """
+        Compute per-minute OI delta for each row.
+
+        Fetches the most recent OI stored in DB for each
+        (instrument, expiry, strike, option_type) before the current ts,
+        then sets oi_change = current_oi − previous_oi.
+
+        First collection of the day gets oi_change = 0 (no previous row exists).
+        This replaces the old broken formula: oi − oi_day_low.
+        """
+        with _get_conn() as conn:
+            if conn is None:
+                return
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT ON (expiry, strike, option_type)
+                        expiry, strike, option_type, oi
+                    FROM option_chain
+                    WHERE instrument = %s
+                      AND ts::date   = %s
+                      AND ts         < %s
+                    ORDER BY expiry, strike, option_type, ts DESC
+                """, (symbol, ts.date(), ts))
+                prev_oi = {
+                    (row[0], int(row[1]), row[2]): row[3]
+                    for row in cur.fetchall()
+                }
+
+        for row in option_rows:
+            key  = (row["expiry"], int(row["strike"]), row["option_type"])
+            prev = prev_oi.get(key)
+            row["oi_change"] = (row["oi"] - prev) if prev is not None else 0
 
     @staticmethod
     def _insert_option_rows(rows: list) -> None:

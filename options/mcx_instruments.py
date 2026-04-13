@@ -73,6 +73,12 @@ def load_mcx_instruments(kite) -> pd.DataFrame:
     return df
 
 
+# Days before expiry at which we start also collecting next-month options.
+# Traders roll positions to next month in this window, so next-month
+# liquidity starts building up.
+MCX_ROLLOVER_DAYS = 5
+
+
 def get_mcx_nearest_options_expiry(df: pd.DataFrame, symbol: str) -> Optional[date]:
     """
     Return the nearest upcoming expiry for MCX options (CE/PE).
@@ -85,6 +91,34 @@ def get_mcx_nearest_options_expiry(df: pd.DataFrame, symbol: str) -> Optional[da
     expiries = sorted(opt_df["expiry"].unique())
     future = [e for e in expiries if e >= today]
     return future[0] if future else None
+
+
+def get_mcx_options_expiries(df: pd.DataFrame, symbol: str) -> list:
+    """
+    Return the list of MCX option expiries to collect for symbol.
+
+    Normally returns [current_expiry].
+    Within MCX_ROLLOVER_DAYS (5 days) of expiry, also includes next-month
+    expiry so rollover liquidity is captured.
+
+    Example:
+      Apr 11 (5 days before Apr 16 expiry) → [Apr 16, May 21]
+      Apr 10 (6 days before) → [Apr 16]
+    """
+    today = date.today()
+    opt_df = df[(df["name"] == symbol) & (df["instrument_type"].isin(["CE", "PE"]))]
+    expiries = sorted(e for e in opt_df["expiry"].unique() if e >= today)
+
+    if not expiries:
+        return []
+
+    nearest = expiries[0]
+    days_left = (nearest - today).days
+
+    if days_left <= MCX_ROLLOVER_DAYS and len(expiries) >= 2:
+        return [nearest, expiries[1]]
+
+    return [nearest]
 
 
 def _get_mcx_nearest_futures_expiry(df: pd.DataFrame, symbol: str) -> Optional[date]:
