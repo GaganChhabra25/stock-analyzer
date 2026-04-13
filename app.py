@@ -624,14 +624,56 @@ def _fetch_live_ltps(kite, instrument: str, expiry, strikes_types: list) -> dict
 @app.route("/backtest")
 @login_required
 def backtest_page():
-    """Backtest explorer — instrument selector + date-range + results."""
-    from options.instrument_config import as_json_list
+    """Backtest explorer — strategy selector + instrument + date-range + results."""
+    from options.instrument_config import as_json_list as instr_list
+    from options.strategies        import as_json_list as strat_list
+    from options.saved_strategies  import list_all     as saved_list
     import json as _json
     return render_template(
         "backtest.html",
-        user=session["user"],
-        instruments_json=_json.dumps(as_json_list()),
+        user             = session["user"],
+        instruments_json = _json.dumps(instr_list()),
+        strategies_json  = _json.dumps(strat_list()),
+        saved_json       = _json.dumps(saved_list()),
     )
+
+
+@app.route("/api/strategies/saved", methods=["GET"])
+@login_required
+def api_saved_strategies():
+    """Return all saved strategies."""
+    from options.saved_strategies import list_all
+    return jsonify(list_all())
+
+
+@app.route("/api/strategies/saved", methods=["POST"])
+@login_required
+def api_save_strategy():
+    """Save a strategy run result."""
+    from options.saved_strategies import save
+    body = request.get_json(force=True)
+    new_id = save(
+        name         = body.get("name", "Unnamed"),
+        strategy_key = body.get("strategy_key", ""),
+        instrument   = body.get("instrument", ""),
+        date_from    = body.get("date_from"),
+        date_to      = body.get("date_to"),
+        params       = body.get("params", {}),
+        summary      = body.get("summary", {}),
+        notes        = body.get("notes", ""),
+    )
+    if new_id is None:
+        return jsonify({"error": "Save failed"}), 500
+    return jsonify({"id": new_id})
+
+
+@app.route("/api/strategies/saved/<int:sid>", methods=["DELETE"])
+@login_required
+def api_delete_strategy(sid):
+    """Delete a saved strategy by id."""
+    from options.saved_strategies import delete
+    ok = delete(sid)
+    return jsonify({"ok": ok})
 
 
 @app.route("/api/backtest-dates")
@@ -672,20 +714,29 @@ def api_backtest_dates():
 @app.route("/api/backtest")
 @login_required
 def api_backtest():
-    """Run Iron Fly backtest using actual DB history. Cached 4 hours server-side."""
-    from options.backtest import backtest_iron_fly, find_optimal_wing_width
-    instrument = request.args.get("instrument", "NIFTY").upper()
-    wing_width = int(request.args.get("wing_width", 200))
-    lookback   = min(int(request.args.get("lookback", 60)), 90)
-    wing_scan  = request.args.get("wing_scan", "false").lower() == "true"
-    date_from  = request.args.get("date_from") or None
-    date_to    = request.args.get("date_to")   or None
+    """Run any strategy backtest. strategy_key selects the algorithm."""
+    from options.backtest import run_strategy, find_optimal_wing_width
+    instrument    = request.args.get("instrument",    "NIFTY").upper()
+    strategy_key  = request.args.get("strategy_key", "IRON_FLY").upper()
+    wing_width    = int(request.args.get("wing_width", 200))
+    lookback      = min(int(request.args.get("lookback", 60)), 90)
+    date_from     = request.args.get("date_from") or None
+    date_to       = request.args.get("date_to")   or None
+    wing_scan     = request.args.get("wing_scan", "false").lower() == "true"
+    skip_high_vol = request.args.get("skip_high_vol", "true").lower() != "false"
 
-    if wing_scan:
+    if wing_scan and strategy_key == "IRON_FLY":
         result = find_optimal_wing_width(instrument, lookback_days=lookback)
     else:
-        result = backtest_iron_fly(instrument, wing_width, lookback,
-                                   date_from=date_from, date_to=date_to)
+        result = run_strategy(
+            strategy_key  = strategy_key,
+            instrument    = instrument,
+            wing_width    = wing_width,
+            lookback_days = lookback,
+            date_from     = date_from,
+            date_to       = date_to,
+            skip_high_vol = skip_high_vol,
+        )
     return jsonify(result)
 
 

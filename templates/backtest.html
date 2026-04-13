@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Backtest — Iron Fly</title>
+<title>Backtest — Options Strategy</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
@@ -19,246 +19,310 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .nav-btn:hover { background: rgba(255,255,255,0.18); }
 .nav-btn.active { background: rgba(99,179,101,0.25); border-color: rgba(99,179,101,0.5); color: #6fcf72; }
 
-/* ── Main layout ── */
+/* ── Page ── */
 .page { display: flex; min-height: calc(100vh - 60px); }
 
 /* ── Left panel ── */
-.left-panel { width: 320px; flex-shrink: 0; background: #161b22; border-right: 1px solid #21262d; padding: 24px 20px; overflow-y: auto; }
-.panel-section { margin-bottom: 24px; }
-.panel-label { font-size: 10px; font-weight: 700; color: #484f58; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; }
+.left-panel { width: 300px; flex-shrink: 0; background: #161b22; border-right: 1px solid #21262d; display: flex; flex-direction: column; overflow-y: auto; }
+.left-scroll { flex: 1; padding: 20px 16px; }
+.panel-label { font-size: 10px; font-weight: 700; color: #484f58; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
+.panel-section { margin-bottom: 20px; }
 
-/* Instrument select */
-.instr-select { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; color: #f0f6fc; font-size: 14px; font-weight: 600; padding: 10px 12px; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b949e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
-.instr-select:focus { outline: none; border-color: #1f6feb; }
-.instr-select option { background: #161b22; }
+/* Strategy selector row */
+.strat-row { display: flex; align-items: center; gap: 6px; }
+.strat-select { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; color: #f0f6fc; font-size: 13px; font-weight: 600; padding: 9px 10px; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b949e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+.strat-select:focus { outline: none; border-color: #1f6feb; }
+.strat-select option { background: #161b22; }
+.info-btn { flex-shrink: 0; width: 32px; height: 32px; background: #21262d; border: 1px solid #30363d; border-radius: 7px; color: #8b949e; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.info-btn:hover { border-color: #58a6ff; color: #58a6ff; }
 
-/* Instrument info card */
-.instr-info { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 14px; display: none; }
+/* Strategy badge */
+.strat-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; margin-top: 6px; }
+.badge-blue   { background: rgba(31,111,235,0.2); color: #58a6ff; border: 1px solid rgba(31,111,235,0.35); }
+.badge-green  { background: rgba(63,185,80,0.2);  color: #3fb950; border: 1px solid rgba(63,185,80,0.35); }
+.badge-orange { background: rgba(227,179,65,0.2); color: #e3b341; border: 1px solid rgba(227,179,65,0.35); }
+.badge-purple { background: rgba(139,93,255,0.2); color: #bd8fff; border: 1px solid rgba(139,93,255,0.35); }
+
+/* Generic select/input */
+.field-select { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 7px; color: #f0f6fc; font-size: 13px; padding: 9px 10px; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238b949e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+.field-select:focus { outline: none; border-color: #1f6feb; }
+.field-select option { background: #161b22; }
+
+/* Instrument info */
+.instr-info { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 12px; display: none; }
 .instr-info.visible { display: block; }
-.info-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #161b22; font-size: 12px; }
+.info-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #161b22; font-size: 11px; }
 .info-row:last-child { border-bottom: none; }
 .info-row .lbl { color: #8b949e; }
 .info-row .val { color: #f0f6fc; font-weight: 600; }
-.exchange-badge { font-size: 10px; padding: 2px 7px; border-radius: 99px; font-weight: 700; }
-.badge-nfo { background: rgba(31,111,235,0.2); color: #58a6ff; border: 1px solid rgba(31,111,235,0.3); }
-.badge-mcx { background: rgba(227,179,65,0.2); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.exch-badge { font-size: 10px; padding: 2px 6px; border-radius: 99px; font-weight: 700; }
+.nfo { background: rgba(31,111,235,0.2); color: #58a6ff; border: 1px solid rgba(31,111,235,0.3); }
+.mcx { background: rgba(227,179,65,0.2); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
 
-/* Wing width */
-.wing-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.wing-chip { padding: 6px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; font-size: 12px; color: #8b949e; cursor: pointer; transition: all 0.15s; }
+/* Wing chips */
+.wing-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.wing-chip { padding: 5px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; font-size: 11px; color: #8b949e; cursor: pointer; transition: all 0.15s; }
 .wing-chip:hover { border-color: #8b949e; color: #c9d1d9; }
 .wing-chip.selected { background: #1c3a5e; border-color: #1f6feb; color: #58a6ff; font-weight: 700; }
+
+/* Skip toggle */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: #0d1117; border: 1px solid #21262d; border-radius: 7px; }
+.toggle-lbl { font-size: 11px; color: #c9d1d9; }
+.toggle-sub { font-size: 10px; color: #484f58; margin-top: 1px; }
+input[type="checkbox"] { accent-color: #1f6feb; width: 15px; height: 15px; cursor: pointer; }
 
 /* Date range */
 .date-range-row { display: flex; gap: 8px; }
 .date-input-wrap { flex: 1; }
 .date-lbl { font-size: 10px; color: #8b949e; margin-bottom: 4px; }
-.date-display { background: #0d1117; border: 1px solid #30363d; border-radius: 7px; padding: 8px 10px; font-size: 12px; color: #f0f6fc; cursor: pointer; min-height: 34px; display: flex; align-items: center; gap: 6px; transition: border-color 0.15s; }
+.date-display { background: #0d1117; border: 1px solid #30363d; border-radius: 7px; padding: 8px 10px; font-size: 11px; color: #f0f6fc; cursor: pointer; min-height: 32px; display: flex; align-items: center; transition: border-color 0.15s; }
 .date-display:hover { border-color: #8b949e; }
 .date-display.active { border-color: #1f6feb; }
-.date-display .placeholder { color: #484f58; }
+.date-display .ph { color: #484f58; }
 
 /* Run button */
-.run-btn { width: 100%; padding: 12px; background: #238636; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: background 0.15s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.run-btn { width: 100%; padding: 11px; background: #238636; color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: background 0.15s; display: flex; align-items: center; justify-content: center; gap: 7px; }
 .run-btn:hover:not(:disabled) { background: #2ea043; }
 .run-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* DB coverage bar */
-.coverage-label { font-size: 11px; color: #8b949e; margin-bottom: 6px; }
-.coverage-meta { display: flex; justify-content: space-between; font-size: 10px; color: #484f58; margin-top: 4px; }
+/* ── Saved strategies list ── */
+.saved-divider { border-top: 1px solid #21262d; margin: 0 -16px; padding: 16px 16px 0; }
+.saved-item { display: flex; align-items: center; gap: 8px; padding: 9px 10px; background: #0d1117; border: 1px solid #21262d; border-radius: 8px; margin-bottom: 6px; cursor: pointer; transition: border-color 0.15s; }
+.saved-item:hover { border-color: #30363d; }
+.saved-item-body { flex: 1; min-width: 0; }
+.saved-name { font-size: 12px; font-weight: 600; color: #f0f6fc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.saved-meta { font-size: 10px; color: #8b949e; margin-top: 2px; }
+.saved-del { flex-shrink: 0; background: none; border: none; color: #484f58; cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 4px; }
+.saved-del:hover { color: #f85149; background: rgba(248,81,73,0.1); }
+.no-saved { font-size: 11px; color: #484f58; text-align: center; padding: 10px 0; }
 
 /* ── Calendar overlay ── */
-.cal-overlay { display: none; position: fixed; inset: 0; z-index: 100; }
+.cal-overlay { display: none; position: fixed; inset: 0; z-index: 200; }
 .cal-overlay.open { display: flex; align-items: center; justify-content: center; }
 .cal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.65); }
 .cal-card { position: relative; z-index: 1; background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 20px; width: 300px; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
-.cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .cal-month-label { font-size: 14px; font-weight: 700; color: #f0f6fc; }
-.cal-nav { background: none; border: 1px solid #30363d; color: #8b949e; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.cal-nav { background: none; border: 1px solid #30363d; color: #8b949e; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
 .cal-nav:hover { border-color: #8b949e; color: #f0f6fc; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
-.cal-dow { font-size: 10px; color: #484f58; text-align: center; padding: 4px 0; font-weight: 700; }
-.cal-day { font-size: 12px; text-align: center; padding: 6px 2px; border-radius: 6px; cursor: default; transition: background 0.12s; user-select: none; }
+.cal-dow { font-size: 9px; color: #484f58; text-align: center; padding: 3px 0; font-weight: 700; }
+.cal-day { font-size: 12px; text-align: center; padding: 6px 2px; border-radius: 5px; cursor: default; user-select: none; }
 .cal-day.available { color: #c9d1d9; cursor: pointer; }
 .cal-day.available:hover { background: #21262d; }
-.cal-day.in-range { background: rgba(31,111,235,0.15); color: #58a6ff; }
-.cal-day.range-start, .cal-day.range-end { background: #1f6feb; color: #fff; font-weight: 700; border-radius: 6px; }
-.cal-day.today { border: 1px solid #30363d; }
+.cal-day.in-range { background: rgba(31,111,235,0.12); color: #58a6ff; }
+.cal-day.range-start, .cal-day.range-end { background: #1f6feb; color: #fff; font-weight: 700; }
 .cal-day.empty, .cal-day.unavailable { color: #21262d; }
-.cal-footer { display: flex; gap: 8px; margin-top: 14px; }
-.cal-btn { flex: 1; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid #30363d; background: #21262d; color: #8b949e; transition: all 0.15s; }
+.cal-hint { font-size: 10px; color: #484f58; text-align: center; margin-top: 10px; }
+.cal-footer { display: flex; gap: 8px; margin-top: 12px; }
+.cal-btn { flex: 1; padding: 7px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid #30363d; background: #21262d; color: #8b949e; }
 .cal-btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
 .cal-btn.primary:hover { background: #388bfd; }
 .cal-btn:hover { background: #30363d; color: #c9d1d9; }
-.cal-hint { font-size: 10px; color: #484f58; text-align: center; margin-top: 8px; }
+
+/* ── Strategy info overlay ── */
+.info-overlay { display: none; position: fixed; inset: 0; z-index: 300; }
+.info-overlay.open { display: flex; align-items: center; justify-content: center; }
+.info-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.7); }
+.info-card { position: relative; z-index: 1; background: #161b22; border: 1px solid #30363d; border-radius: 16px; padding: 28px; width: 520px; max-width: 95vw; max-height: 85vh; overflow-y: auto; box-shadow: 0 32px 80px rgba(0,0,0,0.7); }
+.info-card-title { font-size: 18px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
+.info-card-sub { font-size: 12px; color: #8b949e; margin-bottom: 20px; }
+.info-section-hd { font-size: 10px; font-weight: 700; color: #484f58; text-transform: uppercase; letter-spacing: 0.8px; margin: 16px 0 6px; }
+.info-section-body { font-size: 13px; color: #c9d1d9; line-height: 1.6; }
+.info-rule { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 8px; }
+.info-rule-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.info-rule-text { font-size: 12px; color: #c9d1d9; line-height: 1.5; }
+.info-highlight { background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+.info-highlight.red { background: rgba(248,81,73,0.08); border-color: rgba(248,81,73,0.25); }
+.info-close { position: absolute; top: 16px; right: 16px; background: #21262d; border: 1px solid #30363d; color: #8b949e; width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+.info-close:hover { color: #f0f6fc; }
+
+/* ── Save modal ── */
+.save-overlay { display: none; position: fixed; inset: 0; z-index: 400; }
+.save-overlay.open { display: flex; align-items: center; justify-content: center; }
+.save-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.7); }
+.save-card { position: relative; z-index: 1; background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 24px; width: 380px; max-width: 95vw; box-shadow: 0 24px 64px rgba(0,0,0,0.6); }
+.save-title { font-size: 15px; font-weight: 700; color: #f0f6fc; margin-bottom: 16px; }
+.save-field { margin-bottom: 14px; }
+.save-field label { display: block; font-size: 11px; color: #8b949e; margin-bottom: 5px; }
+.save-field input, .save-field textarea { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 7px; color: #f0f6fc; font-size: 13px; padding: 9px 10px; font-family: inherit; }
+.save-field input:focus, .save-field textarea:focus { outline: none; border-color: #1f6feb; }
+.save-field textarea { resize: vertical; min-height: 60px; }
+.save-actions { display: flex; gap: 8px; margin-top: 16px; }
+.save-submit { flex: 1; padding: 10px; background: #238636; color: #fff; border: none; border-radius: 7px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.save-submit:hover { background: #2ea043; }
+.save-cancel { padding: 10px 16px; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 7px; font-size: 13px; cursor: pointer; }
+.save-cancel:hover { color: #c9d1d9; }
 
 /* ── Right panel ── */
 .right-panel { flex: 1; padding: 28px 32px; overflow-y: auto; }
-
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 400px; gap: 12px; color: #484f58; }
-.empty-icon { font-size: 48px; opacity: 0.4; }
+.empty-icon { font-size: 48px; opacity: 0.35; }
 .empty-text { font-size: 14px; }
-
 .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 400px; gap: 14px; color: #8b949e; }
 .spinner { display: inline-block; width: 36px; height: 36px; border: 3px solid #21262d; border-top-color: #1f6feb; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Results */
+/* Result header */
 .result-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-.result-title { font-size: 18px; font-weight: 700; color: #f0f6fc; }
-.result-meta { font-size: 12px; color: #8b949e; margin-top: 3px; }
+.result-title { font-size: 17px; font-weight: 700; color: #f0f6fc; }
+.result-meta { font-size: 11px; color: #8b949e; margin-top: 3px; }
+.result-actions { display: flex; gap: 8px; align-items: center; }
 .quality-badge { font-size: 11px; padding: 3px 10px; border-radius: 99px; font-weight: 700; }
-.q-good { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.q-good  { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
 .q-limited { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
 .q-insufficient { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+.save-run-btn { display: flex; align-items: center; gap: 6px; padding: 7px 14px; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.save-run-btn:hover { border-color: #e3b341; color: #e3b341; background: rgba(227,179,65,0.08); }
 
-/* Stats grid */
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+/* Stats */
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
 @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
-.stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; }
-.stat-lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
-.stat-val { font-size: 22px; font-weight: 700; color: #f0f6fc; line-height: 1; }
-.stat-sub { font-size: 11px; color: #8b949e; margin-top: 4px; }
-.val-green { color: #3fb950; }
-.val-red   { color: #f85149; }
-.val-blue  { color: #58a6ff; }
-.val-warn  { color: #e3b341; }
+.stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px 16px; }
+.stat-lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 5px; }
+.stat-val { font-size: 20px; font-weight: 700; color: #f0f6fc; line-height: 1; }
+.stat-sub { font-size: 10px; color: #8b949e; margin-top: 3px; }
+.val-green { color: #3fb950; } .val-red { color: #f85149; }
+.val-blue  { color: #58a6ff; } .val-warn { color: #e3b341; }
 
-/* Equity curve */
-.curve-section { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
-.curve-title { font-size: 12px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 12px; }
-.curve-canvas { width: 100%; height: 120px; display: block; }
+/* Curve */
+.curve-section { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; }
+.curve-title { font-size: 10px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 10px; }
+.curve-canvas { width: 100%; height: 110px; display: block; }
 
-/* Per-day table */
+/* Table */
 .table-section { background: #161b22; border: 1px solid #30363d; border-radius: 10px; overflow: hidden; }
-.table-head { padding: 14px 16px; border-bottom: 1px solid #21262d; display: flex; align-items: center; justify-content: space-between; }
-.table-title { font-size: 12px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; }
-.table-wrap { overflow-x: auto; max-height: 420px; overflow-y: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th { background: #0d1117; color: #8b949e; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 12px; text-align: left; position: sticky; top: 0; z-index: 1; }
-td { padding: 8px 12px; border-bottom: 1px solid #21262d; color: #c9d1d9; }
+.table-head { padding: 12px 16px; border-bottom: 1px solid #21262d; display: flex; align-items: center; justify-content: space-between; }
+.table-title { font-size: 10px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; }
+.table-wrap { overflow-x: auto; max-height: 380px; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+th { background: #0d1117; color: #8b949e; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding: 7px 10px; text-align: left; position: sticky; top: 0; }
+td { padding: 7px 10px; border-bottom: 1px solid #21262d; color: #c9d1d9; }
 tr:last-child td { border-bottom: none; }
-tr.win-row td { background: rgba(63,185,80,0.04); }
-tr.loss-row td { background: rgba(248,81,73,0.04); }
-.tag-win  { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; }
-.tag-loss { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; }
-.tag-sl   { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); padding: 2px 7px; border-radius: 99px; font-size: 10px; font-weight: 700; margin-left: 4px; }
+tr.win-row td { background: rgba(63,185,80,0.03); }
+tr.loss-row td { background: rgba(248,81,73,0.03); }
+.tag-win  { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); padding: 1px 6px; border-radius: 99px; font-size: 9px; font-weight: 700; }
+.tag-loss { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); padding: 1px 6px; border-radius: 99px; font-size: 9px; font-weight: 700; }
+.tag-sl   { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); padding: 1px 6px; border-radius: 99px; font-size: 9px; font-weight: 700; margin-left: 3px; }
 .pnl-pos { color: #3fb950; font-weight: 700; }
 .pnl-neg { color: #f85149; font-weight: 700; }
-
-.error-state { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.25); border-radius: 10px; padding: 20px; color: #f85149; font-size: 13px; }
+.error-state { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.25); border-radius: 10px; padding: 18px; color: #f85149; font-size: 13px; }
 </style>
 </head>
 <body>
 
-<!-- Header -->
 <div class="header">
   <div class="header-left">
     <span class="header-logo">📊</span>
     <div>
-      <div class="header-title">Iron Fly Backtester</div>
+      <div class="header-title">Options Backtester</div>
       <div class="header-sub">Strategy simulation on actual DB option chain data</div>
     </div>
   </div>
   <div class="header-right">
-    <a href="/"        class="nav-btn">Dashboard</a>
+    <a href="/"         class="nav-btn">Dashboard</a>
     <a href="/backtest" class="nav-btn active">Backtest</a>
-    <a href="/nifty"   class="nav-btn">Options Intel</a>
+    <a href="/nifty"    class="nav-btn">Options Intel</a>
     <a href="/insights" class="nav-btn">DB Insights</a>
-    <a href="/logout"  class="nav-btn">Sign Out</a>
+    <a href="/logout"   class="nav-btn">Sign Out</a>
   </div>
 </div>
 
-<!-- Page -->
 <div class="page">
 
-  <!-- ── Left Panel ── -->
+  <!-- ═══ LEFT PANEL ═══ -->
   <div class="left-panel">
+    <div class="left-scroll">
 
-    <!-- Instrument -->
-    <div class="panel-section">
-      <div class="panel-label">Instrument</div>
-      <select class="instr-select" id="instrSelect" onchange="onInstrumentChange()">
-        <option value="">— Select instrument —</option>
-      </select>
-    </div>
+      <!-- Strategy selector -->
+      <div class="panel-section">
+        <div class="panel-label">Strategy</div>
+        <div class="strat-row">
+          <select class="strat-select" id="stratSelect" onchange="onStrategyChange()">
+            <option value="">— Select strategy —</option>
+          </select>
+          <button class="info-btn" id="infoBtn" title="Strategy details" onclick="openInfo()" style="display:none">ⓘ</button>
+        </div>
+        <div id="stratBadge"></div>
+      </div>
 
-    <!-- Instrument Info (shown after selection) -->
-    <div class="panel-section">
-      <div class="instr-info" id="instrInfo">
-        <div class="info-row">
-          <span class="lbl">Exchange</span>
-          <span class="val" id="infoExchange">—</span>
-        </div>
-        <div class="info-row">
-          <span class="lbl">Lot Size</span>
-          <span class="val" id="infoLotSize">—</span>
-        </div>
-        <div class="info-row">
-          <span class="lbl">Strike Step</span>
-          <span class="val" id="infoStrikeStep">—</span>
-        </div>
-        <div class="info-row">
-          <span class="lbl">Market Hours</span>
-          <span class="val" id="infoMarketHours">—</span>
-        </div>
-        <div class="info-row">
-          <span class="lbl">DB Coverage</span>
-          <span class="val" id="infoDbDays"><span style="color:#484f58">Loading…</span></span>
-        </div>
-        <div class="info-row">
-          <span class="lbl">Data From</span>
-          <span class="val" id="infoDateMin"><span style="color:#484f58">—</span></span>
-        </div>
-        <div class="info-row">
-          <span class="lbl">Data To</span>
-          <span class="val" id="infoDateMax"><span style="color:#484f58">—</span></span>
+      <!-- Instrument selector -->
+      <div class="panel-section" id="instrSection" style="display:none">
+        <div class="panel-label">Instrument</div>
+        <select class="field-select" id="instrSelect" onchange="onInstrumentChange()">
+          <option value="">— Select instrument —</option>
+        </select>
+      </div>
+
+      <!-- Instrument static info -->
+      <div class="panel-section">
+        <div class="instr-info" id="instrInfo">
+          <div class="info-row"><span class="lbl">Exchange</span><span class="val" id="iExchange">—</span></div>
+          <div class="info-row"><span class="lbl">Lot Size</span><span class="val" id="iLotSize">—</span></div>
+          <div class="info-row"><span class="lbl">Strike Step</span><span class="val" id="iStrikeStep">—</span></div>
+          <div class="info-row"><span class="lbl">Market Hours</span><span class="val" id="iHours">—</span></div>
+          <div class="info-row"><span class="lbl">DB Days</span><span class="val" id="iDbDays">—</span></div>
+          <div class="info-row"><span class="lbl">Data From</span><span class="val" id="iDateMin">—</span></div>
+          <div class="info-row"><span class="lbl">Data To</span><span class="val" id="iDateMax">—</span></div>
         </div>
       </div>
-    </div>
 
-    <!-- Wing Width -->
-    <div class="panel-section" id="wingSection" style="display:none">
-      <div class="panel-label">Wing Width</div>
-      <div class="wing-row" id="wingRow"></div>
-    </div>
+      <!-- Wing width (Iron Fly only) -->
+      <div class="panel-section" id="wingSection" style="display:none">
+        <div class="panel-label">Wing Width</div>
+        <div class="wing-row" id="wingRow"></div>
+      </div>
 
-    <!-- Date Range -->
-    <div class="panel-section" id="dateSection" style="display:none">
-      <div class="panel-label">Date Range</div>
-      <div class="date-range-row">
-        <div class="date-input-wrap">
-          <div class="date-lbl">From</div>
-          <div class="date-display" id="dateFromDisplay" onclick="openCalendar('from')">
-            <span class="placeholder" id="dateFromText">Select date</span>
+      <!-- Skip high-vol filter (OI Strangle) -->
+      <div class="panel-section" id="skipSection" style="display:none">
+        <div class="toggle-row">
+          <div>
+            <div class="toggle-lbl">Skip high-vol days</div>
+            <div class="toggle-sub">Skip if previous day range &gt; 350 pts</div>
+          </div>
+          <input type="checkbox" id="skipCheck" checked>
+        </div>
+      </div>
+
+      <!-- Date range -->
+      <div class="panel-section" id="dateSection" style="display:none">
+        <div class="panel-label">Date Range</div>
+        <div class="date-range-row">
+          <div class="date-input-wrap">
+            <div class="date-lbl">From</div>
+            <div class="date-display" id="dateFromDisp" onclick="openCal('from')">
+              <span class="ph" id="dateFromTxt">Select</span>
+            </div>
+          </div>
+          <div class="date-input-wrap">
+            <div class="date-lbl">To</div>
+            <div class="date-display" id="dateToDisp" onclick="openCal('to')">
+              <span class="ph" id="dateToTxt">Select</span>
+            </div>
           </div>
         </div>
-        <div class="date-input-wrap">
-          <div class="date-lbl">To</div>
-          <div class="date-display" id="dateToDisplay" onclick="openCalendar('to')">
-            <span class="placeholder" id="dateToText">Select date</span>
-          </div>
-        </div>
+        <div style="margin-top:6px;font-size:10px;color:#484f58;">Only DB dates are selectable</div>
       </div>
-      <div style="margin-top:8px; font-size:10px; color:#484f58;">
-        Only dates available in DB are selectable
+
+      <!-- Run -->
+      <div class="panel-section" id="runSection" style="display:none">
+        <button class="run-btn" id="runBtn" onclick="runBacktest()">▶ Run Backtest</button>
       </div>
-    </div>
 
-    <!-- Run -->
-    <div class="panel-section" id="runSection" style="display:none">
-      <button class="run-btn" id="runBtn" onclick="runBacktest()">
-        ▶ Run Backtest
-      </button>
-    </div>
+      <!-- ── Saved strategies ── -->
+      <div class="saved-divider" id="savedSection">
+        <div class="panel-label" style="margin-bottom:10px">Saved Strategies</div>
+        <div id="savedList"></div>
+      </div>
 
+    </div><!-- /left-scroll -->
   </div><!-- /left-panel -->
 
-  <!-- ── Right Panel ── -->
+  <!-- ═══ RIGHT PANEL ═══ -->
   <div class="right-panel" id="rightPanel">
     <div class="empty-state" id="emptyState">
       <div class="empty-icon">📉</div>
-      <div class="empty-text">Select an instrument to begin</div>
+      <div class="empty-text">Select a strategy and instrument to begin</div>
     </div>
     <div class="loading-state" id="loadingState" style="display:none">
       <div class="spinner"></div>
@@ -269,295 +333,326 @@ tr.loss-row td { background: rgba(248,81,73,0.04); }
 
 </div><!-- /page -->
 
-<!-- ── Calendar Overlay ── -->
+<!-- ═══ CALENDAR OVERLAY ═══ -->
 <div class="cal-overlay" id="calOverlay">
-  <div class="cal-backdrop" onclick="closeCalendar()"></div>
+  <div class="cal-backdrop" onclick="closeCal()"></div>
   <div class="cal-card">
     <div class="cal-header">
-      <button class="cal-nav" id="calPrev" onclick="calNav(-1)">&#8249;</button>
-      <span class="cal-month-label" id="calMonthLabel"></span>
-      <button class="cal-nav" id="calNext" onclick="calNav(+1)">&#8250;</button>
+      <button class="cal-nav" onclick="calNav(-1)">&#8249;</button>
+      <span class="cal-month-label" id="calMonthLbl"></span>
+      <button class="cal-nav" onclick="calNav(+1)">&#8250;</button>
     </div>
     <div class="cal-grid" id="calGrid"></div>
     <div class="cal-hint" id="calHint"></div>
     <div class="cal-footer">
       <button class="cal-btn" onclick="clearDates()">Clear</button>
-      <button class="cal-btn primary" onclick="closeCalendar()">Done</button>
+      <button class="cal-btn primary" onclick="closeCal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ STRATEGY INFO OVERLAY ═══ -->
+<div class="info-overlay" id="infoOverlay">
+  <div class="info-backdrop" onclick="closeInfo()"></div>
+  <div class="info-card">
+    <button class="info-close" onclick="closeInfo()">✕</button>
+    <div class="info-card-title" id="infoTitle"></div>
+    <div class="info-card-sub" id="infoSub"></div>
+    <div class="info-section-hd">What it does</div>
+    <div class="info-section-body" id="infoWhatItDoes"></div>
+    <div class="info-section-hd">Entry Rule</div>
+    <div class="info-highlight"><div class="info-rule"><span class="info-rule-icon">📥</span><span class="info-rule-text" id="infoEntry"></span></div></div>
+    <div class="info-section-hd">Exit Rule</div>
+    <div class="info-highlight"><div class="info-rule"><span class="info-rule-icon">📤</span><span class="info-rule-text" id="infoExit"></span></div></div>
+    <div class="info-section-hd">Stop Loss</div>
+    <div class="info-highlight"><div class="info-rule"><span class="info-rule-icon">🛑</span><span class="info-rule-text" id="infoSL"></span></div></div>
+    <div class="info-section-hd">Best when to use</div>
+    <div class="info-highlight"><div class="info-rule"><span class="info-rule-icon">✅</span><span class="info-rule-text" id="infoBest"></span></div></div>
+    <div class="info-section-hd">Avoid when</div>
+    <div class="info-highlight red"><div class="info-rule"><span class="info-rule-icon">⚠️</span><span class="info-rule-text" id="infoAvoid"></span></div></div>
+  </div>
+</div>
+
+<!-- ═══ SAVE MODAL ═══ -->
+<div class="save-overlay" id="saveOverlay">
+  <div class="save-backdrop" onclick="closeSave()"></div>
+  <div class="save-card">
+    <div class="save-title">★ Save This Strategy Run</div>
+    <div class="save-field">
+      <label>Name</label>
+      <input type="text" id="saveName" placeholder="e.g. NIFTY OI Strangle Apr 2026">
+    </div>
+    <div class="save-field">
+      <label>Notes (optional)</label>
+      <textarea id="saveNotes" placeholder="What worked, what to watch out for…"></textarea>
+    </div>
+    <div class="save-actions">
+      <button class="save-cancel" onclick="closeSave()">Cancel</button>
+      <button class="save-submit" onclick="submitSave()">Save</button>
     </div>
   </div>
 </div>
 
 <script>
-// ── Instrument registry (server-injected) ────────────────────────────────────
+// ── Server data ──────────────────────────────────────────────────────────────
 const INSTRUMENTS = {{ instruments_json | safe }};
-const INSTR_MAP   = {};
-INSTRUMENTS.forEach(i => { INSTR_MAP[i.symbol] = i; });
+const STRATEGIES  = {{ strategies_json | safe }};
+const INSTR_MAP   = Object.fromEntries(INSTRUMENTS.map(i => [i.symbol, i]));
+const STRAT_MAP   = Object.fromEntries(STRATEGIES.map(s => [s.key, s]));
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let state = {
+// ── App state ─────────────────────────────────────────────────────────────────
+const S = {
+  strategy:    null,
   symbol:      null,
   wing:        null,
-  dateFrom:    null,   // "YYYY-MM-DD"
+  dateFrom:    null,
   dateTo:      null,
-  availDates:  [],     // sorted array of "YYYY-MM-DD" strings from DB
+  availDates:  [],
+  lastResult:  null,   // last backtest result (for save)
 };
 
-let cal = {
-  target:    null,    // "from" | "to"
-  year:      null,
-  month:     null,   // 0-based
-  pickingEnd: false,
-};
-
-// ── Populate instrument dropdown ─────────────────────────────────────────────
-(function initDropdown() {
-  const sel = document.getElementById("instrSelect");
-  INSTRUMENTS.forEach(i => {
-    const opt = document.createElement("option");
-    opt.value = i.symbol;
-    opt.textContent = i.display_name + " (" + i.exchange + ")";
-    sel.appendChild(opt);
+// ── Init dropdowns ────────────────────────────────────────────────────────────
+(function init() {
+  const ss = document.getElementById("stratSelect");
+  STRATEGIES.forEach(s => {
+    const o = document.createElement("option");
+    o.value = s.key;
+    o.textContent = s.display_name;
+    ss.appendChild(o);
   });
+  renderSavedList({{ saved_json | safe }});
 })();
+
+// ── Strategy change ───────────────────────────────────────────────────────────
+function onStrategyChange() {
+  const key = document.getElementById("stratSelect").value;
+  if (!key) return;
+  S.strategy = key;
+  const strat = STRAT_MAP[key];
+
+  // Badge
+  const badgeEl = document.getElementById("stratBadge");
+  badgeEl.innerHTML = `<span class="strat-badge badge-${strat.badge_color}">${strat.badge}</span>
+    <span style="font-size:11px;color:#8b949e;margin-left:6px;">${strat.short_desc}</span>`;
+
+  // Info button
+  document.getElementById("infoBtn").style.display = "flex";
+
+  // Instrument dropdown — filter by allowed instruments
+  const is = document.getElementById("instrSelect");
+  is.innerHTML = '<option value="">— Select instrument —</option>';
+  INSTRUMENTS.filter(i => strat.instruments.includes(i.symbol)).forEach(i => {
+    const o = document.createElement("option");
+    o.value = i.symbol;
+    o.textContent = `${i.display_name} (${i.exchange})`;
+    is.appendChild(o);
+  });
+  document.getElementById("instrSection").style.display = "block";
+
+  // Wing section
+  document.getElementById("wingSection").style.display = strat.has_wing ? "block" : "none";
+
+  // Skip-vol section
+  document.getElementById("skipSection").style.display = strat.skip_high_vol ? "block" : "none";
+
+  // Reset instrument
+  S.symbol = null;
+  document.getElementById("instrInfo").classList.remove("visible");
+  document.getElementById("dateSection").style.display  = "none";
+  document.getElementById("runSection").style.display   = "none";
+}
 
 // ── Instrument change ─────────────────────────────────────────────────────────
 async function onInstrumentChange() {
   const sym = document.getElementById("instrSelect").value;
   if (!sym) return;
+  S.symbol     = sym;
+  S.dateFrom   = null;
+  S.dateTo     = null;
+  S.availDates = [];
 
-  state.symbol   = sym;
-  state.dateFrom = null;
-  state.dateTo   = null;
-  state.availDates = [];
+  const cfg   = INSTR_MAP[sym];
+  const strat = STRAT_MAP[S.strategy];
 
-  const cfg = INSTR_MAP[sym];
-
-  // Show static info immediately
-  document.getElementById("instrInfo").classList.add("visible");
+  // Show static info
   const exBadge = cfg.exchange === "NFO"
-    ? `<span class="exchange-badge badge-nfo">NFO</span>`
-    : `<span class="exchange-badge badge-mcx">MCX</span>`;
-  document.getElementById("infoExchange").innerHTML    = exBadge;
-  document.getElementById("infoLotSize").textContent   = cfg.lot_size.toLocaleString("en-IN") + " units";
-  document.getElementById("infoStrikeStep").textContent = cfg.strike_step + " pts";
-  document.getElementById("infoMarketHours").textContent = cfg.market_hours;
-  document.getElementById("infoDbDays").innerHTML      = '<span style="color:#484f58">Loading…</span>';
-  document.getElementById("infoDateMin").innerHTML     = '<span style="color:#484f58">—</span>';
-  document.getElementById("infoDateMax").innerHTML     = '<span style="color:#484f58">—</span>';
+    ? `<span class="exch-badge nfo">NFO</span>`
+    : `<span class="exch-badge mcx">MCX</span>`;
+  document.getElementById("instrInfo").classList.add("visible");
+  document.getElementById("iExchange").innerHTML    = exBadge;
+  document.getElementById("iLotSize").textContent   = cfg.lot_size.toLocaleString("en-IN") + " units";
+  document.getElementById("iStrikeStep").textContent = cfg.strike_step + " pts";
+  document.getElementById("iHours").textContent     = cfg.market_hours;
+  document.getElementById("iDbDays").innerHTML      = '<span style="color:#484f58">Loading…</span>';
+  document.getElementById("iDateMin").innerHTML     = '<span style="color:#484f58">—</span>';
+  document.getElementById("iDateMax").innerHTML     = '<span style="color:#484f58">—</span>';
 
-  // Build wing chips
-  buildWingChips(cfg);
-  document.getElementById("wingSection").style.display = "block";
-  document.getElementById("dateSection").style.display  = "block";
-  document.getElementById("runSection").style.display   = "block";
+  // Wing chips
+  if (strat.has_wing) {
+    buildWingChips(cfg);
+  }
 
-  // Reset date displays
-  setDateDisplay("from", null);
-  setDateDisplay("to",   null);
+  // Reset dates
+  setDateDisp("from", null);
+  setDateDisp("to",   null);
+  document.getElementById("dateSection").style.display = "block";
+  document.getElementById("runSection").style.display  = "block";
 
-  // Fetch available dates from DB
+  // Fetch available dates
   try {
-    const resp = await fetch("/api/backtest-dates?instrument=" + sym);
-    const data = await resp.json();
+    const r    = await fetch("/api/backtest-dates?instrument=" + sym);
+    const data = await r.json();
     if (data.error) throw new Error(data.error);
-    state.availDates = data.dates || [];
-    document.getElementById("infoDbDays").textContent  = data.count + " trading days";
-    document.getElementById("infoDateMin").textContent = data.min_date || "—";
-    document.getElementById("infoDateMax").textContent = data.max_date || "—";
-
-    // Auto-select full range
+    S.availDates = data.dates || [];
+    document.getElementById("iDbDays").textContent  = data.count + " trading days";
+    document.getElementById("iDateMin").textContent = data.min_date || "—";
+    document.getElementById("iDateMax").textContent = data.max_date || "—";
     if (data.min_date && data.max_date) {
-      state.dateFrom = data.min_date;
-      state.dateTo   = data.max_date;
-      setDateDisplay("from", data.min_date);
-      setDateDisplay("to",   data.max_date);
+      S.dateFrom = data.min_date;
+      S.dateTo   = data.max_date;
+      setDateDisp("from", data.min_date);
+      setDateDisp("to",   data.max_date);
     }
   } catch (e) {
-    document.getElementById("infoDbDays").innerHTML = '<span style="color:#f85149">Error loading dates</span>';
+    document.getElementById("iDbDays").innerHTML = '<span style="color:#f85149">Error</span>';
   }
 }
 
 function buildWingChips(cfg) {
   const row = document.getElementById("wingRow");
   row.innerHTML = "";
-  state.wing = cfg.default_wing;
-  cfg.wing_choices.forEach(w => {
-    const chip = document.createElement("span");
-    chip.className = "wing-chip" + (w === cfg.default_wing ? " selected" : "");
-    chip.textContent = w + " pts";
-    chip.dataset.wing = w;
-    chip.onclick = () => selectWing(w);
-    row.appendChild(chip);
-  });
-}
-
-function selectWing(w) {
-  state.wing = w;
-  document.querySelectorAll(".wing-chip").forEach(c => {
-    c.classList.toggle("selected", parseInt(c.dataset.wing) === w);
+  S.wing = cfg.default_wing;
+  (cfg.wing_choices || [cfg.default_wing]).forEach(w => {
+    const el = document.createElement("span");
+    el.className = "wing-chip" + (w === cfg.default_wing ? " selected" : "");
+    el.textContent = w + " pts";
+    el.dataset.w = w;
+    el.onclick = () => {
+      S.wing = w;
+      document.querySelectorAll(".wing-chip").forEach(c =>
+        c.classList.toggle("selected", +c.dataset.w === w));
+    };
+    row.appendChild(el);
   });
 }
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
-function setDateDisplay(which, isoDate) {
-  const el   = document.getElementById("date" + cap(which) + "Display");
-  const txt  = document.getElementById("date" + cap(which) + "Text");
-  if (isoDate) {
-    txt.textContent = formatDate(isoDate);
-    txt.classList.remove("placeholder");
-    el.classList.add("active");
-  } else {
-    txt.textContent = "Select date";
-    txt.classList.add("placeholder");
-    el.classList.remove("active");
-  }
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtDate(iso) {
+  const [y,m,d] = iso.split("-");
+  return d + " " + MONTHS[+m-1] + " " + y;
 }
-
-function formatDate(iso) {
-  const [y, m, d] = iso.split("-");
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  return d + " " + months[parseInt(m) - 1] + " " + y;
+function setDateDisp(which, iso) {
+  const disp = document.getElementById("dateFromDisp,dateToDisp".split(",")[which === "from" ? 0 : 1]);
+  const txt  = document.getElementById(which === "from" ? "dateFromTxt" : "dateToTxt");
+  if (iso) { txt.textContent = fmtDate(iso); txt.classList.remove("ph"); disp.classList.add("active"); }
+  else      { txt.textContent = "Select";    txt.classList.add("ph");    disp.classList.remove("active"); }
 }
-
-function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 // ── Calendar ──────────────────────────────────────────────────────────────────
-const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const DOWS   = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+const CAL = { target: null, year: null, month: null };
+const CAL_DOWS = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+const CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-function openCalendar(target) {
-  if (!state.availDates.length) return;
-  cal.target = target;
-
-  // Open at the already-selected date, else at the last available date
-  const ref = (target === "from" ? state.dateFrom : state.dateTo)
-              || state.availDates[state.availDates.length - 1];
-  const [y, m] = ref.split("-").map(Number);
-  cal.year  = y;
-  cal.month = m - 1;
-
-  renderCalendar();
+function openCal(target) {
+  if (!S.availDates.length) return;
+  CAL.target = target;
+  const ref = (target === "from" ? S.dateFrom : S.dateTo) || S.availDates[S.availDates.length - 1];
+  const [y,m] = ref.split("-").map(Number);
+  CAL.year = y; CAL.month = m - 1;
+  renderCal();
   document.getElementById("calOverlay").classList.add("open");
-  document.getElementById("calHint").textContent =
-    target === "from" ? "Select start date" : "Select end date";
+  document.getElementById("calHint").textContent = target === "from" ? "Select start date" : "Select end date";
 }
-
-function closeCalendar() {
-  document.getElementById("calOverlay").classList.remove("open");
+function closeCal() { document.getElementById("calOverlay").classList.remove("open"); }
+function calNav(d) {
+  CAL.month += d;
+  if (CAL.month < 0)  { CAL.month = 11; CAL.year--; }
+  if (CAL.month > 11) { CAL.month = 0;  CAL.year++; }
+  renderCal();
 }
-
-function calNav(delta) {
-  cal.month += delta;
-  if (cal.month < 0)  { cal.month = 11; cal.year--; }
-  if (cal.month > 11) { cal.month = 0;  cal.year++; }
-  renderCalendar();
-}
-
-function renderCalendar() {
-  document.getElementById("calMonthLabel").textContent =
-    MONTHS[cal.month] + " " + cal.year;
-
-  const availSet = new Set(state.availDates);
-  const today    = new Date().toISOString().slice(0, 10);
-
-  // First day of month (Mon=0 offset)
-  const firstDay = new Date(cal.year, cal.month, 1);
-  let startOffset = firstDay.getDay() - 1; // Mon=0
-  if (startOffset < 0) startOffset = 6;
-
-  const daysInMonth = new Date(cal.year, cal.month + 1, 0).getDate();
-
+function renderCal() {
+  document.getElementById("calMonthLbl").textContent = CAL_MONTHS[CAL.month] + " " + CAL.year;
+  const avail = new Set(S.availDates);
+  const today = new Date().toISOString().slice(0,10);
+  let startOff = new Date(CAL.year, CAL.month, 1).getDay() - 1;
+  if (startOff < 0) startOff = 6;
+  const daysInMonth = new Date(CAL.year, CAL.month + 1, 0).getDate();
   const grid = document.getElementById("calGrid");
-  grid.innerHTML = "";
-
-  // Day-of-week headers
-  DOWS.forEach(d => {
-    const el = document.createElement("div");
-    el.className = "cal-dow";
-    el.textContent = d;
-    grid.appendChild(el);
-  });
-
-  // Empty leading cells
-  for (let i = 0; i < startOffset; i++) {
-    const el = document.createElement("div");
-    el.className = "cal-day empty";
-    grid.appendChild(el);
-  }
-
-  // Day cells
+  grid.innerHTML = CAL_DOWS.map(d => `<div class="cal-dow">${d}</div>`).join("");
+  for (let i = 0; i < startOff; i++) grid.innerHTML += `<div class="cal-day empty"></div>`;
   for (let d = 1; d <= daysInMonth; d++) {
-    const iso = cal.year + "-" + String(cal.month + 1).padStart(2,"0") + "-" + String(d).padStart(2,"0");
-    const avail = availSet.has(iso);
-    const el = document.createElement("div");
-
-    let cls = "cal-day";
-    if (!avail) {
-      cls += " unavailable";
-    } else {
-      cls += " available";
-      // Highlight range
-      if (state.dateFrom && state.dateTo) {
-        if (iso > state.dateFrom && iso < state.dateTo) cls += " in-range";
-      }
-      if (iso === state.dateFrom) cls += " range-start";
-      if (iso === state.dateTo)   cls += " range-end";
+    const iso = CAL.year + "-" + String(CAL.month+1).padStart(2,"0") + "-" + String(d).padStart(2,"0");
+    const av  = avail.has(iso);
+    let cls = "cal-day" + (av ? " available" : " unavailable");
+    if (av) {
+      if (S.dateFrom && S.dateTo && iso > S.dateFrom && iso < S.dateTo) cls += " in-range";
+      if (iso === S.dateFrom) cls += " range-start";
+      if (iso === S.dateTo)   cls += " range-end";
     }
     if (iso === today) cls += " today";
-    el.className = cls;
-    el.textContent = d;
-
-    if (avail) {
-      el.onclick = () => pickDate(iso);
-    }
-    grid.appendChild(el);
+    const onclick = av ? `onclick="pickDate('${iso}')"` : "";
+    grid.innerHTML += `<div class="${cls}" ${onclick}>${d}</div>`;
   }
 }
-
 function pickDate(iso) {
-  if (cal.target === "from") {
-    state.dateFrom = iso;
-    // If new from > to, reset to
-    if (state.dateTo && state.dateFrom > state.dateTo) state.dateTo = null;
-    setDateDisplay("from", iso);
-    if (state.dateTo) setDateDisplay("to", state.dateTo);
+  if (CAL.target === "from") {
+    S.dateFrom = iso;
+    if (S.dateTo && S.dateFrom > S.dateTo) S.dateTo = null;
+    setDateDisp("from", iso);
+    if (S.dateTo) setDateDisp("to", S.dateTo);
   } else {
-    state.dateTo = iso;
-    // If new to < from, reset from
-    if (state.dateFrom && state.dateTo < state.dateFrom) state.dateFrom = null;
-    setDateDisplay("to", iso);
-    if (state.dateFrom) setDateDisplay("from", state.dateFrom);
+    S.dateTo = iso;
+    if (S.dateFrom && S.dateTo < S.dateFrom) S.dateFrom = null;
+    setDateDisp("to", iso);
+    if (S.dateFrom) setDateDisp("from", S.dateFrom);
   }
-  renderCalendar(); // refresh highlights
+  renderCal();
+}
+function clearDates() {
+  S.dateFrom = null; S.dateTo = null;
+  setDateDisp("from", null); setDateDisp("to", null);
+  renderCal();
 }
 
-function clearDates() {
-  state.dateFrom = null;
-  state.dateTo   = null;
-  setDateDisplay("from", null);
-  setDateDisplay("to",   null);
-  renderCalendar();
+// ── Strategy info overlay ─────────────────────────────────────────────────────
+function openInfo() {
+  if (!S.strategy) return;
+  const s = STRAT_MAP[S.strategy];
+  document.getElementById("infoTitle").textContent       = s.display_name;
+  document.getElementById("infoSub").textContent         = s.short_desc;
+  document.getElementById("infoWhatItDoes").textContent  = s.what_it_does;
+  document.getElementById("infoEntry").textContent       = s.entry_rule;
+  document.getElementById("infoExit").textContent        = s.exit_rule;
+  document.getElementById("infoSL").textContent          = s.sl_rule;
+  document.getElementById("infoBest").textContent        = s.best_when;
+  document.getElementById("infoAvoid").textContent       = s.avoid_when;
+  document.getElementById("infoOverlay").classList.add("open");
 }
+function closeInfo() { document.getElementById("infoOverlay").classList.remove("open"); }
 
 // ── Run backtest ──────────────────────────────────────────────────────────────
 async function runBacktest() {
-  if (!state.symbol) return;
-
+  if (!S.strategy || !S.symbol) return;
   document.getElementById("emptyState").style.display   = "none";
   document.getElementById("loadingState").style.display = "flex";
   document.getElementById("resultsArea").style.display  = "none";
   document.getElementById("runBtn").disabled = true;
+  S.lastResult = null;
 
-  const params = new URLSearchParams({
-    instrument: state.symbol,
-    wing_width: state.wing || 200,
+  const p = new URLSearchParams({
+    strategy_key: S.strategy,
+    instrument:   S.symbol,
+    wing_width:   S.wing || 200,
+    skip_high_vol: document.getElementById("skipCheck")?.checked ? "true" : "false",
   });
-  if (state.dateFrom) params.set("date_from", state.dateFrom);
-  if (state.dateTo)   params.set("date_to",   state.dateTo);
+  if (S.dateFrom) p.set("date_from", S.dateFrom);
+  if (S.dateTo)   p.set("date_to",   S.dateTo);
 
   try {
-    const resp = await fetch("/api/backtest?" + params.toString());
-    const data = await resp.json();
+    const r    = await fetch("/api/backtest?" + p);
+    const data = await r.json();
+    S.lastResult = data;
     renderResults(data);
   } catch (e) {
     renderError("Network error: " + e.message);
@@ -567,85 +662,89 @@ async function runBacktest() {
   }
 }
 
+// ── Render results ─────────────────────────────────────────────────────────────
 function renderResults(data) {
   const area = document.getElementById("resultsArea");
+  if (data.error && !data.days_tested) { renderError(data.error); return; }
 
-  if (data.error && !data.days_tested) {
-    renderError(data.error);
-    return;
-  }
-
+  const strat  = STRAT_MAP[data.strategy] || STRAT_MAP[S.strategy] || {};
   const cfg    = INSTR_MAP[data.instrument] || {};
-  const qCls   = { good: "q-good", limited: "q-limited", insufficient: "q-insufficient" };
-  const qLabel = { good: "Good data", limited: "Limited data", insufficient: "Insufficient" };
+  const qMap   = { good: "q-good", limited: "q-limited", insufficient: "q-insufficient" };
+  const qLbl   = { good: "Good data", limited: "Limited data", insufficient: "Insufficient" };
   const q      = data.data_quality || "insufficient";
+  const fmtInr = v => (v >= 0 ? "+" : "-") + "₹" + Math.abs(v).toLocaleString("en-IN");
+  const wc     = data.win_rate >= 60 ? "val-green" : data.win_rate >= 45 ? "val-warn" : "val-red";
+  const pc     = data.total_pnl_inr  >= 0 ? "val-green" : "val-red";
+  const ec     = data.expectancy_inr >= 0 ? "val-green" : "val-red";
 
-  const fmtInr = v => {
-    const abs = Math.abs(v).toLocaleString("en-IN");
-    return (v >= 0 ? "+" : "-") + "₹" + abs;
-  };
+  // Table rows — adapt columns to strategy
+  const isOI   = data.strategy === "OI_STRANGLE";
+  const is0dte = data.strategy === "ZERO_DTE_STRADDLE";
 
-  const winColor   = data.win_rate >= 60 ? "val-green" : data.win_rate >= 45 ? "val-warn" : "val-red";
-  const pnlColor   = data.total_pnl_inr >= 0 ? "val-green" : "val-red";
-  const exptColor  = data.expectancy_inr >= 0 ? "val-green" : "val-red";
-
-  // Build per-day rows
+  const thExtra = isOI   ? "<th>CE OI (Cr)</th><th>PE OI (Cr)</th><th>Width</th>" :
+                  is0dte ? "<th>Max Move</th>" : "<th>Wing</th>";
   const rows = (data.per_day || []).map(d => {
-    const pnlCls  = d.pnl_inr >= 0 ? "pnl-pos" : "pnl-neg";
-    const rowCls  = d.win ? "win-row" : "loss-row";
-    const tag     = d.win
-      ? `<span class="tag-win">WIN</span>`
-      : `<span class="tag-loss">LOSS</span>`;
-    const slTag   = d.sl_hit ? `<span class="tag-sl">SL</span>` : "";
-    return `
-      <tr class="${rowCls}">
-        <td>${d.date}</td>
-        <td>${d.atm}</td>
-        <td>${d.expiry}</td>
-        <td>${d.net_premium}</td>
-        <td>${d.sell_ce}C / ${d.sell_pe}P</td>
-        <td>${d.buy_ce}C / ${d.buy_pe}P</td>
-        <td class="${pnlCls}">${(d.pnl_pts >= 0 ? "+" : "") + d.pnl_pts}</td>
-        <td class="${pnlCls}">${fmtInr(d.pnl_inr)}</td>
-        <td>${tag}${slTag}</td>
-      </tr>`;
+    const pc2  = d.pnl_inr >= 0 ? "pnl-pos" : "pnl-neg";
+    const tag  = d.win ? `<span class="tag-win">WIN</span>` : `<span class="tag-loss">LOSS</span>`;
+    const slTg = d.sl_hit ? `<span class="tag-sl">SL</span>` : "";
+    const extra = isOI
+      ? `<td>${(d.ce_oi/1e7).toFixed(1)}</td><td>${(d.pe_oi/1e7).toFixed(1)}</td><td>${d.strangle_width}</td>`
+      : is0dte
+      ? `<td>${d.max_move || "—"}</td>`
+      : `<td>${d.wing_width}</td>`;
+    return `<tr class="${d.win ? "win-row" : "loss-row"}">
+      <td>${d.date}</td>
+      <td>${d.dte ?? "—"}</td>
+      <td>${d.atm || d.sell_ce}</td>
+      <td>${d.sell_ce}C / ${d.sell_pe}P</td>
+      <td>${d.net_premium}</td>
+      ${extra}
+      <td class="${pc2}">${(d.pnl_pts >= 0 ? "+" : "") + d.pnl_pts}</td>
+      <td class="${pc2}">${fmtInr(d.pnl_inr)}</td>
+      <td>${tag}${slTg}</td>
+    </tr>`;
   }).join("");
 
   area.innerHTML = `
     <div class="result-header">
       <div>
-        <div class="result-title">${cfg.display_name || data.instrument} — Iron Fly Results</div>
+        <div class="result-title">
+          ${strat.display_name || data.strategy} — ${cfg.display_name || data.instrument}
+        </div>
         <div class="result-meta">
-          Wing: ${data.wing_width} pts &nbsp;·&nbsp;
           ${data.tested_from || "—"} → ${data.tested_to || "—"} &nbsp;·&nbsp;
           ${data.days_tested} days tested
+          ${data.days_skipped ? ` &nbsp;·&nbsp; ${data.days_skipped} skipped` : ""}
         </div>
       </div>
-      <span class="quality-badge ${qCls[q] || 'q-insufficient'}">${qLabel[q] || q}</span>
+      <div class="result-actions">
+        <span class="quality-badge ${qMap[q] || 'q-insufficient'}">${qLbl[q] || q}</span>
+        <button class="save-run-btn" onclick="openSave()">★ Save</button>
+      </div>
     </div>
 
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-lbl">Win Rate</div>
-        <div class="stat-val ${winColor}">${data.win_rate}%</div>
+        <div class="stat-val ${wc}">${data.win_rate}%</div>
         <div class="stat-sub">${data.wins}W / ${data.losses}L</div>
       </div>
       <div class="stat-card">
         <div class="stat-lbl">Expectancy / Trade</div>
-        <div class="stat-val ${exptColor}">${fmtInr(data.expectancy_inr)}</div>
+        <div class="stat-val ${ec}">${fmtInr(data.expectancy_inr)}</div>
         <div class="stat-sub">1 lot · ${data.lot_size} units</div>
       </div>
       <div class="stat-card">
         <div class="stat-lbl">Total P&amp;L</div>
-        <div class="stat-val ${pnlColor}">${fmtInr(data.total_pnl_inr)}</div>
-        <div class="stat-sub">${data.days_tested} trading days</div>
+        <div class="stat-val ${pc}">${fmtInr(data.total_pnl_inr)}</div>
+        <div class="stat-sub">${data.days_tested} days</div>
       </div>
       <div class="stat-card">
-        <div class="stat-lbl">Avg Profit / Avg Loss</div>
-        <div class="stat-val val-blue" style="font-size:16px;">
+        <div class="stat-lbl">Avg Win / Avg Loss</div>
+        <div class="stat-val val-blue" style="font-size:15px">
           +₹${Math.abs(data.avg_profit_inr).toLocaleString("en-IN")}
-          <span style="color:#484f58;font-size:12px;"> / </span>
-          <span style="color:#f85149;">-₹${Math.abs(data.avg_loss_inr).toLocaleString("en-IN")}</span>
+          <span style="color:#484f58;"> / </span>
+          <span style="color:#f85149">-₹${Math.abs(data.avg_loss_inr).toLocaleString("en-IN")}</span>
         </div>
         <div class="stat-sub">Max loss: ${fmtInr(data.max_loss_inr)}</div>
       </div>
@@ -653,30 +752,28 @@ function renderResults(data) {
 
     <div class="curve-section">
       <div class="curve-title">Cumulative P&amp;L (₹)</div>
-      <canvas class="curve-canvas" id="equityCurve"></canvas>
+      <canvas class="curve-canvas" id="eqCurve"></canvas>
     </div>
 
     <div class="table-section">
       <div class="table-head">
-        <span class="table-title">Per-Day Results (${data.days_tested} days)</span>
-        <span style="font-size:11px;color:#484f58;">Skipped: ${data.days_skipped} days (missing LTPs)</span>
+        <span class="table-title">Per-Day Results</span>
+        <span style="font-size:10px;color:#484f58">${data.days_tested} days</span>
       </div>
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr>
-              <th>Date</th><th>ATM</th><th>Expiry</th>
-              <th>Net Prem</th><th>Sell</th><th>Buy</th>
-              <th>P&amp;L (pts)</th><th>P&amp;L (₹)</th><th>Result</th>
-            </tr>
-          </thead>
+          <thead><tr>
+            <th>Date</th><th>DTE</th><th>ATM</th><th>Sell</th>
+            <th>Premium</th>${thExtra}
+            <th>P&L pts</th><th>P&L ₹</th><th>Result</th>
+          </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
     </div>`;
 
   area.style.display = "block";
-  drawEquityCurve(data.per_day || []);
+  drawCurve(data.per_day || []);
 }
 
 function renderError(msg) {
@@ -686,65 +783,214 @@ function renderError(msg) {
 }
 
 // ── Equity curve ──────────────────────────────────────────────────────────────
-function drawEquityCurve(perDay) {
-  const canvas = document.getElementById("equityCurve");
+function drawCurve(perDay) {
+  const canvas = document.getElementById("eqCurve");
   if (!canvas || !perDay.length) return;
   const ctx = canvas.getContext("2d");
-
-  canvas.width  = canvas.offsetWidth  * window.devicePixelRatio;
-  canvas.height = canvas.offsetHeight * window.devicePixelRatio;
-  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-
-  const W = canvas.offsetWidth;
-  const H = canvas.offsetHeight;
-  const PAD = { t: 10, b: 20, l: 8, r: 8 };
-
-  // Build cumulative series (per_day is newest-first; reverse for chronological)
+  canvas.width  = canvas.offsetWidth  * devicePixelRatio;
+  canvas.height = canvas.offsetHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  const P = { t: 8, b: 18, l: 6, r: 6 };
   const days = [...perDay].reverse();
   let cum = 0;
   const pts = days.map(d => { cum += d.pnl_inr; return cum; });
-
-  const maxV = Math.max(...pts, 0);
-  const minV = Math.min(...pts, 0);
-  const range = maxV - minV || 1;
-
-  const xScale = (i) => PAD.l + i * (W - PAD.l - PAD.r) / Math.max(pts.length - 1, 1);
-  const yScale = (v) => PAD.t + (1 - (v - minV) / range) * (H - PAD.t - PAD.b);
-
-  // Zero line
-  ctx.strokeStyle = "#21262d";
-  ctx.lineWidth   = 1;
+  const maxV = Math.max(...pts, 0), minV = Math.min(...pts, 0);
+  const rng = maxV - minV || 1;
+  const xS = i => P.l + i * (W - P.l - P.r) / Math.max(pts.length - 1, 1);
+  const yS = v => P.t + (1 - (v - minV) / rng) * (H - P.t - P.b);
+  ctx.strokeStyle = "#21262d"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(P.l, yS(0)); ctx.lineTo(W - P.r, yS(0)); ctx.stroke();
+  const last = pts[pts.length - 1] || 0;
+  const grad = ctx.createLinearGradient(0, P.t, 0, H - P.b);
+  if (last >= 0) { grad.addColorStop(0, "rgba(63,185,80,0.3)"); grad.addColorStop(1, "rgba(63,185,80,0)"); }
+  else           { grad.addColorStop(0, "rgba(248,81,73,0)");   grad.addColorStop(1, "rgba(248,81,73,0.3)"); }
   ctx.beginPath();
-  ctx.moveTo(PAD.l, yScale(0));
-  ctx.lineTo(W - PAD.r, yScale(0));
+  ctx.moveTo(xS(0), yS(pts[0]));
+  pts.forEach((v, i) => ctx.lineTo(xS(i), yS(v)));
+  ctx.lineTo(xS(pts.length-1), H-P.b); ctx.lineTo(P.l, H-P.b); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath(); ctx.strokeStyle = last >= 0 ? "#3fb950" : "#f85149"; ctx.lineWidth = 2; ctx.lineJoin = "round";
+  pts.forEach((v, i) => i === 0 ? ctx.moveTo(xS(i), yS(v)) : ctx.lineTo(xS(i), yS(v)));
   ctx.stroke();
+}
 
-  // Gradient fill
-  const grad = ctx.createLinearGradient(0, PAD.t, 0, H - PAD.b);
-  const lastVal = pts[pts.length - 1] || 0;
-  if (lastVal >= 0) {
-    grad.addColorStop(0, "rgba(63,185,80,0.3)");
-    grad.addColorStop(1, "rgba(63,185,80,0)");
-  } else {
-    grad.addColorStop(0, "rgba(248,81,73,0)");
-    grad.addColorStop(1, "rgba(248,81,73,0.3)");
+// ── Save strategy ─────────────────────────────────────────────────────────────
+function openSave() {
+  if (!S.lastResult) return;
+  const strat = STRAT_MAP[S.strategy] || {};
+  const today = new Date().toLocaleDateString("en-IN", {day:"2-digit", month:"short", year:"numeric"});
+  document.getElementById("saveName").value  = `${strat.display_name || S.strategy} — ${S.symbol} (${today})`;
+  document.getElementById("saveNotes").value = "";
+  document.getElementById("saveOverlay").classList.add("open");
+}
+function closeSave() { document.getElementById("saveOverlay").classList.remove("open"); }
+
+async function submitSave() {
+  const name  = document.getElementById("saveName").value.trim();
+  const notes = document.getElementById("saveNotes").value.trim();
+  if (!name) { document.getElementById("saveName").focus(); return; }
+
+  const r = S.lastResult;
+  const body = {
+    name,
+    strategy_key: S.strategy,
+    instrument:   S.symbol,
+    date_from:    S.dateFrom,
+    date_to:      S.dateTo,
+    params: {
+      wing_width:    S.wing,
+      skip_high_vol: document.getElementById("skipCheck")?.checked,
+    },
+    summary: {
+      win_rate:       r.win_rate,
+      expectancy_inr: r.expectancy_inr,
+      total_pnl_inr:  r.total_pnl_inr,
+      days_tested:    r.days_tested,
+      data_quality:   r.data_quality,
+      tested_from:    r.tested_from,
+      tested_to:      r.tested_to,
+      lot_size:       r.lot_size,
+    },
+    notes,
+  };
+
+  try {
+    const resp = await fetch("/api/strategies/saved", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    closeSave();
+    // Refresh saved list
+    const list = await (await fetch("/api/strategies/saved")).json();
+    renderSavedList(list);
+  } catch (e) {
+    alert("Save failed: " + e.message);
   }
-  ctx.beginPath();
-  ctx.moveTo(xScale(0), yScale(pts[0]));
-  pts.forEach((v, i) => ctx.lineTo(xScale(i), yScale(v)));
-  ctx.lineTo(xScale(pts.length - 1), H - PAD.b);
-  ctx.lineTo(PAD.l, H - PAD.b);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
+}
 
-  // Line
-  ctx.beginPath();
-  ctx.strokeStyle = lastVal >= 0 ? "#3fb950" : "#f85149";
-  ctx.lineWidth   = 2;
-  ctx.lineJoin    = "round";
-  pts.forEach((v, i) => i === 0 ? ctx.moveTo(xScale(i), yScale(v)) : ctx.lineTo(xScale(i), yScale(v)));
-  ctx.stroke();
+// ── Saved strategies list ─────────────────────────────────────────────────────
+function renderSavedList(items) {
+  const el = document.getElementById("savedList");
+  if (!items || !items.length) {
+    el.innerHTML = '<div class="no-saved">No saved strategies yet</div>';
+    return;
+  }
+  el.innerHTML = items.map(item => {
+    const s   = item.summary || {};
+    const strat = STRAT_MAP[item.strategy_key] || {};
+    const wr  = s.win_rate != null ? s.win_rate + "%" : "—";
+    const pnl = s.total_pnl_inr != null
+      ? (s.total_pnl_inr >= 0 ? "+" : "") + "₹" + Math.abs(s.total_pnl_inr).toLocaleString("en-IN")
+      : "—";
+    const pnlColor = (s.total_pnl_inr || 0) >= 0 ? "#3fb950" : "#f85149";
+    return `
+      <div class="saved-item" onclick="loadSaved(${JSON.stringify(item).replace(/"/g,'&quot;')})">
+        <div class="saved-item-body">
+          <div class="saved-name">${item.name}</div>
+          <div class="saved-meta">
+            ${strat.display_name || item.strategy_key} · ${item.instrument}
+            &nbsp;·&nbsp; WR: ${wr}
+            &nbsp;·&nbsp; <span style="color:${pnlColor}">${pnl}</span>
+          </div>
+          <div class="saved-meta">${item.created_ist || ""}</div>
+        </div>
+        <button class="saved-del" onclick="event.stopPropagation();deleteSaved(${item.id})" title="Delete">🗑</button>
+      </div>`;
+  }).join("");
+}
+
+function loadSaved(item) {
+  const s = item.summary || {};
+  const strat = STRAT_MAP[item.strategy_key];
+  if (!strat) return;
+
+  // Set state
+  S.strategy = item.strategy_key;
+  S.symbol   = item.instrument;
+  S.dateFrom = item.date_from;
+  S.dateTo   = item.date_to;
+
+  // Update strategy dropdown & trigger change
+  document.getElementById("stratSelect").value = item.strategy_key;
+  onStrategyChange();
+
+  // Set instrument
+  const is = document.getElementById("instrSelect");
+  is.value = item.instrument;
+  // Show static info manually (skip API call)
+  const cfg = INSTR_MAP[item.instrument];
+  if (cfg) {
+    const exBadge = cfg.exchange === "NFO"
+      ? `<span class="exch-badge nfo">NFO</span>`
+      : `<span class="exch-badge mcx">MCX</span>`;
+    document.getElementById("instrInfo").classList.add("visible");
+    document.getElementById("iExchange").innerHTML    = exBadge;
+    document.getElementById("iLotSize").textContent   = cfg.lot_size.toLocaleString("en-IN") + " units";
+    document.getElementById("iStrikeStep").textContent = cfg.strike_step + " pts";
+    document.getElementById("iHours").textContent     = cfg.market_hours;
+    document.getElementById("iDbDays").textContent    = (s.days_tested || "—") + " days (saved)";
+    document.getElementById("iDateMin").textContent   = item.date_from || "—";
+    document.getElementById("iDateMax").textContent   = item.date_to   || "—";
+  }
+
+  // Set dates
+  setDateDisp("from", item.date_from);
+  setDateDisp("to",   item.date_to);
+  document.getElementById("dateSection").style.display = "block";
+  document.getElementById("runSection").style.display  = "block";
+
+  // Show saved summary immediately in results
+  S.lastResult = { ...s, strategy: item.strategy_key, instrument: item.instrument, per_day: [] };
+  renderSavedSummary(item, s);
+}
+
+function renderSavedSummary(item, s) {
+  const area  = document.getElementById("resultsArea");
+  const strat = STRAT_MAP[item.strategy_key] || {};
+  const fmtInr = v => (v >= 0 ? "+" : "-") + "₹" + Math.abs(v).toLocaleString("en-IN");
+  const wc = (s.win_rate||0) >= 60 ? "val-green" : (s.win_rate||0) >= 45 ? "val-warn" : "val-red";
+  const pc = (s.total_pnl_inr||0) >= 0 ? "val-green" : "val-red";
+  const ec = (s.expectancy_inr||0) >= 0 ? "val-green" : "val-red";
+  const qMap = { good:"q-good", limited:"q-limited", insufficient:"q-insufficient" };
+  const qLbl = { good:"Good data", limited:"Limited data", insufficient:"Insufficient" };
+  const q = s.data_quality || "insufficient";
+
+  document.getElementById("emptyState").style.display   = "none";
+  document.getElementById("loadingState").style.display = "none";
+  area.innerHTML = `
+    <div style="background:rgba(31,111,235,0.08);border:1px solid rgba(31,111,235,0.2);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#58a6ff;">
+      📋 Loaded saved run: <strong>${item.name}</strong>
+      ${item.notes ? `<br><span style="color:#8b949e;font-size:11px">${item.notes}</span>` : ""}
+      &nbsp;·&nbsp; <button onclick="runBacktest()" style="background:none;border:none;color:#58a6ff;cursor:pointer;font-size:12px;text-decoration:underline">Re-run with current data</button>
+    </div>
+    <div class="result-header">
+      <div>
+        <div class="result-title">${strat.display_name || item.strategy_key} — ${item.instrument}</div>
+        <div class="result-meta">${s.tested_from||"—"} → ${s.tested_to||"—"} · ${s.days_tested||"—"} days</div>
+      </div>
+      <span class="quality-badge ${qMap[q]||'q-insufficient'}">${qLbl[q]||q}</span>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-lbl">Win Rate</div><div class="stat-val ${wc}">${s.win_rate||"—"}%</div></div>
+      <div class="stat-card"><div class="stat-lbl">Expectancy</div><div class="stat-val ${ec}">${s.expectancy_inr != null ? fmtInr(s.expectancy_inr) : "—"}</div></div>
+      <div class="stat-card"><div class="stat-lbl">Total P&L</div><div class="stat-val ${pc}">${s.total_pnl_inr != null ? fmtInr(s.total_pnl_inr) : "—"}</div></div>
+      <div class="stat-card"><div class="stat-lbl">Lot Size</div><div class="stat-val val-blue" style="font-size:18px">${s.lot_size||"—"}</div></div>
+    </div>
+    <div style="text-align:center;padding:40px;color:#484f58;font-size:13px;">
+      Click <strong>▶ Run Backtest</strong> to reload per-day results with latest DB data
+    </div>`;
+  area.style.display = "block";
+}
+
+async function deleteSaved(id) {
+  if (!confirm("Delete this saved strategy?")) return;
+  await fetch("/api/strategies/saved/" + id, { method: "DELETE" });
+  const list = await (await fetch("/api/strategies/saved")).json();
+  renderSavedList(list);
 }
 </script>
 </body>

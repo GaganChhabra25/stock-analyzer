@@ -384,6 +384,461 @@ def find_optimal_wing_width(
     }
 
 
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+def _build_summary(per_day: list, instrument: str, lot: int, strategy_key: str, extra: dict = None) -> dict:
+    """Compute standard summary stats from a per_day list."""
+    wins   = [d for d in per_day if d["win"]]
+    losses = [d for d in per_day if not d["win"]]
+    n      = len(per_day)
+    if n == 0:
+        return {}
+
+    win_rate   = round(len(wins) / n * 100, 1)
+    avg_profit = round(sum(d["pnl_inr"] for d in wins)   / len(wins),   0) if wins   else 0
+    avg_loss   = round(sum(d["pnl_inr"] for d in losses) / len(losses), 0) if losses else 0
+    expectancy = round((win_rate / 100) * avg_profit + (1 - win_rate / 100) * avg_loss, 0)
+    total_pnl  = sum(d["pnl_inr"] for d in per_day)
+
+    quality = ("insufficient" if n < MIN_DAYS_REQUIRED
+               else "limited"  if n < MIN_DAYS_RELIABLE
+               else "good")
+
+    result = {
+        "strategy":       strategy_key,
+        "instrument":     instrument,
+        "lot_size":       lot,
+        "days_tested":    n,
+        "days_skipped":   extra.get("days_skipped", 0) if extra else 0,
+        "wins":           len(wins),
+        "losses":         len(losses),
+        "win_rate":       win_rate,
+        "avg_profit_inr": int(avg_profit),
+        "avg_loss_inr":   int(avg_loss),
+        "expectancy_inr": int(expectancy),
+        "total_pnl_inr":  int(total_pnl),
+        "max_profit_inr": max((d["pnl_inr"] for d in per_day), default=0),
+        "max_loss_inr":   min((d["pnl_inr"] for d in per_day), default=0),
+        "data_quality":   quality,
+        "tested_from":    per_day[-1]["date"] if per_day else None,
+        "tested_to":      per_day[0]["date"]  if per_day else None,
+        "per_day":        per_day,
+    }
+    if extra:
+        result.update({k: v for k, v in extra.items() if k != "days_skipped"})
+    return result
+
+
+def _get_trade_dates(cur, instrument: str, lookback_days: int,
+                     date_from: Optional[str], date_to: Optional[str],
+                     dte_max: int = 999) -> list:
+    """Return list of (trade_date, nearest_expiry) tuples for backtest loop."""
+    dte_filter = f"AND (expiry - ts::date) <= {dte_max}" if dte_max < 999 else ""
+    if date_from and date_to:
+        cur.execute(
+            f"""
+            SELECT DISTINCT ts::date AS d, MIN(expiry) AS exp
+            FROM option_chain
+            WHERE instrument = %s
+              AND ts::date BETWEEN %s AND %s
+              {dte_filter}
+            GROUP BY ts::date
+            ORDER BY d DESC
+            """,
+            (instrument, date_from, date_to),
+        )
+    else:
+        cur.execute(
+            f"""
+            SELECT DISTINCT ts::date AS d, MIN(expiry) AS exp
+            FROM option_chain
+            WHERE instrument = %s
+              AND ts::date >= CURRENT_DATE - (%s || ' days')::INTERVAL
+              {dte_filter}
+            GROUP BY ts::date
+            ORDER BY d DESC
+            """,
+            (instrument, lookback_days + 5),
+        )
+    return [(r[0], r[1]) for r in cur.fetchall()]
+
+
+def _prev_day_ranges(cur, instrument: str, lookback_days: int) -> dict:
+    """Return {date: range_pts} for prev-day-range filter."""
+    cur.execute(
+        """
+        SELECT ts::date AS d,
+               MAX(underlying_ltp) - MIN(underlying_ltp) AS rng
+        FROM option_chain
+        WHERE instrument = %s
+          AND ts::date >= CURRENT_DATE - (%s || ' days')::INTERVAL
+          AND underlying_ltp IS NOT NULL
+        GROUP BY ts::date
+        """,
+        (instrument, lookback_days + 10),
+    )
+    return {r[0]: float(r[1]) for r in cur.fetchall()}
+
+
+# ── OI-Anchored Strangle ───────────────────────────────────────────────────────
+
+def backtest_oi_strangle(
+    instrument:       str = "NIFTY",
+    lookback_days:     int = 60,
+    date_from:        Optional[str] = None,
+    date_to:          Optional[str] = None,
+    skip_high_vol:    bool = True,
+    high_vol_thresh:  int  = 350,
+) -> dict:
+    """
+    OI-Anchored Strangle backtest.
+
+    At 10:30 AM each day (DTE 0–5 only):
+      - Find CE strike with highest Open Interest above ATM  → Sell that CE
+      - Find PE strike with highest Open Interest below ATM  → Sell that PE
+    Exit at 2:45 PM.  SL if either leg doubles.
+    Optional: skip days where the previous session's range > high_vol_thresh pts.
+    """
+    instr = instrument.upper()
+    cfg   = _INSTR_REGISTRY.get(instr)
+    step  = cfg.strike_step if cfg else 50
+    lot   = cfg.lot_size    if cfg else 75
+
+    ckey = f"oi_strangle:{instr}:{date_from or ''}:{date_to or ''}:{skip_high_vol}"
+    if (hit := _cached(ckey)):
+        return hit
+
+    if not is_available():
+        return {"error": "DB unavailable", "instrument": instr}
+
+    per_day   = []
+    days_skip = 0
+
+    ENTRY_H, ENTRY_M = 10, 30
+    EXIT_H,  EXIT_M  = 14, 45
+    WIN_MINS         = 8
+
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                trade_days  = _get_trade_dates(cur, instr, lookback_days,
+                                               date_from, date_to, dte_max=5)
+                prev_ranges = _prev_day_ranges(cur, instr, lookback_days) if skip_high_vol else {}
+
+                for trade_date, expiry in trade_days:
+                    dte = (expiry - trade_date).days
+
+                    # ── Skip high-vol previous days ────────────────────────────
+                    if skip_high_vol:
+                        prev_rng = 0.0
+                        for lag in range(1, 5):
+                            from datetime import timedelta
+                            pd = trade_date - timedelta(days=lag)
+                            if pd in prev_ranges:
+                                prev_rng = prev_ranges[pd]
+                                break
+                        if prev_rng > high_vol_thresh:
+                            days_skip += 1
+                            continue
+
+                    entry_ts = _ist_to_ts(trade_date, ENTRY_H, ENTRY_M)
+                    win_s    = entry_ts - timedelta(minutes=WIN_MINS)
+                    win_e    = entry_ts + timedelta(minutes=WIN_MINS)
+
+                    # ── Spot at entry ──────────────────────────────────────────
+                    cur.execute(
+                        """
+                        SELECT AVG(underlying_ltp)
+                        FROM option_chain
+                        WHERE instrument = %s AND expiry = %s
+                          AND ts BETWEEN %s AND %s
+                          AND underlying_ltp IS NOT NULL
+                        """,
+                        (instr, expiry, win_s, win_e),
+                    )
+                    row = cur.fetchone()
+                    if not row or not row[0]:
+                        days_skip += 1
+                        continue
+                    spot = float(row[0])
+                    atm  = int(round(spot / step) * step)
+
+                    # ── Max-OI CE above ATM ────────────────────────────────────
+                    cur.execute(
+                        """
+                        SELECT strike, MAX(oi) AS max_oi, AVG(ltp) AS avg_ltp
+                        FROM option_chain
+                        WHERE instrument = %s AND expiry = %s
+                          AND option_type = 'CE'
+                          AND strike > %s
+                          AND ts BETWEEN %s AND %s
+                          AND oi > 0 AND ltp > 0
+                        GROUP BY strike
+                        ORDER BY max_oi DESC
+                        LIMIT 1
+                        """,
+                        (instr, expiry, atm, win_s, win_e),
+                    )
+                    ce_row = cur.fetchone()
+
+                    # ── Max-OI PE below ATM ────────────────────────────────────
+                    cur.execute(
+                        """
+                        SELECT strike, MAX(oi) AS max_oi, AVG(ltp) AS avg_ltp
+                        FROM option_chain
+                        WHERE instrument = %s AND expiry = %s
+                          AND option_type = 'PE'
+                          AND strike < %s
+                          AND ts BETWEEN %s AND %s
+                          AND oi > 0 AND ltp > 0
+                        GROUP BY strike
+                        ORDER BY max_oi DESC
+                        LIMIT 1
+                        """,
+                        (instr, expiry, atm, win_s, win_e),
+                    )
+                    pe_row = cur.fetchone()
+
+                    if not ce_row or not pe_row:
+                        days_skip += 1
+                        continue
+
+                    sell_ce   = int(ce_row[0])
+                    ce_oi     = int(ce_row[1])
+                    ce_entry  = float(ce_row[2])
+                    sell_pe   = int(pe_row[0])
+                    pe_oi     = int(pe_row[1])
+                    pe_entry  = float(pe_row[2])
+
+                    if ce_entry <= 0 or pe_entry <= 0:
+                        days_skip += 1
+                        continue
+
+                    net_premium = round(ce_entry + pe_entry, 1)
+
+                    # ── Exit LTPs ──────────────────────────────────────────────
+                    exit_ts = _ist_to_ts(trade_date, EXIT_H, EXIT_M)
+                    ce_exit = _get_ltp(cur, instr, expiry, sell_ce, "CE", exit_ts, EXIT_WINDOW_MIN) or 0.0
+                    pe_exit = _get_ltp(cur, instr, expiry, sell_pe, "PE", exit_ts, EXIT_WINDOW_MIN) or 0.0
+
+                    net_exit = round(ce_exit + pe_exit, 1)
+                    pnl_pts  = round(net_premium - net_exit, 1)
+
+                    # SL: either leg doubles → cap loss at 0.8× premium
+                    sl_hit = False
+                    if ce_exit > 2 * ce_entry or pe_exit > 2 * pe_entry:
+                        sl_hit  = True
+                        pnl_pts = round(-net_premium * 0.8, 1)
+
+                    pnl_inr = round(pnl_pts * lot, 0)
+
+                    per_day.append({
+                        "date":          str(trade_date),
+                        "expiry":        str(expiry),
+                        "dte":           dte,
+                        "spot":          round(spot, 1),
+                        "atm":           atm,
+                        "sell_ce":       sell_ce,
+                        "sell_pe":       sell_pe,
+                        "ce_oi":         ce_oi,
+                        "pe_oi":         pe_oi,
+                        "strangle_width": sell_ce - sell_pe,
+                        "net_premium":   net_premium,
+                        "ce_entry":      round(ce_entry, 1),
+                        "pe_entry":      round(pe_entry, 1),
+                        "ce_exit":       round(ce_exit, 1),
+                        "pe_exit":       round(pe_exit, 1),
+                        "net_exit":      net_exit,
+                        "pnl_pts":       pnl_pts,
+                        "pnl_inr":       int(pnl_inr),
+                        "win":           pnl_pts > 0,
+                        "sl_hit":        sl_hit,
+                    })
+
+    except Exception as exc:
+        logger.error("backtest_oi_strangle error: %s", exc)
+        return {"error": str(exc), "instrument": instr}
+
+    if not per_day:
+        return {
+            "strategy": "OI_STRANGLE", "instrument": instr,
+            "days_tested": 0, "days_skipped": days_skip,
+            "data_quality": "insufficient",
+            "error": "No qualifying days found (check DTE filter / OI availability)",
+        }
+
+    result = _build_summary(per_day, instr, lot, "OI_STRANGLE",
+                            {"days_skipped": days_skip,
+                             "high_vol_thresh": high_vol_thresh,
+                             "skip_high_vol": skip_high_vol})
+    _store(ckey, result)
+    return result
+
+
+# ── 0DTE Straddle ──────────────────────────────────────────────────────────────
+
+def backtest_0dte_straddle(
+    instrument:   str = "NIFTY",
+    lookback_days: int = 60,
+    date_from:    Optional[str] = None,
+    date_to:      Optional[str] = None,
+) -> dict:
+    """
+    0DTE ATM Straddle — only on expiry days.
+
+    Entry  9:30 AM  →  Sell ATM CE + ATM PE
+    Exit   1:30 PM  →  Close both legs
+    SL     spot moves > 150 pts from entry ATM → exit at market
+    """
+    instr = instrument.upper()
+    cfg   = _INSTR_REGISTRY.get(instr)
+    step  = cfg.strike_step if cfg else 50
+    lot   = cfg.lot_size    if cfg else 75
+
+    ckey = f"0dte_straddle:{instr}:{date_from or ''}:{date_to or ''}"
+    if (hit := _cached(ckey)):
+        return hit
+
+    if not is_available():
+        return {"error": "DB unavailable", "instrument": instr}
+
+    per_day   = []
+    days_skip = 0
+
+    ENTRY_H, ENTRY_M = 9, 30
+    EXIT_H,  EXIT_M  = 13, 30
+    SL_MOVE          = 150
+
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                # DTE = 0 only (expiry day = trade_date)
+                trade_days = _get_trade_dates(cur, instr, lookback_days,
+                                              date_from, date_to, dte_max=0)
+
+                for trade_date, expiry in trade_days:
+                    entry_ts = _ist_to_ts(trade_date, ENTRY_H, ENTRY_M)
+                    win_s    = entry_ts - timedelta(minutes=ENTRY_WINDOW_MIN)
+                    win_e    = entry_ts + timedelta(minutes=ENTRY_WINDOW_MIN)
+
+                    atm, expiry_db, spot = _get_atm_at_entry(cur, instr, trade_date, step)
+                    # Use 9:30 AM specifically
+                    cur.execute(
+                        """
+                        SELECT AVG(underlying_ltp)
+                        FROM option_chain
+                        WHERE instrument = %s AND expiry = %s
+                          AND ts BETWEEN %s AND %s
+                          AND underlying_ltp IS NOT NULL
+                        """,
+                        (instr, expiry, win_s, win_e),
+                    )
+                    row = cur.fetchone()
+                    if not row or not row[0]:
+                        days_skip += 1
+                        continue
+                    spot = float(row[0])
+                    atm  = int(round(spot / step) * step)
+
+                    e_ce = _get_ltp(cur, instr, expiry, atm, "CE", entry_ts, ENTRY_WINDOW_MIN)
+                    e_pe = _get_ltp(cur, instr, expiry, atm, "PE", entry_ts, ENTRY_WINDOW_MIN)
+
+                    if not e_ce or not e_pe:
+                        days_skip += 1
+                        continue
+
+                    net_premium = round(e_ce + e_pe, 1)
+                    if net_premium <= 0:
+                        days_skip += 1
+                        continue
+
+                    # Exit at 1:30 PM
+                    exit_ts = _ist_to_ts(trade_date, EXIT_H, EXIT_M)
+                    x_ce = _get_ltp(cur, instr, expiry, atm, "CE", exit_ts, EXIT_WINDOW_MIN) or 0.0
+                    x_pe = _get_ltp(cur, instr, expiry, atm, "PE", exit_ts, EXIT_WINDOW_MIN) or 0.0
+
+                    # Check SL: did spot move > SL_MOVE from ATM?
+                    cur.execute(
+                        """
+                        SELECT MAX(ABS(underlying_ltp - %s))
+                        FROM option_chain
+                        WHERE instrument = %s AND ts::date = %s
+                          AND (ts AT TIME ZONE 'Asia/Kolkata')::time
+                              BETWEEN '09:30:00' AND '13:30:00'
+                          AND underlying_ltp IS NOT NULL
+                        """,
+                        (atm, instr, trade_date),
+                    )
+                    max_move_row = cur.fetchone()
+                    max_move = float(max_move_row[0]) if max_move_row and max_move_row[0] else 0.0
+
+                    sl_hit  = max_move > SL_MOVE
+                    net_exit = round(x_ce + x_pe, 1)
+                    pnl_pts  = round(net_premium - net_exit, 1)
+                    if sl_hit:
+                        pnl_pts = round(-net_premium * 0.7, 1)
+
+                    pnl_inr = round(pnl_pts * lot, 0)
+
+                    per_day.append({
+                        "date":        str(trade_date),
+                        "expiry":      str(expiry),
+                        "dte":         0,
+                        "spot":        round(spot, 1),
+                        "atm":         atm,
+                        "sell_ce":     atm,
+                        "sell_pe":     atm,
+                        "net_premium": net_premium,
+                        "ce_entry":    round(e_ce, 1),
+                        "pe_entry":    round(e_pe, 1),
+                        "ce_exit":     round(x_ce, 1),
+                        "pe_exit":     round(x_pe, 1),
+                        "net_exit":    net_exit,
+                        "max_move":    round(max_move, 1),
+                        "pnl_pts":     pnl_pts,
+                        "pnl_inr":     int(pnl_inr),
+                        "win":         pnl_pts > 0,
+                        "sl_hit":      sl_hit,
+                    })
+
+    except Exception as exc:
+        logger.error("backtest_0dte_straddle error: %s", exc)
+        return {"error": str(exc), "instrument": instr}
+
+    if not per_day:
+        return {
+            "strategy": "ZERO_DTE_STRADDLE", "instrument": instr,
+            "days_tested": 0, "days_skipped": days_skip,
+            "data_quality": "insufficient",
+            "error": "No expiry days found in date range",
+        }
+
+    result = _build_summary(per_day, instr, lot, "ZERO_DTE_STRADDLE",
+                            {"days_skipped": days_skip, "sl_move_pts": SL_MOVE})
+    _store(ckey, result)
+    return result
+
+
+# ── Dispatcher: run any strategy by key ───────────────────────────────────────
+
+def run_strategy(strategy_key: str, instrument: str,
+                 wing_width: int = DEFAULT_WING,
+                 lookback_days: int = 60,
+                 date_from: Optional[str] = None,
+                 date_to: Optional[str] = None,
+                 **kwargs) -> dict:
+    """Single entry point used by the API route."""
+    key = strategy_key.upper()
+    if key == "IRON_FLY":
+        return backtest_iron_fly(instrument, wing_width, lookback_days, date_from, date_to)
+    if key == "OI_STRANGLE":
+        return backtest_oi_strangle(instrument, lookback_days, date_from, date_to,
+                                    skip_high_vol=kwargs.get("skip_high_vol", True))
+    if key == "ZERO_DTE_STRADDLE":
+        return backtest_0dte_straddle(instrument, lookback_days, date_from, date_to)
+    return {"error": f"Unknown strategy: {strategy_key}"}
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
