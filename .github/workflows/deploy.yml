@@ -17,33 +17,35 @@ jobs:
           echo "All secrets are present"
 
       - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          debug: true
-          envs: GH_PAT
-          script: |
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" bash -s << ENDSSH
             set -e
             DEPLOY_DIR=/home/stockapp/stock-analyzer
-            VENV=$DEPLOY_DIR/venv
+            VENV=\$DEPLOY_DIR/venv
             # Fix DNS if needed
             grep -q "8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
             # Pull latest code
-            if [ ! -d $DEPLOY_DIR/.git ]; then
-              sudo -u stockapp git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git $DEPLOY_DIR
+            if [ ! -d \$DEPLOY_DIR/.git ]; then
+              sudo -u stockapp git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git \$DEPLOY_DIR
             else
-              sudo -u stockapp git -C $DEPLOY_DIR fetch https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git master
-              sudo -u stockapp git -C $DEPLOY_DIR reset --hard FETCH_HEAD
+              sudo -u stockapp git -C \$DEPLOY_DIR fetch https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git master
+              sudo -u stockapp git -C \$DEPLOY_DIR reset --hard FETCH_HEAD
             fi
             # Install dependencies
-            sudo -u stockapp $VENV/bin/pip install -r $DEPLOY_DIR/requirements.txt -q
+            sudo -u stockapp \$VENV/bin/pip install -r \$DEPLOY_DIR/requirements.txt -q
             # Restart app
             systemctl restart stock-analyzer
             # Update crontab from version-controlled file
-            crontab -u stockapp $DEPLOY_DIR/deploy/contabo/crontab
-            echo "Deployed + crontab updated at $(date)"
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+            crontab -u stockapp \$DEPLOY_DIR/deploy/contabo/crontab
+            echo "Deployed + crontab updated at \$(date)"
+          ENDSSH
