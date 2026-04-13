@@ -42,6 +42,8 @@ jobs:
             sudo -u stockapp $VENV/bin/pip install -r $DEPLOY_DIR/requirements.txt -q
             # Restart app
             systemctl restart stock-analyzer
-            echo "Deployed successfully at $(date)"
+            # Update crontab from version-controlled file
+            crontab -u stockapp $DEPLOY_DIR/deploy/contabo/crontab
+            echo "Deployed + crontab updated at $(date)"
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
