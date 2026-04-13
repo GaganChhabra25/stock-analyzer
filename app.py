@@ -621,6 +621,54 @@ def _fetch_live_ltps(kite, instrument: str, expiry, strikes_types: list) -> dict
         return {"_debug": debug, "_error": str(exc)}
 
 
+@app.route("/backtest")
+@login_required
+def backtest_page():
+    """Backtest explorer — instrument selector + date-range + results."""
+    from options.instrument_config import as_json_list
+    import json as _json
+    return render_template(
+        "backtest.html",
+        user=session["user"],
+        instruments_json=_json.dumps(as_json_list()),
+    )
+
+
+@app.route("/api/backtest-dates")
+@login_required
+def api_backtest_dates():
+    """Return sorted list of dates for which DB has option_chain rows."""
+    from options.instrument_config import get as get_instr_cfg
+    instrument = request.args.get("instrument", "NIFTY").upper()
+
+    if not get_instr_cfg(instrument):
+        return jsonify({"error": f"Unknown instrument: {instrument}"}), 400
+
+    if not db_available():
+        return jsonify({"error": "DB unavailable"}), 503
+
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT ts::date AS d
+                    FROM option_chain
+                    WHERE instrument = %s
+                    ORDER BY d
+                """, (instrument,))
+                dates = [str(r[0]) for r in cur.fetchall()]
+        return jsonify({
+            "instrument": instrument,
+            "dates":      dates,
+            "min_date":   dates[0]  if dates else None,
+            "max_date":   dates[-1] if dates else None,
+            "count":      len(dates),
+        })
+    except Exception as exc:
+        app.logger.error("api_backtest_dates error: %s", exc)
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/backtest")
 @login_required
 def api_backtest():
@@ -630,11 +678,14 @@ def api_backtest():
     wing_width = int(request.args.get("wing_width", 200))
     lookback   = min(int(request.args.get("lookback", 60)), 90)
     wing_scan  = request.args.get("wing_scan", "false").lower() == "true"
+    date_from  = request.args.get("date_from") or None
+    date_to    = request.args.get("date_to")   or None
 
     if wing_scan:
         result = find_optimal_wing_width(instrument, lookback_days=lookback)
     else:
-        result = backtest_iron_fly(instrument, wing_width, lookback)
+        result = backtest_iron_fly(instrument, wing_width, lookback,
+                                   date_from=date_from, date_to=date_to)
     return jsonify(result)
 
 

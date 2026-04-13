@@ -58,8 +58,34 @@ body {
 }
 .logout-btn:hover { background: rgba(255,255,255,0.2); }
 
+/* ── Page layout: sidebar + content ── */
+.page-layout { display: flex; min-height: calc(100vh - 72px); }
+
+/* ── Left sidebar ── */
+.sidebar {
+  width: 200px; flex-shrink: 0;
+  background: #161b22;
+  border-right: 1px solid #21262d;
+  padding: 20px 0;
+}
+.sidebar-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 20px;
+  color: #8b949e; font-size: 13px; font-weight: 500;
+  text-decoration: none; cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: all 0.15s;
+}
+.sidebar-item:hover { color: #f0f6fc; background: #1c2128; }
+.sidebar-item.active {
+  color: #f0f6fc; background: #1c2128;
+  border-left-color: #1f6feb;
+}
+.sidebar-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+.sidebar-divider { height: 1px; background: #21262d; margin: 10px 0; }
+
 /* ── Main content ── */
-.main { padding: 36px 40px; max-width: 960px; margin: 0 auto; }
+.main { padding: 36px 40px; max-width: 960px; flex: 1; }
 
 .page-title {
   font-size: 22px; font-weight: 700; color: #f0f6fc;
@@ -222,6 +248,26 @@ body {
   </div>
 </div>
 
+<!-- Page layout -->
+<div class="page-layout">
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <a href="/"         class="sidebar-item active">
+    <span class="sidebar-icon">📊</span> Dashboard
+  </a>
+  <a href="/backtest" class="sidebar-item">
+    <span class="sidebar-icon">📉</span> Backtest
+  </a>
+  <div class="sidebar-divider"></div>
+  <a href="/nifty"    class="sidebar-item">
+    <span class="sidebar-icon">🎯</span> Options Intel
+  </a>
+  <a href="/insights" class="sidebar-item">
+    <span class="sidebar-icon">🔬</span> DB Insights
+  </a>
+</nav>
+
 <!-- Main -->
 <div class="main">
   <div class="page-title">Dashboard</div>
@@ -348,7 +394,8 @@ body {
       <span class="val">₹6 Crore in 15 Years @ 15% CAGR</span>
     </div>
   </div>
-</div>
+</div><!-- /main -->
+</div><!-- /page-layout -->
 
 <script>
 var _polling = {};

@@ -18,6 +18,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from screener.db import _get_conn, is_available
+from options.instrument_config import REGISTRY as _INSTR_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +29,15 @@ MIN_DAYS_REQUIRED  = 3
 MIN_DAYS_RELIABLE  = 10
 ENTRY_WINDOW_MIN   = 15     # ±15 min around 9:20 AM (9:05–9:35)
 EXIT_WINDOW_MIN    = 20     # ±20 min around 3:10 PM (2:50–3:30)
-DEFAULT_WING       = 200    # points for NIFTY
-_STRIKE_STEP       = {"NIFTY": 50, "BANKNIFTY": 100}
-_LOT_SIZE          = {"NIFTY": 75, "BANKNIFTY": 15}
+DEFAULT_WING       = 200    # fallback if instrument not in registry
 
 # ── In-process cache (4-hour TTL) ──────────────────────────────────────────────
 _cache: dict = {}
 _CACHE_TTL   = 2 * 3600
 
 
-def _cache_key(instrument: str, wing: int, days: int) -> str:
-    return f"{instrument}:{wing}:{days}"
+def _cache_key(instrument: str, wing: int, date_from: Optional[str], date_to: Optional[str]) -> str:
+    return f"{instrument}:{wing}:{date_from or ''}:{date_to or ''}"
 
 
 def _cached(key: str) -> Optional[dict]:
@@ -134,6 +133,8 @@ def backtest_iron_fly(
     instrument:   str = "NIFTY",
     wing_width:   int = DEFAULT_WING,
     lookback_days: int = 60,
+    date_from:    Optional[str] = None,
+    date_to:      Optional[str] = None,
 ) -> dict:
     """
     Backtest intraday Iron Fly over DB history.
@@ -144,13 +145,16 @@ def backtest_iron_fly(
 
     Entry: 9:20 AM  |  Exit: 3:10 PM
     SL rule: if combined loss at exit >= 1× net_premium collected → SL_HIT
+
+    Date filtering priority: date_from/date_to > lookback_days.
     """
     instr = instrument.upper()
-    step  = _STRIKE_STEP.get(instr, 50)
-    lot   = _LOT_SIZE.get(instr, 75)
-    wing  = round(wing_width / step) * step  # snap to step
+    cfg   = _INSTR_REGISTRY.get(instr)
+    step  = cfg.strike_step if cfg else 50
+    lot   = cfg.lot_size    if cfg else 75
+    wing  = round(wing_width / step) * step  # snap to nearest valid step
 
-    cache_key = _cache_key(instr, wing, lookback_days)
+    cache_key = _cache_key(instr, wing, date_from, date_to)
     cached = _cached(cache_key)
     if cached:
         return cached
@@ -165,23 +169,31 @@ def backtest_iron_fly(
         with _get_conn() as conn:
             with conn.cursor() as cur:
                 # ── 1. Get trading days ─────────────────────────────────────
-                # Include today only if we have data past 3:10 PM (market closed)
-                cur.execute("""
-                    SELECT DISTINCT ts::date AS trade_date
-                    FROM option_chain
-                    WHERE instrument = %s
-                      AND ts::date  >= CURRENT_DATE - (%s || ' days')::INTERVAL
-                      AND (
-                          ts::date < CURRENT_DATE
-                          OR EXISTS (
-                              SELECT 1 FROM option_chain oc2
-                              WHERE oc2.instrument = %s
-                                AND oc2.ts::date = CURRENT_DATE
-                                AND oc2.ts::time >= '15:00:00'
+                if date_from and date_to:
+                    cur.execute("""
+                        SELECT DISTINCT ts::date AS trade_date
+                        FROM option_chain
+                        WHERE instrument = %s
+                          AND ts::date BETWEEN %s AND %s
+                        ORDER BY trade_date DESC
+                    """, (instr, date_from, date_to))
+                else:
+                    cur.execute("""
+                        SELECT DISTINCT ts::date AS trade_date
+                        FROM option_chain
+                        WHERE instrument = %s
+                          AND ts::date  >= CURRENT_DATE - (%s || ' days')::INTERVAL
+                          AND (
+                              ts::date < CURRENT_DATE
+                              OR EXISTS (
+                                  SELECT 1 FROM option_chain oc2
+                                  WHERE oc2.instrument = %s
+                                    AND oc2.ts::date = CURRENT_DATE
+                                    AND oc2.ts::time >= '15:00:00'
+                              )
                           )
-                      )
-                    ORDER BY trade_date DESC
-                """, (instr, lookback_days + 5, instr))
+                        ORDER BY trade_date DESC
+                    """, (instr, lookback_days + 5, instr))
                 trade_dates = [r[0] for r in cur.fetchall()]
 
                 if not trade_dates:
@@ -349,8 +361,9 @@ def find_optimal_wing_width(
     Test multiple wing widths and return best one by expectancy.
     """
     if widths is None:
-        step = _STRIKE_STEP.get(instrument.upper(), 50)
-        widths = [step * 2, step * 3, step * 4, step * 5]  # 100/150/200/250 for NIFTY
+        cfg  = _INSTR_REGISTRY.get(instrument.upper())
+        step = cfg.strike_step if cfg else 50
+        widths = [step * 2, step * 3, step * 4, step * 5]
 
     results = {}
     for w in widths:
