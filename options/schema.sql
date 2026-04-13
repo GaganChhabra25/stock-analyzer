@@ -87,12 +87,61 @@ COMMENT ON TABLE market_snapshot IS
     'Derived market-level metrics per minute. Shared across all users. Used for range prediction model.';
 
 
+-- ── MCX futures OHLC candles ──────────────────────────────────────────────────
+-- Stores daily + 15-min OHLC for NATURALGAS and CRUDEOIL futures.
+-- Source: Kite Connect historical API (near-month futures contract).
+-- Used for: ATR, S/R levels, trend, intraday setup for option selling.
+CREATE TABLE IF NOT EXISTS mcx_ohlc (
+    id          BIGSERIAL       PRIMARY KEY,
+    ts          TIMESTAMPTZ     NOT NULL,           -- candle open time (IST-aware)
+    instrument  VARCHAR(20)     NOT NULL,           -- NATURALGAS | CRUDEOIL
+    interval    VARCHAR(10)     NOT NULL,           -- 'day' | '15minute'
+    open        NUMERIC(12,2),
+    high        NUMERIC(12,2),
+    low         NUMERIC(12,2),
+    close       NUMERIC(12,2),
+    volume      BIGINT,
+    oi          BIGINT,
+    UNIQUE (ts, instrument, interval)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_lookup
+    ON mcx_ohlc (instrument, interval, ts DESC);
+
+COMMENT ON TABLE mcx_ohlc IS
+    'MCX futures OHLC (daily + 15-min). Used for ATR, trend, S/R for MCX option selling.';
+
+
+-- ── Global commodity reference prices ─────────────────────────────────────────
+-- Daily OHLC for WTI Crude, Brent Crude, Henry Hub NatGas, USD/INR.
+-- Source: Yahoo Finance via yfinance.
+-- Used for: overnight gap analysis, MCX open prediction, correlation.
+CREATE TABLE IF NOT EXISTS global_prices (
+    id          BIGSERIAL       PRIMARY KEY,
+    date        DATE            NOT NULL,
+    symbol      VARCHAR(20)     NOT NULL,   -- WTI | BRENT | NATGAS | USDINR
+    open        NUMERIC(12,4),
+    high        NUMERIC(12,4),
+    low         NUMERIC(12,4),
+    close       NUMERIC(12,4),
+    change_pct  NUMERIC(8,4),              -- day-over-day % change
+    UNIQUE (date, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gp_lookup
+    ON global_prices (symbol, date DESC);
+
+COMMENT ON TABLE global_prices IS
+    'Daily global prices: WTI, Brent, NatGas (Henry Hub), USD/INR. Used for MCX gap/correlation analysis.';
+
+
 -- ── Sanity check ──────────────────────────────────────────────────────────────
 SELECT
     'Options schema ready' AS status,
     (SELECT COUNT(*) FROM information_schema.tables
      WHERE table_schema = 'public'
-       AND table_name IN ('users', 'kite_tokens', 'option_chain', 'market_snapshot')) AS tables_created;
+       AND table_name IN ('users', 'kite_tokens', 'option_chain', 'market_snapshot',
+                          'mcx_ohlc', 'global_prices')) AS tables_created;
 
 
 -- ============================================================

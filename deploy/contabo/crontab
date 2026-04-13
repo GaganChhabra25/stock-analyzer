@@ -14,11 +14,18 @@ APP=/home/stockapp/stock-analyzer
 PY=/home/stockapp/stock-analyzer/venv/bin/python
 LOG=/home/stockapp/stock-analyzer/logs
 
+# ── Global prices: WTI / Brent / NatGas / USDINR  08:30 IST = CEST 05:00 ─────
+# Runs Mon-Sat to catch Friday's US close on Saturday morning
+0 5 * * 1-6 cd $APP && $PY options/global_prices.py >> $LOG/mcx.log 2>&1
+
 # ── Kite auto-login: 08:30 IST = CEST 05:00 ──────────────────────────────────
 0 5 * * 1-5 cd $APP && $PY options/kite_auto_login.py >> $LOG/kite.log 2>&1
 
 # ── Save instruments (NFO): 08:45 IST = CEST 05:15 ───────────────────────────
 15 5 * * 1-5 cd $APP && $PY options/save_instruments.py >> $LOG/kite.log 2>&1
+
+# ── MCX OHLC daily: previous day's candle  09:00 IST = CEST 05:30 ────────────
+30 5 * * 1-6 cd $APP && $PY options/mcx_ohlc.py >> $LOG/mcx.log 2>&1
 
 # ── Screener: 09:00 IST Mon-Sat = CEST 05:30 ─────────────────────────────────
 30 5 * * 1-6 cd $APP && $PY run_screener.py --no-open >> $LOG/screener.log 2>&1
@@ -38,3 +45,6 @@ LOG=/home/stockapp/stock-analyzer/logs
 # ── MCX EOD: collection stopped + DB summary: 23:35 IST = CEST 20:05 ─────────
 5 20 * * 1-5 cd $APP && $PY options/collector.py --eod MCX >> $LOG/kite.log 2>&1
 5 20 * * 1-5 cd $APP && $PY options/db_summary.py --exchange MCX >> $LOG/kite.log 2>&1
+
+# ── MCX OHLC 15-min: every 15 min during MCX hours  CEST 05:30–20:00 ─────────
+*/15 5-20 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --15min >> $LOG/mcx.log 2>&1
