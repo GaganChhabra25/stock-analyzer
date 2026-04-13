@@ -35,8 +35,9 @@ LOG=/home/stockapp/stock-analyzer/logs
 # MCXCollector  activates 09:00–23:30 IST (checks own is_open())
 */1 5-20 * * 1-5 cd $APP && $PY options/collector.py >> $LOG/options.log 2>&1
 
-# ── Watchdog: every 10 min during NFO hours = CEST 05:30–12:00 ───────────────
-*/10 5-12 * * 1-5 cd $APP && $PY options/watchdog.py >> $LOG/kite.log 2>&1
+# ── Watchdog: every 10 min during all market hours = CEST 05:30–20:00 ────────
+# Covers NFO (05:30–12:05) + MCX (05:30–20:05) IST windows
+*/10 5-20 * * 1-5 cd $APP && $PY options/watchdog.py >> $LOG/kite.log 2>&1
 
 # ── NFO EOD: collection stopped + DB summary: 15:35 IST = CEST 12:05 ─────────
 5 12 * * 1-5 cd $APP && $PY options/collector.py --eod NFO >> $LOG/kite.log 2>&1
