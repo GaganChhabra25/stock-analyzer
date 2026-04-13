@@ -18,7 +18,7 @@ import pandas as pd
 from options.exchange.base import ExchangeCollector
 from options.mcx_instruments import (
     load_mcx_instruments,
-    get_mcx_nearest_expiry,
+    get_mcx_nearest_options_expiry,
     get_mcx_futures_ltp,
     get_mcx_option_tokens,
     atm_strike_mcx,
@@ -44,8 +44,8 @@ class MCXCollector(ExchangeCollector):
         return get_mcx_futures_ltp(kite, symbol, df)
 
     def get_expiries(self, df: pd.DataFrame, symbol: str) -> list:
-        """MCX has monthly expiry only."""
-        expiry = get_mcx_nearest_expiry(df, symbol)
+        """MCX options expiry — note: expires before underlying futures."""
+        expiry = get_mcx_nearest_options_expiry(df, symbol)
         return [expiry] if expiry else []
 
     def get_option_tokens(

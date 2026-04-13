@@ -29,10 +29,10 @@ MCX_CACHE  = CACHE_DIR / "mcx_instruments.json"
 # Commodities we collect
 MCX_SYMBOLS = ["NATURALGAS", "CRUDEOIL"]
 
-# Nearest valid strike step per symbol (in ₹)
+# Strike step per symbol — verified from live MCX instruments data
 MCX_STRIKE_STEP = {
-    "NATURALGAS": 10,    # price ~₹200–400, 10-pt step = ₹100 range for 10 strikes
-    "CRUDEOIL":   100,   # price ~₹5000–7000, 100-pt step = ₹1000 range for 10 strikes
+    "NATURALGAS": 5,    # actual step on MCX (verified live)
+    "CRUDEOIL":   50,   # actual step on MCX (verified live)
 }
 
 
@@ -73,8 +73,22 @@ def load_mcx_instruments(kite) -> pd.DataFrame:
     return df
 
 
-def get_mcx_nearest_expiry(df: pd.DataFrame, symbol: str) -> Optional[date]:
-    """Return the nearest upcoming expiry for the given MCX futures symbol."""
+def get_mcx_nearest_options_expiry(df: pd.DataFrame, symbol: str) -> Optional[date]:
+    """
+    Return the nearest upcoming expiry for MCX options (CE/PE).
+    NOTE: MCX options expire BEFORE their underlying futures.
+    e.g. Apr options expire Apr 16, but Apr futures expire Apr 20.
+    Always derive expiry from CE/PE rows, not FUT rows.
+    """
+    today = date.today()
+    opt_df = df[(df["name"] == symbol) & (df["instrument_type"].isin(["CE", "PE"]))]
+    expiries = sorted(opt_df["expiry"].unique())
+    future = [e for e in expiries if e >= today]
+    return future[0] if future else None
+
+
+def _get_mcx_nearest_futures_expiry(df: pd.DataFrame, symbol: str) -> Optional[date]:
+    """Return nearest futures expiry (used internally to look up futures LTP)."""
     today = date.today()
     fut_df = df[(df["name"] == symbol) & (df["instrument_type"] == "FUT")]
     expiries = sorted(fut_df["expiry"].unique())
@@ -87,7 +101,7 @@ def get_mcx_futures_ltp(kite, symbol: str, df: pd.DataFrame) -> Optional[float]:
     Fetch the LTP of the near-month futures contract.
     This is used as the underlying price for ATM calculation and Greeks.
     """
-    expiry = get_mcx_nearest_expiry(df, symbol)
+    expiry = _get_mcx_nearest_futures_expiry(df, symbol)
     if not expiry:
         logger.warning("[MCX] No futures expiry found for %s", symbol)
         return None
