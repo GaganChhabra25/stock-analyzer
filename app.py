@@ -1044,6 +1044,127 @@ def api_eod_summary():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+# ── Live strategy deployment ──────────────────────────────────────────────────
+
+@app.route("/api/broker/status")
+@login_required
+def api_broker_status():
+    """Check if the current user has a valid broker session today."""
+    from options.kite_auth import get_kite
+    user_id = session.get("user", {}).get("zerodha_user_id")
+    if not user_id:
+        return jsonify({"connected": False, "reason": "not_linked",
+                        "login_url": url_for("kite_login")})
+    kite = get_kite(user_id)
+    if kite is None:
+        return jsonify({"connected": False, "reason": "no_token",
+                        "login_url": url_for("kite_login")})
+    try:
+        profile = kite.profile()
+        return jsonify({"connected": True, "user_id": user_id,
+                        "name": profile.get("user_name", user_id),
+                        "broker": "zerodha"})
+    except Exception:
+        return jsonify({"connected": False, "reason": "token_expired",
+                        "login_url": url_for("kite_login")})
+
+
+@app.route("/api/deploy", methods=["POST"])
+@login_required
+def api_deploy():
+    """Create and queue a live strategy deployment."""
+    from broker.scheduler import DeploymentScheduler
+    from broker.base import AuthError, BrokerError
+    from options.strategies import REGISTRY as STRAT_REGISTRY
+    from options.instrument_config import REGISTRY as INSTR_REGISTRY
+    from datetime import datetime as _dt
+
+    user_id = session.get("user", {}).get("zerodha_user_id")
+    if not user_id:
+        return jsonify({"error": "Zerodha account not linked. Visit /kite/login"}), 403
+
+    body = request.get_json(force=True) or {}
+    strategy_key = body.get("strategy_key", "").upper()
+    instrument   = body.get("instrument",   "").upper()
+    lots         = int(body.get("lots", 1))
+    wing_width   = int(body.get("wing_width", 0))
+    broker_name  = body.get("broker", "zerodha").lower()
+    expiry_str   = body.get("expiry")
+
+    if strategy_key not in STRAT_REGISTRY:
+        return jsonify({"error": f"Unknown strategy: {strategy_key}"}), 400
+    if instrument not in INSTR_REGISTRY:
+        return jsonify({"error": f"Unknown instrument: {instrument}"}), 400
+    if lots < 1 or lots > 20:
+        return jsonify({"error": "lots must be 1–20"}), 400
+
+    expiry = None
+    if expiry_str:
+        try:
+            expiry = _dt.strptime(expiry_str, "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid expiry date. Use YYYY-MM-DD"}), 400
+
+    try:
+        scheduler = DeploymentScheduler.get_instance()
+        dep_id = scheduler.add(
+            user_id=user_id, strategy_key=strategy_key, instrument=instrument,
+            expiry=expiry, broker_name=broker_name, lots=lots, wing_width=wing_width,
+        )
+        if dep_id is None:
+            return jsonify({"error": "Failed to create deployment (DB error)"}), 500
+        return jsonify({"ok": True, "deployment_id": dep_id})
+    except (AuthError, BrokerError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/deployments")
+@login_required
+def api_deployments():
+    """List recent deployments for the current user."""
+    from broker.scheduler import DeploymentScheduler
+    user_id = session.get("user", {}).get("zerodha_user_id")
+    if not user_id:
+        return jsonify([])
+    scheduler = DeploymentScheduler.get_instance()
+    return jsonify(scheduler.list_for_user(user_id))
+
+
+@app.route("/api/deployments/<int:dep_id>", methods=["DELETE"])
+@login_required
+def api_cancel_deployment(dep_id):
+    """Cancel a PENDING deployment."""
+    from broker.scheduler import DeploymentScheduler
+    user_id = session.get("user", {}).get("zerodha_user_id")
+    scheduler = DeploymentScheduler.get_instance()
+    ok = scheduler.cancel(dep_id)
+    return jsonify({"ok": ok, "message": "Cancelled" if ok else "Cannot cancel active deployment"})
+
+
+@app.route("/api/deployments/<int:dep_id>/exit", methods=["POST"])
+@login_required
+def api_force_exit_deployment(dep_id):
+    """Force-exit an ACTIVE deployment immediately."""
+    from broker.scheduler import DeploymentScheduler
+    user_id = session.get("user", {}).get("zerodha_user_id")
+    scheduler = DeploymentScheduler.get_instance()
+    ok = scheduler.force_exit(dep_id, user_id)
+    return jsonify({"ok": ok})
+
+
+# ── Start deployment scheduler on boot ────────────────────────────────────────
+
+def _start_deployment_scheduler():
+    try:
+        from broker.scheduler import DeploymentScheduler
+        DeploymentScheduler.get_instance().start()
+    except Exception as exc:
+        app.logger.warning("DeploymentScheduler start failed: %s", exc)
+
+
+_start_deployment_scheduler()
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

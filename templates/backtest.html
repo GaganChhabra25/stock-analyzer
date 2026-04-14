@@ -174,6 +174,44 @@ input[type="checkbox"] { accent-color: #1f6feb; width: 15px; height: 15px; curso
 .q-insufficient { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
 .save-run-btn { display: flex; align-items: center; gap: 6px; padding: 7px 14px; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
 .save-run-btn:hover { border-color: #e3b341; color: #e3b341; background: rgba(227,179,65,0.08); }
+.deploy-btn { display: flex; align-items: center; gap: 6px; padding: 7px 14px; background: rgba(63,185,80,0.1); border: 1px solid rgba(63,185,80,0.3); color: #3fb950; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.deploy-btn:hover:not(:disabled) { background: rgba(63,185,80,0.2); border-color: #3fb950; }
+.deploy-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Deploy modal */
+.deploy-overlay { position: fixed; inset: 0; z-index: 200; display: none; align-items: center; justify-content: center; }
+.deploy-overlay.open { display: flex; }
+.deploy-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.6); }
+.deploy-card { position: relative; background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 28px; width: 420px; max-width: 95vw; }
+.deploy-title { font-size: 16px; font-weight: 700; color: #f0f6fc; margin-bottom: 18px; }
+.deploy-warning { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.3); border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #f85149; margin-bottom: 16px; line-height: 1.5; }
+.deploy-info { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; font-size: 12px; }
+.deploy-info-row { display: flex; justify-content: space-between; padding: 3px 0; }
+.deploy-info-lbl { color: #8b949e; }
+.deploy-info-val { color: #f0f6fc; font-weight: 600; }
+.deploy-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: #8b949e; margin-bottom: 18px; line-height: 1.4; cursor: pointer; }
+.deploy-check input { margin-top: 2px; cursor: pointer; }
+.broker-status { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 14px; padding: 8px 12px; border-radius: 7px; }
+.broker-status.connected { background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.2); color: #3fb950; }
+.broker-status.disconnected { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.2); color: #f85149; }
+
+/* Deployments panel */
+.deployments-panel { margin-top: 20px; background: #0d1117; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; }
+.dep-panel-hdr { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #21262d; }
+.dep-panel-title { font-size: 13px; font-weight: 600; color: #f0f6fc; }
+.dep-row { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid #161b22; font-size: 12px; }
+.dep-row:last-child { border-bottom: none; }
+.dep-status { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
+.dep-status.PENDING  { background: rgba(210,153,34,0.15); color: #e3b341; }
+.dep-status.ACTIVE   { background: rgba(63,185,80,0.15);  color: #3fb950; }
+.dep-status.CLOSED   { background: rgba(139,148,158,0.15); color: #8b949e; }
+.dep-status.FAILED   { background: rgba(248,81,73,0.15);  color: #f85149; }
+.dep-status.CANCELLED { background: rgba(139,148,158,0.15); color: #8b949e; }
+.dep-name { flex: 1; color: #c9d1d9; }
+.dep-pnl.pos { color: #3fb950; font-weight: 600; }
+.dep-pnl.neg { color: #f85149; font-weight: 600; }
+.dep-exit-btn { padding: 3px 10px; font-size: 11px; background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); color: #f85149; border-radius: 5px; cursor: pointer; }
+.dep-cancel-btn { padding: 3px 10px; font-size: 11px; background: #21262d; border: 1px solid #30363d; color: #8b949e; border-radius: 5px; cursor: pointer; }
 
 /* Stats */
 .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
@@ -329,6 +367,7 @@ tr.loss-row td { background: rgba(248,81,73,0.03); }
       <div>Running backtest…</div>
     </div>
     <div id="resultsArea" style="display:none"></div>
+    <div id="deploymentsPanel" style="display:none"></div>
   </div>
 
 </div><!-- /page -->
@@ -389,6 +428,38 @@ tr.loss-row td { background: rgba(248,81,73,0.03); }
     <div class="save-actions">
       <button class="save-cancel" onclick="closeSave()">Cancel</button>
       <button class="save-submit" onclick="submitSave()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DEPLOY MODAL ═══ -->
+<div class="deploy-overlay" id="deployOverlay">
+  <div class="deploy-backdrop" onclick="closeDeployModal()"></div>
+  <div class="deploy-card">
+    <div class="deploy-title">▶ Deploy Strategy Live</div>
+    <div id="brokerStatusBadge" class="broker-status disconnected">⏳ Checking broker connection…</div>
+    <div class="deploy-warning">
+      ⚠ This will place <strong>real MIS orders</strong> on your Zerodha account.
+      Positions will be auto-exited at EOD. Ensure you have sufficient margin.
+    </div>
+    <div class="deploy-info" id="deployInfo">
+      <div class="deploy-info-row"><span class="deploy-info-lbl">Strategy</span><span class="deploy-info-val" id="dInfoStrategy">—</span></div>
+      <div class="deploy-info-row"><span class="deploy-info-lbl">Instrument</span><span class="deploy-info-val" id="dInfoInstr">—</span></div>
+      <div class="deploy-info-row"><span class="deploy-info-lbl">Entry</span><span class="deploy-info-val" id="dInfoEntry">—</span></div>
+      <div class="deploy-info-row"><span class="deploy-info-lbl">Exit</span><span class="deploy-info-val" id="dInfoExit">—</span></div>
+      <div class="deploy-info-row"><span class="deploy-info-lbl">SL Rule</span><span class="deploy-info-val">2× premium (SELL legs)</span></div>
+    </div>
+    <div class="save-field">
+      <label>Lots</label>
+      <input type="number" id="deployLots" min="1" max="20" value="1" style="width:80px">
+    </div>
+    <label class="deploy-check">
+      <input type="checkbox" id="deployConfirm" onchange="onDeployConfirmChange()">
+      I understand this places real MIS orders on Zerodha and I have sufficient margin
+    </label>
+    <div class="save-actions">
+      <button class="save-cancel" onclick="closeDeployModal()">Cancel</button>
+      <button class="save-submit" id="deploySubmitBtn" onclick="submitDeploy()" disabled style="background:rgba(63,185,80,0.15);border-color:rgba(63,185,80,0.3);color:#3fb950">Deploy</button>
     </div>
   </div>
 </div>
@@ -732,6 +803,7 @@ function renderResults(data) {
       <div class="result-actions">
         <span class="quality-badge ${qMap[q] || 'q-insufficient'}">${qLbl[q] || q}</span>
         <button class="save-run-btn" onclick="openSave()">★ Save</button>
+        <button class="deploy-btn" id="deployBtn" onclick="openDeployModal()" title="Deploy live on Zerodha">▶ Deploy</button>
       </div>
     </div>
 
@@ -1004,6 +1076,166 @@ async function deleteSaved(id) {
   const list = await (await fetch("/api/strategies/saved")).json();
   renderSavedList(list);
 }
+
+// ── Deploy feature ────────────────────────────────────────────────────────────
+
+let _brokerConnected = false;
+
+async function checkBrokerStatus() {
+  const badge = document.getElementById("brokerStatusBadge");
+  if (!badge) return;
+  try {
+    const resp = await fetch("/api/broker/status");
+    const data = await resp.json();
+    _brokerConnected = data.connected === true;
+    badge.className = "broker-status " + (_brokerConnected ? "connected" : "disconnected");
+    badge.textContent = _brokerConnected
+      ? "✓ Zerodha connected — " + (data.user_name || data.user_id || "")
+      : "✗ Zerodha not connected — login at kite.zerodha.com first";
+  } catch {
+    _brokerConnected = false;
+    badge.className = "broker-status disconnected";
+    badge.textContent = "✗ Could not reach broker API";
+  }
+  onDeployConfirmChange();
+}
+
+function onDeployConfirmChange() {
+  const btn     = document.getElementById("deploySubmitBtn");
+  const checked = document.getElementById("deployConfirm")?.checked;
+  if (btn) btn.disabled = !(checked && _brokerConnected);
+}
+
+function openDeployModal() {
+  if (!S.strategy || !S.symbol) return;
+  const strat = STRAT_MAP[S.strategy] || {};
+  const cfg   = INSTR_MAP[S.symbol]  || {};
+
+  document.getElementById("dInfoStrategy").textContent = strat.display_name || S.strategy;
+  document.getElementById("dInfoInstr").textContent    = cfg.display_name   || S.symbol;
+  document.getElementById("dInfoEntry").textContent    = strat.entry_time   || "—";
+  document.getElementById("dInfoExit").textContent     = strat.exit_time    || "—";
+  document.getElementById("deployConfirm").checked     = false;
+  document.getElementById("deployLots").value          = "1";
+  onDeployConfirmChange();
+
+  document.getElementById("deployOverlay").classList.add("open");
+  checkBrokerStatus();
+}
+
+function closeDeployModal() {
+  document.getElementById("deployOverlay").classList.remove("open");
+}
+
+async function submitDeploy() {
+  const btn  = document.getElementById("deploySubmitBtn");
+  const lots = parseInt(document.getElementById("deployLots").value, 10) || 1;
+  if (!S.strategy || !S.symbol) return;
+
+  btn.disabled = true;
+  btn.textContent = "Deploying…";
+
+  try {
+    const resp = await fetch("/api/deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        strategy_key: S.strategy,
+        instrument:   S.symbol,
+        lots,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    closeDeployModal();
+    await loadDeployments();
+    // Show deployments panel
+    document.getElementById("deploymentsPanel").style.display = "block";
+  } catch (e) {
+    alert("Deploy failed: " + e.message);
+    btn.disabled = false;
+    btn.textContent = "Deploy";
+  }
+}
+
+async function loadDeployments() {
+  try {
+    const resp = await fetch("/api/deployments");
+    const data = await resp.json();
+    renderDeployments(Array.isArray(data) ? data : []);
+  } catch {
+    renderDeployments([]);
+  }
+}
+
+function renderDeployments(items) {
+  const panel = document.getElementById("deploymentsPanel");
+  if (!items.length) {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "block";
+  panel.innerHTML = `
+    <div class="deployments-panel">
+      <div class="dep-panel-hdr">
+        <span class="dep-panel-title">⚡ Live Deployments</span>
+        <button onclick="loadDeployments()" style="background:none;border:none;color:#58a6ff;cursor:pointer;font-size:11px">↻ Refresh</button>
+      </div>
+      ${items.map(d => {
+        const status    = d.status || "PENDING";
+        const strat     = STRAT_MAP[d.strategy_key] || {};
+        const pnl       = d.pnl_inr != null
+          ? `<span class="dep-pnl ${d.pnl_inr >= 0 ? 'pos' : 'neg'}">${d.pnl_inr >= 0 ? '+' : ''}₹${Math.abs(d.pnl_inr).toLocaleString("en-IN")}</span>`
+          : '<span style="color:#484f58">—</span>';
+        const actions = (status === "PENDING")
+          ? `<button onclick="cancelDeployment(${d.id})" style="background:none;border:1px solid #30363d;color:#8b949e;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:11px">Cancel</button>`
+          : (status === "ACTIVE")
+          ? `<button onclick="forceExitDeployment(${d.id})" style="background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);color:#f85149;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:11px">Force Exit</button>`
+          : "";
+        return `
+          <div class="dep-row">
+            <span class="dep-status ${status}">${status}</span>
+            <span class="dep-name">${strat.display_name || d.strategy_key} · ${d.instrument} · ${d.lots} lot${d.lots > 1 ? "s" : ""}</span>
+            ${pnl}
+            <span style="color:#484f58;font-size:11px">${d.created_ist || ""}</span>
+            ${actions}
+          </div>`;
+      }).join("")}
+    </div>`;
+}
+
+async function cancelDeployment(id) {
+  if (!confirm("Cancel this deployment?")) return;
+  try {
+    const resp = await fetch("/api/deployments/" + id, { method: "DELETE" });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    await loadDeployments();
+  } catch (e) {
+    alert("Cancel failed: " + e.message);
+  }
+}
+
+async function forceExitDeployment(id) {
+  if (!confirm("Force-exit this deployment NOW? This will close all open legs at market.")) return;
+  try {
+    const resp = await fetch("/api/deployments/" + id + "/exit", { method: "POST" });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    await loadDeployments();
+  } catch (e) {
+    alert("Force exit failed: " + e.message);
+  }
+}
+
+// Load deployments on page load
+(async () => {
+  try {
+    const resp = await fetch("/api/deployments");
+    const data = await resp.json();
+    if (Array.isArray(data) && data.length) renderDeployments(data);
+  } catch { /* DB may not be set up yet */ }
+})();
 </script>
 </body>
 </html>
