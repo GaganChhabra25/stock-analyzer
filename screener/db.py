@@ -124,6 +124,9 @@ def init_schema() -> bool:
                 );
                 CREATE INDEX IF NOT EXISTS idx_pred_lookup
                     ON market_predictions (instrument, expiry_date, run_date DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_pred_unique
+                    ON market_predictions (instrument, expiry_date,
+                                          COALESCE(week_num, -1), prediction_type, run_date);
 
                 CREATE TABLE IF NOT EXISTS market_outcomes (
                     id               BIGSERIAL     PRIMARY KEY,
@@ -142,6 +145,22 @@ def init_schema() -> bool:
                         instrument, expiry_date,
                         COALESCE(week_num, -1), prediction_type
                     );
+
+                CREATE TABLE IF NOT EXISTS mcx_ohlc (
+                    id          BIGSERIAL       PRIMARY KEY,
+                    ts          TIMESTAMPTZ     NOT NULL,
+                    instrument  VARCHAR(20)     NOT NULL,
+                    interval    VARCHAR(10)     NOT NULL,
+                    open        NUMERIC(12,2),
+                    high        NUMERIC(12,2),
+                    low         NUMERIC(12,2),
+                    close       NUMERIC(12,2),
+                    volume      BIGINT,
+                    oi          BIGINT,
+                    UNIQUE (ts, instrument, interval)
+                );
+                CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_lookup
+                    ON mcx_ohlc (instrument, interval, ts DESC);
             """)
 
             # ── Analytical views ──────────────────────────────────────────────
@@ -380,6 +399,7 @@ def save_market_overview(overview: dict) -> int:
                                  seasonal_signal, put_oi_wall, call_oi_wall)
                             VALUES (%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,
                                     %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s)
+                            ON CONFLICT DO NOTHING
                         """, (
                             code, exp_d, wk, "WEEKLY",
                             w["direction"], _f(w["probability"]), cmp,
@@ -404,6 +424,7 @@ def save_market_overview(overview: dict) -> int:
                              seasonal_signal, put_oi_wall, call_oi_wall)
                         VALUES (%s,%s,%s,%s, %s,%s,%s,%s,
                                 %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s)
+                        ON CONFLICT DO NOTHING
                     """, (
                         code, exp_d, None, "MONTHLY",
                         monthly["direction"], _f(monthly["probability"]), cmp,

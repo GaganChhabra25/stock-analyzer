@@ -1299,6 +1299,7 @@ def _analyze_mcx_from_db(
         return error_result
 
     # ── Fetch daily candles from mcx_ohlc ─────────────────────────────────────
+    rows = []
     try:
         with _get_conn() as conn:
             if conn is None:
@@ -1315,7 +1316,7 @@ def _analyze_mcx_from_db(
         logger.warning("mcx_ohlc query failed for %s: %s", symbol, exc)
         return error_result
 
-    if len(rows) < 30:
+    if not rows or len(rows) < 30:
         logger.warning("mcx_ohlc: not enough data for %s (%d rows)", symbol, len(rows))
         return error_result
 
@@ -1378,6 +1379,13 @@ def fetch_market_overview() -> dict:
     global _DL_CACHE, _NSE_SESSION
     _DL_CACHE.clear()
     _NSE_SESSION = None
+
+    # Ensure all tables (including mcx_ohlc) exist before any queries
+    try:
+        from screener.db import init_schema as _init_schema
+        _init_schema()
+    except Exception:
+        pass
 
     usd_inr = _usdinr()
     today   = date.today()
