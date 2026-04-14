@@ -175,6 +175,12 @@ def auth_callback():
         "picture": userinfo.get("picture", ""),
         "via":     "google",
     }
+    # Record login timestamp in DB
+    try:
+        from options.user_manager import record_login
+        record_login(email)
+    except Exception:
+        pass
     return redirect(url_for("index"))
 
 

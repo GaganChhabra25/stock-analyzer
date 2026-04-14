@@ -135,13 +135,26 @@ COMMENT ON TABLE global_prices IS
     'Daily global prices: WTI, Brent, NatGas (Henry Hub), USD/INR. Used for MCX gap/correlation analysis.';
 
 
+-- ── App users (Google OAuth allowed accounts) ────────────────────────────────
+-- Stores emails allowed to log in via Google OAuth.
+-- Seeded from config.py ALLOWED_EMAILS on first use if table is empty.
+CREATE TABLE IF NOT EXISTS app_users (
+    email       TEXT        PRIMARY KEY,
+    is_admin    BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE app_users IS
+    'Google OAuth allowed accounts. Managed via /users UI. Seeded from config.py on first use.';
+
+
 -- ── Sanity check ──────────────────────────────────────────────────────────────
 SELECT
     'Options schema ready' AS status,
     (SELECT COUNT(*) FROM information_schema.tables
      WHERE table_schema = 'public'
        AND table_name IN ('users', 'kite_tokens', 'option_chain', 'market_snapshot',
-                          'mcx_ohlc', 'global_prices')) AS tables_created;
+                          'mcx_ohlc', 'global_prices', 'app_users')) AS tables_created;
 
 
 -- ============================================================

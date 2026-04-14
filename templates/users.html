@@ -160,7 +160,7 @@ td:last-child { text-align: center; }
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>#</th><th>User</th><th>Role</th><th>Actions</th></tr>
+        <tr><th>#</th><th>User</th><th>Role</th><th>Last Login</th><th>Actions</th></tr>
       </thead>
       <tbody id="usersBody">
         {% for u in users %}
@@ -179,6 +179,9 @@ td:last-child { text-align: center; }
             </div>
           </td>
           <td style="color:#8b949e;font-size:12px;">{{ "Admin" if is_admin else "User" }}</td>
+          <td style="color:#8b949e;font-size:11px;">
+            {{ u.last_login_at[:10] if u.last_login_at else "—" }}
+          </td>
           <td>
             <div class="actions">
               <button class="btn-edit" onclick="openEdit('{{ u.email }}', {{ 'true' if is_admin else 'false' }})">Edit</button>
