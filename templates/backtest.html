@@ -301,7 +301,7 @@ tr.loss-row td { background: rgba(248,81,73,0.03); }
             </div>
           </div>
         </div>
-        <div style="margin-top:6px;font-size:10px;color:#484f58;">Only DB dates are selectable</div>
+        <div style="margin-top:6px;font-size:10px;color:#484f58;" id="dateHint">Only DB dates are selectable</div>
       </div>
 
       <!-- Run -->
@@ -498,13 +498,25 @@ async function onInstrumentChange() {
   document.getElementById("dateSection").style.display = "block";
   document.getElementById("runSection").style.display  = "block";
 
-  // Fetch available dates
+  // Fetch available dates — pass dte_max so calendar only shows qualifying dates
   try {
-    const r    = await fetch("/api/backtest-dates?instrument=" + sym);
+    const strat = STRAT_MAP[S.strategy] || {};
+    let url = "/api/backtest-dates?instrument=" + sym;
+    if (strat.dte_max !== undefined && strat.dte_max < 999) {
+      url += "&dte_max=" + strat.dte_max;
+    }
+    const r    = await fetch(url);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     S.availDates = data.dates || [];
-    document.getElementById("iDbDays").textContent  = data.count + " trading days";
+    const hasDteFilter = strat.dte_max !== undefined && strat.dte_max < 999;
+    const label = hasDteFilter
+      ? data.count + " qualifying days (DTE ≤ " + strat.dte_max + ")"
+      : data.count + " trading days";
+    document.getElementById("iDbDays").textContent  = label;
+    document.getElementById("dateHint").textContent = hasDteFilter
+      ? "Only expiry-week dates shown (DTE ≤ " + strat.dte_max + ")"
+      : "Only DB dates are selectable";
     document.getElementById("iDateMin").textContent = data.min_date || "—";
     document.getElementById("iDateMax").textContent = data.max_date || "—";
     if (data.min_date && data.max_date) {

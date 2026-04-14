@@ -679,9 +679,18 @@ def api_delete_strategy(sid):
 @app.route("/api/backtest-dates")
 @login_required
 def api_backtest_dates():
-    """Return sorted list of dates for which DB has option_chain rows."""
+    """Return sorted list of dates for which DB has option_chain rows.
+
+    Optional ?dte_max=N filters to only dates where at least one expiry
+    is within N days of the trade date (used for expiry-week strategies).
+    """
     from options.instrument_config import get as get_instr_cfg
     instrument = request.args.get("instrument", "NIFTY").upper()
+    dte_max_raw = request.args.get("dte_max")
+    try:
+        dte_max = int(dte_max_raw) if dte_max_raw is not None else None
+    except ValueError:
+        dte_max = None
 
     if not get_instr_cfg(instrument):
         return jsonify({"error": f"Unknown instrument: {instrument}"}), 400
@@ -692,12 +701,21 @@ def api_backtest_dates():
     try:
         with _get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT DISTINCT ts::date AS d
-                    FROM option_chain
-                    WHERE instrument = %s
-                    ORDER BY d
-                """, (instrument,))
+                if dte_max is not None:
+                    cur.execute("""
+                        SELECT DISTINCT ts::date AS d
+                        FROM option_chain
+                        WHERE instrument = %s
+                          AND (expiry - ts::date) <= %s
+                        ORDER BY d
+                    """, (instrument, dte_max))
+                else:
+                    cur.execute("""
+                        SELECT DISTINCT ts::date AS d
+                        FROM option_chain
+                        WHERE instrument = %s
+                        ORDER BY d
+                    """, (instrument,))
                 dates = [str(r[0]) for r in cur.fetchall()]
         return jsonify({
             "instrument": instrument,
