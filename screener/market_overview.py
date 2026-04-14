@@ -972,6 +972,97 @@ def _analyze_instrument(
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
+def _analyze_mcx_from_db(
+    symbol: str,
+    name: str,
+    monthly_expiry_fn,
+    note: str,
+    weights: Dict[str, float],
+    vix_sig: float       = 0.0,
+    global_sig: float    = 0.0,
+    commodity_type: str  = "",
+) -> dict:
+    """
+    Analyze MCX instrument (CRUDEOIL / NATURALGAS) using mcx_ohlc DB data.
+    Monthly expiry ONLY — MCX has no weekly options expiry.
+    Falls back to static error result if DB has no data.
+    """
+    from screener.db import _get_conn, is_available as _db_ok
+
+    error_result = {
+        "name": name, "cmp": None, "note": note, "unit": "₹",
+        "weekly_schedule": [], "monthly": {}, "signals": {}, "error": True,
+    }
+
+    if not _db_ok():
+        return error_result
+
+    # ── Fetch daily candles from mcx_ohlc ─────────────────────────────────────
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return error_result
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT ts, open, high, low, close, volume
+                    FROM mcx_ohlc
+                    WHERE instrument = %s AND interval = 'day'
+                    ORDER BY ts ASC
+                """, (symbol,))
+                rows = cur.fetchall()
+    except Exception as exc:
+        logger.warning("mcx_ohlc query failed for %s: %s", symbol, exc)
+        return error_result
+
+    if len(rows) < 30:
+        logger.warning("mcx_ohlc: not enough data for %s (%d rows)", symbol, len(rows))
+        return error_result
+
+    df = pd.DataFrame(rows, columns=["ts", "Open", "High", "Low", "Close", "Volume"])
+    df["ts"] = pd.to_datetime(df["ts"]).dt.tz_localize(None)
+    df = df.set_index("ts").sort_index()
+    for col in ("Open", "High", "Low", "Close"):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.dropna(subset=["Close"])
+
+    cmp        = round(float(df["Close"].iloc[-1]), 2)
+    tech       = _enhanced_tech_score(df) if len(df) >= 50 else _simple_tech_score(df)
+    recent_mom = _recent_week_momentum(df)
+    today      = date.today()
+
+    monthly_exp = _next_monthly_expiry(monthly_expiry_fn, today)
+    weekly_wr   = _weekly_win_rates(df, expiry_wd=4)   # Friday for MCX
+    w_atr       = _weekly_atr(df)
+
+    signals_base: Dict[str, float] = {
+        "tech":   tech,
+        "vix":    vix_sig,
+        "global": global_sig,
+    }
+    if commodity_type and "seasonal" in weights:
+        signals_base["seasonal"] = _seasonal_signal(commodity_type, today)
+
+    monthly = _monthly_prediction(
+        df, cmp, signals_base, weights, monthly_exp, {}
+    )
+    monthly.pop("_exp_move", None)
+
+    signals_display = {k: round(v, 2) for k, v in signals_base.items()}
+
+    return {
+        "name":            name,
+        "cmp":             cmp,
+        "note":            note,
+        "unit":            "₹",
+        "weekly_schedule": [],      # MCX: monthly expiry only
+        "monthly":         monthly,
+        "signals":         signals_display,
+        "error":           False,
+    }
+
+
+# ── Public API ─────────────────────────────────────────────────────────────────
+
 def fetch_market_overview() -> dict:
     """
     Fetch Nifty 50, MCX Crude Oil, MCX Natural Gas analysis.
@@ -1006,21 +1097,21 @@ def fetch_market_overview() -> dict:
         vix_sig=vix_sig, global_sig=global_sig, fii_sig=fii_sig,
         nse_opts=nse_opts,
     )
-    crude = _analyze_instrument(
-        ticker="CL=F", name="MCX Crude Oil", fx_mult=usd_inr,
-        expiry_wd=4,
+    crude = _analyze_mcx_from_db(
+        symbol="CRUDEOIL",
+        name="MCX Crude Oil",
         monthly_expiry_fn=_mcx_crude_expiry,
-        note=f"MCX • Monthly expiry: ~20th • WTI × ₹{usd_inr:.1f}",
+        note="MCX • Monthly expiry only (~20th)",
         weights=_CRUDE_W,
         vix_sig=vix_sig * 0.50,
         global_sig=global_sig,
         commodity_type="crude",
     )
-    nat_gas = _analyze_instrument(
-        ticker="NG=F", name="MCX Natural Gas", fx_mult=usd_inr,
-        expiry_wd=4,
+    nat_gas = _analyze_mcx_from_db(
+        symbol="NATURALGAS",
+        name="MCX Natural Gas",
         monthly_expiry_fn=_mcx_natgas_expiry,
-        note=f"MCX • Monthly expiry: last day • NYMEX × ₹{usd_inr:.1f}",
+        note="MCX • Monthly expiry only (last day)",
         weights=_NATGAS_W,
         vix_sig=vix_sig * 0.50,
         global_sig=global_sig,

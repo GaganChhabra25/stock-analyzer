@@ -347,49 +347,48 @@ def save_market_overview(overview: dict) -> int:
             sup   = _f(sigs.get("support"))         # PE OI wall
             res   = _f(sigs.get("resistance"))      # CE OI wall
 
-            # ── Weekly schedule ────────────────────────────────────────────
-            for w in inst.get("weekly_schedule", []):
-                exp_d = _parse_date(w.get("expiry_date"))
-                if exp_d is None:
-                    continue
-                wk = w.get("week_num")
+            # ── Weekly schedule (NIFTY only — MCX has monthly expiry only) ──
+            if code not in ("CRUDE", "NATGAS"):
+                for w in inst.get("weekly_schedule", []):
+                    exp_d = _parse_date(w.get("expiry_date"))
+                    if exp_d is None:
+                        continue
+                    wk = w.get("week_num")
 
-                if w.get("is_past"):
-                    # Record actual outcome (once only)
-                    if (w.get("actual_dir")
-                            and not _outcome_exists(cur, code, exp_d, wk, "WEEKLY")):
+                    if w.get("is_past"):
+                        if (w.get("actual_dir")
+                                and not _outcome_exists(cur, code, exp_d, wk, "WEEKLY")):
+                            cur.execute("""
+                                INSERT INTO market_outcomes
+                                    (instrument, expiry_date, week_num, prediction_type,
+                                     actual_direction, actual_close, actual_pct)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                code, exp_d, wk, "WEEKLY",
+                                w["actual_dir"],
+                                _f(w.get("actual_close")),
+                                _f(w.get("actual_pct")),
+                            ))
+                    else:
                         cur.execute("""
-                            INSERT INTO market_outcomes
+                            INSERT INTO market_predictions
                                 (instrument, expiry_date, week_num, prediction_type,
-                                 actual_direction, actual_close, actual_pct)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                 direction, probability, cmp,
+                                 target_price, range_hi, range_lo,
+                                 hist_wr, tech_signal, vix_signal, pcr_value,
+                                 max_pain, atm_iv, global_signal, fii_signal,
+                                 seasonal_signal, put_oi_wall, call_oi_wall)
+                            VALUES (%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,
+                                    %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s)
                         """, (
                             code, exp_d, wk, "WEEKLY",
-                            w["actual_dir"],
-                            _f(w.get("actual_close")),
-                            _f(w.get("actual_pct")),
+                            w["direction"], _f(w["probability"]), cmp,
+                            _f(w.get("target")), _f(w.get("range_hi")), _f(w.get("range_lo")),
+                            _f(w.get("hist_wr")), tech, vix, pcr_v,
+                            mp, iv, glo, fii,
+                            seas, sup, res,
                         ))
-                else:
-                    # Insert prediction for this run
-                    cur.execute("""
-                        INSERT INTO market_predictions
-                            (instrument, expiry_date, week_num, prediction_type,
-                             direction, probability, cmp,
-                             target_price, range_hi, range_lo,
-                             hist_wr, tech_signal, vix_signal, pcr_value,
-                             max_pain, atm_iv, global_signal, fii_signal,
-                             seasonal_signal, put_oi_wall, call_oi_wall)
-                        VALUES (%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,
-                                %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s)
-                    """, (
-                        code, exp_d, wk, "WEEKLY",
-                        w["direction"], _f(w["probability"]), cmp,
-                        _f(w.get("target")), _f(w.get("range_hi")), _f(w.get("range_lo")),
-                        _f(w.get("hist_wr")), tech, vix, pcr_v,
-                        mp, iv, glo, fii,
-                        seas, sup, res,
-                    ))
-                    saved += 1
+                        saved += 1
 
             # ── Monthly prediction ─────────────────────────────────────────
             monthly = inst.get("monthly", {})
@@ -478,3 +477,35 @@ def get_recent_predictions(instrument: str = None, limit: int = 50) -> list:
         except Exception as exc:
             logger.warning("get_recent_predictions: %s", exc)
     return rows
+
+
+def delete_mcx_weekly_records() -> int:
+    """
+    One-time cleanup: delete all WEEKLY prediction/outcome rows for
+    CRUDE and NATGAS. MCX has monthly-only expiries; these rows are wrong.
+    Returns total rows deleted.
+    """
+    deleted = 0
+    if not is_available():
+        return 0
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return 0
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM market_predictions
+                    WHERE instrument IN ('CRUDE', 'NATGAS')
+                      AND prediction_type = 'WEEKLY'
+                """)
+                deleted += cur.rowcount
+                cur.execute("""
+                    DELETE FROM market_outcomes
+                    WHERE instrument IN ('CRUDE', 'NATGAS')
+                      AND prediction_type = 'WEEKLY'
+                """)
+                deleted += cur.rowcount
+            conn.commit()
+    except Exception as exc:
+        logger.warning("delete_mcx_weekly_records: %s", exc)
+    return deleted

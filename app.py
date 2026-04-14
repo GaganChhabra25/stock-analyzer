@@ -38,7 +38,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 from screener.db import (get_accuracy_summary, get_signal_importance,
                          get_recent_predictions, is_available as db_available,
-                         _get_conn)
+                         _get_conn, delete_mcx_weekly_records)
 
 def _get_allowed_emails() -> set:
     """Dynamic allowed-email check — reads from users.json if present, else config."""
@@ -412,18 +412,24 @@ def save_ui_trades():
 
 # ── Insights helpers ──────────────────────────────────────────────────────────
 
+_mcx_weekly_cleaned = False   # run cleanup once per process start
+
 def _get_insights() -> dict:
     """Fetch all data needed for the insights page from PostgreSQL."""
+    global _mcx_weekly_cleaned
     empty = {
         "available": False,
         "summary": {},
         "predictions": [],
-        "outcomes": [],
         "accuracy": [],
-        "signals": [],
     }
     if not db_available():
         return empty
+
+    # One-time cleanup of stale MCX WEEKLY rows
+    if not _mcx_weekly_cleaned:
+        delete_mcx_weekly_records()
+        _mcx_weekly_cleaned = True
 
     try:
         with _get_conn() as conn:
@@ -435,62 +441,51 @@ def _get_insights() -> dict:
             # Summary counts
             cur.execute("""
                 SELECT
-                    (SELECT COUNT(*) FROM market_predictions)  AS total_predictions,
-                    (SELECT COUNT(*) FROM market_outcomes)      AS total_outcomes,
+                    (SELECT COUNT(*) FROM market_predictions)        AS total_predictions,
+                    (SELECT COUNT(*) FROM market_outcomes)            AS total_outcomes,
                     (SELECT COUNT(DISTINCT instrument)
-                     FROM market_predictions)                   AS instruments,
-                    (SELECT MIN(run_date) FROM market_predictions) AS tracking_since
+                     FROM market_predictions)                         AS instruments,
+                    (SELECT MIN(run_date) FROM market_predictions)    AS tracking_since
             """)
             summary = dict(cur.fetchone() or {})
 
-            # Latest unique predictions per expiry (most recent run_date wins)
+            # All predictions (past 60 days + future) with their outcome if resolved.
+            # One row per (instrument, expiry, type) — latest run_date wins.
             cur.execute("""
-                SELECT DISTINCT ON (instrument, expiry_date, prediction_type)
-                    instrument, prediction_type, expiry_date, direction,
-                    probability, cmp, hist_wr, pcr_value, tech_signal,
-                    vix_signal, global_signal, run_date
-                FROM market_predictions
-                WHERE expiry_date >= CURRENT_DATE
-                ORDER BY instrument, expiry_date, prediction_type, run_date DESC
+                SELECT DISTINCT ON (p.instrument, p.expiry_date, p.prediction_type)
+                    p.instrument,
+                    p.prediction_type,
+                    p.expiry_date,
+                    p.direction,
+                    p.probability,
+                    p.cmp,
+                    p.run_date,
+                    p.target_price,
+                    o.actual_direction,
+                    o.actual_close,
+                    o.actual_pct,
+                    (p.direction = o.actual_direction) AS was_correct
+                FROM market_predictions p
+                LEFT JOIN market_outcomes o
+                    ON  o.instrument      = p.instrument
+                    AND o.expiry_date     = p.expiry_date
+                    AND o.prediction_type = p.prediction_type
+                WHERE p.expiry_date >= CURRENT_DATE - INTERVAL '60 days'
+                ORDER BY p.instrument, p.expiry_date, p.prediction_type, p.run_date DESC
             """)
             predictions = [dict(r) for r in cur.fetchall()]
-
-            # Outcomes joined with original prediction
-            cur.execute("""
-                SELECT
-                    o.instrument, o.expiry_date, o.prediction_type,
-                    o.actual_direction, o.actual_close, o.actual_pct,
-                    o.recorded_at::date AS recorded_date,
-                    p.direction AS predicted_direction,
-                    p.probability,
-                    p.cmp AS predicted_cmp,
-                    (p.direction = o.actual_direction) AS was_correct
-                FROM market_outcomes o
-                JOIN LATERAL (
-                    SELECT direction, probability, cmp
-                    FROM market_predictions p2
-                    WHERE p2.instrument     = o.instrument
-                      AND p2.expiry_date    = o.expiry_date
-                      AND p2.prediction_type = o.prediction_type
-                    ORDER BY run_date DESC LIMIT 1
-                ) p ON true
-                ORDER BY o.expiry_date DESC
-                LIMIT 30
-            """)
-            outcomes = [dict(r) for r in cur.fetchall()]
+            # Sort newest expiry first for display
+            predictions.sort(key=lambda x: x["expiry_date"], reverse=True)
 
             cur.close()
 
         accuracy = get_accuracy_summary()
-        signals  = get_signal_importance()
 
         return {
             "available":   True,
             "summary":     summary,
             "predictions": predictions,
-            "outcomes":    outcomes,
             "accuracy":    accuracy,
-            "signals":     signals,
         }
     except Exception as exc:
         return {**empty, "available": True, "error": str(exc)}
