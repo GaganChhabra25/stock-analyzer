@@ -5,12 +5,14 @@ MCX-specific differences from NFO:
   - Underlying = near-month futures LTP (no cash segment for commodities).
   - Monthly expiry; next-month added automatically within 5 days of expiry (rollover).
   - Market hours: 9:00 AM – 11:30 PM IST (much longer than NSE).
+  - On certain Indian holidays MCX runs an evening-only session (5:00 PM – 11:30 PM).
+  - A small set of days MCX is fully closed (Republic Day, Independence Day, etc.).
   - No VIX equivalent — vix stored as NULL in market_snapshot.
   - 10 strikes above and below ATM (vs 20 for NFO).
 """
 
 import logging
-from datetime import date, time
+from datetime import date, time, datetime
 from typing import Optional
 
 import pandas as pd
@@ -26,15 +28,48 @@ from options.mcx_instruments import (
 
 logger = logging.getLogger(__name__)
 
+_EVENING_OPEN  = time(17, 0)   # 5:00 PM IST — evening session start
+_MARKET_OPEN   = time(9, 0)    # 9:00 AM IST — normal session start
+_MARKET_CLOSE  = time(23, 30)  # 11:30 PM IST
+
 
 class MCXCollector(ExchangeCollector):
     exchange     = "MCX"
     symbols      = ["NATURALGAS", "CRUDEOIL"]
     n_strikes    = 10           # ATM ± 10 as requested
-    market_open  = time(9, 0)
-    market_close = time(23, 30)
+    market_open  = _MARKET_OPEN
+    market_close = _MARKET_CLOSE
     quote_prefix = "MCX:"
     vix_symbol   = None         # no commodity VIX
+
+    def is_open(self) -> bool:
+        """
+        MCX-aware market hours check.
+
+        Three cases:
+        1. MCX_HOLIDAYS       → fully closed, return False.
+        2. MCX_EVENING_ONLY_DAYS → evening session only (5 PM – 11:30 PM IST).
+        3. Normal weekday      → full session (9 AM – 11:30 PM IST).
+        """
+        from zoneinfo import ZoneInfo
+        from config import MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
+
+        now     = datetime.now(ZoneInfo("Asia/Kolkata"))
+        today   = now.date().strftime("%Y-%m-%d")
+        now_t   = now.time()
+
+        if today in MCX_HOLIDAYS:
+            logger.info("[MCX] Holiday (fully closed) — skipping.")
+            return False
+
+        if today in MCX_EVENING_ONLY_DAYS:
+            open_result = _EVENING_OPEN <= now_t <= _MARKET_CLOSE
+            if not open_result:
+                logger.info("[MCX] Evening-only day — market opens at 17:00 IST.")
+            return open_result
+
+        # Normal trading day
+        return _MARKET_OPEN <= now_t <= _MARKET_CLOSE
 
     def load_instruments(self, kite) -> pd.DataFrame:
         return load_mcx_instruments(kite)

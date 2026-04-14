@@ -72,7 +72,6 @@ NSE_HOLIDAYS = {
     "2025-05-01",  # Maharashtra Day
     "2025-08-15",  # Independence Day
     "2025-10-02",  # Gandhi Jayanti
-    "2025-10-02",  # Gandhi Jayanti / Mahatma Gandhi Jayanti
     "2025-10-24",  # Dussehra
     "2025-11-05",  # Diwali Balipratipada
     "2025-11-15",  # Gurunanak Jayanti
@@ -86,6 +85,50 @@ NSE_HOLIDAYS = {
     "2026-10-02",  # Gandhi Jayanti
     "2026-10-22",  # Dussehra (tentative)
     "2026-11-14",  # Diwali Laxmi Puja (tentative)
+    "2026-11-15",  # Diwali Balipratipada (tentative)
+    "2026-12-25",  # Christmas
+}
+
+# ============================================================
+#  MCX TRADING HOLIDAYS — days MCX is FULLY CLOSED
+#  MCX has fewer holidays than NSE.
+#  Source: MCX official holiday calendar.
+# ============================================================
+
+MCX_HOLIDAYS = {
+    # 2025
+    "2025-01-26",  # Republic Day
+    "2025-08-15",  # Independence Day
+    "2025-10-02",  # Gandhi Jayanti
+    "2025-11-05",  # Diwali Laxmi Puja (MCX fully closed for Muhurat trading)
+    # 2026
+    "2026-01-26",  # Republic Day
+    "2026-08-15",  # Independence Day
+    "2026-10-02",  # Gandhi Jayanti
+    "2026-11-14",  # Diwali Laxmi Puja (tentative)
+}
+
+# ============================================================
+#  MCX EVENING-ONLY DAYS — MCX opens at 5 PM IST (not 9 AM)
+#  On these days MCX runs a restricted evening session only.
+#  Normal hours resume next trading day.
+# ============================================================
+
+MCX_EVENING_ONLY_DAYS = {
+    # 2025
+    "2025-03-14",  # Holi
+    "2025-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
+    "2025-04-18",  # Good Friday
+    "2025-05-01",  # Maharashtra Day
+    "2025-10-24",  # Dussehra
+    "2025-11-15",  # Diwali Balipratipada / Gurunanak Jayanti
+    "2025-12-25",  # Christmas
+    # 2026
+    "2026-03-03",  # Holi
+    "2026-04-03",  # Good Friday
+    "2026-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
+    "2026-05-01",  # Maharashtra Day
+    "2026-10-22",  # Dussehra (tentative)
     "2026-11-15",  # Diwali Balipratipada (tentative)
     "2026-12-25",  # Christmas
 }
