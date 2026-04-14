@@ -36,14 +36,19 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # ── Allowed emails: union of env var + config.py ──────────────────────────────
 
-from config import ALLOWED_EMAILS as _cfg_emails  # type: ignore
 from screener.db import (get_accuracy_summary, get_signal_importance,
                          get_recent_predictions, is_available as db_available,
                          _get_conn)
-ALLOWED_EMAILS = {e.lower() for e in _cfg_emails}
-_env_emails = os.environ.get("ALLOWED_EMAILS", "")
-if _env_emails:
-    ALLOWED_EMAILS |= {e.strip().lower() for e in _env_emails.split(",") if e.strip()}
+
+def _get_allowed_emails() -> set:
+    """Dynamic allowed-email check — reads from users.json if present, else config."""
+    from options.user_manager import get_allowed_emails as _um_emails
+    emails = _um_emails()
+    # Also honour ALLOWED_EMAILS env var override
+    _env = os.environ.get("ALLOWED_EMAILS", "")
+    if _env:
+        emails |= {e.strip().lower() for e in _env.split(",") if e.strip()}
+    return emails
 
 # ── Google OAuth ──────────────────────────────────────────────────────────────
 
@@ -155,7 +160,8 @@ def auth_callback():
         abort(400)
 
     email = userinfo["email"].lower()
-    if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
+    allowed = _get_allowed_emails()
+    if allowed and email not in allowed:
         return render_template("login.html", error=(
             f"Access denied for {email}. "
             "This app is restricted to specific accounts."
@@ -1163,10 +1169,43 @@ def deployments_page():
 @login_required
 def users_page():
     """Users — allowed Google accounts."""
-    from config import ALLOWED_EMAILS, ADMIN_EMAILS
-    allowed = list(ALLOWED_EMAILS)
+    from options.user_manager import list_users, get_admin_emails
+    users = list_users()
     return render_template("users.html", user=session["user"],
-                           allowed_emails=allowed, admin_emails=ADMIN_EMAILS)
+                           users=users, admin_emails=get_admin_emails())
+
+
+@app.route("/api/users", methods=["GET"])
+@login_required
+def api_list_users():
+    from options.user_manager import list_users
+    return jsonify(list_users())
+
+
+@app.route("/api/users", methods=["POST"])
+@login_required
+def api_add_user():
+    from options.user_manager import add_user
+    data = request.get_json(force=True) or {}
+    ok, msg = add_user(data.get("email", ""), data.get("is_admin", False))
+    return jsonify({"ok": ok, "message": msg}), (200 if ok else 400)
+
+
+@app.route("/api/users/<path:email>", methods=["PATCH"])
+@login_required
+def api_update_user(email):
+    from options.user_manager import update_user
+    data = request.get_json(force=True) or {}
+    ok, msg = update_user(email, data.get("is_admin", False))
+    return jsonify({"ok": ok, "message": msg}), (200 if ok else 404)
+
+
+@app.route("/api/users/<path:email>", methods=["DELETE"])
+@login_required
+def api_delete_user(email):
+    from options.user_manager import delete_user
+    ok, msg = delete_user(email)
+    return jsonify({"ok": ok, "message": msg}), (200 if ok else 404)
 
 
 # ── Start deployment scheduler on boot ────────────────────────────────────────

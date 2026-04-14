@@ -32,58 +32,85 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 .page-title { font-size: 22px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
 .page-sub { font-size: 13px; color: #8b949e; margin-bottom: 24px; }
 
-/* Top bar: count + search */
-.top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; max-width: 580px; gap: 16px; }
-.user-count { font-size: 12px; color: #8b949e; }
+/* Top bar */
+.top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; max-width: 660px; gap: 12px; flex-wrap: wrap; }
+.top-bar-left { display: flex; align-items: center; gap: 12px; }
+.user-count { font-size: 12px; color: #8b949e; white-space: nowrap; }
 .user-count strong { color: #f0f6fc; }
-.search-wrap { position: relative; flex: 1; max-width: 280px; }
-.search-wrap input {
-  width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-  padding: 8px 12px 8px 34px; font-size: 12px; color: #f0f6fc; outline: none;
-  transition: border-color 0.15s;
-}
+.search-wrap { position: relative; }
+.search-wrap input { width: 220px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 8px 12px 8px 32px; font-size: 12px; color: #f0f6fc; outline: none; transition: border-color 0.15s; }
 .search-wrap input:focus { border-color: #1f6feb; }
 .search-wrap input::placeholder { color: #484f58; }
-.search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-size: 13px; color: #484f58; pointer-events: none; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 12px; color: #484f58; pointer-events: none; }
+.add-btn { background: #1f6feb; border: none; color: #fff; padding: 8px 16px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; transition: opacity 0.15s; }
+.add-btn:hover { opacity: 0.85; }
 
-/* User table */
-.users-table { width: 100%; max-width: 620px; border-collapse: collapse; }
-.users-table thead th {
-  text-align: left; color: #8b949e; font-size: 10px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.6px;
-  padding: 8px 14px; border-bottom: 1px solid #21262d;
-}
-.users-table thead th:first-child { width: 44px; text-align: center; }
-.users-table tbody tr { transition: background 0.12s; }
-.users-table tbody tr:hover td { background: #1c2128; }
-.users-table tbody tr.hidden { display: none; }
-.users-table td {
-  padding: 12px 14px; border-bottom: 1px solid #161b22; vertical-align: middle;
-  font-size: 13px;
-}
-.users-table td:first-child { text-align: center; color: #484f58; font-size: 11px; font-weight: 600; }
-.users-table tr:last-child td { border-bottom: none; }
+/* Table */
+.table-wrap { max-width: 660px; background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; }
+table { width: 100%; border-collapse: collapse; }
+thead th { text-align: left; color: #8b949e; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; padding: 10px 16px; border-bottom: 1px solid #21262d; background: #161b22; }
+thead th:first-child { width: 44px; text-align: center; }
+thead th:last-child { width: 100px; text-align: center; }
+tbody tr { transition: background 0.12s; }
+tbody tr:hover td { background: #1c2128; }
+tbody tr.hidden { display: none; }
+td { padding: 12px 16px; border-bottom: 1px solid #21262d; vertical-align: middle; font-size: 13px; }
+tbody tr:last-child td { border-bottom: none; }
+td:first-child { text-align: center; color: #484f58; font-size: 11px; font-weight: 600; }
+td:last-child { text-align: center; }
 
-/* Avatar */
+/* Avatar + email */
 .avatar-cell { display: flex; align-items: center; gap: 12px; }
-.user-avatar { width: 34px; height: 34px; border-radius: 50%; background: #1f6feb; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.user-avatar { width: 32px; height: 32px; border-radius: 50%; background: #1f6feb; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #fff; flex-shrink: 0; }
 .user-avatar.admin-av { background: linear-gradient(135deg, #f5a623, #e67e22); }
-.user-email-text { font-size: 13px; color: #f0f6fc; font-weight: 500; }
+.email-text { font-size: 13px; color: #f0f6fc; font-weight: 500; }
 
 /* Badges */
-.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 99px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; white-space: nowrap; margin-left: 6px; }
 .badge-admin { background: rgba(245,166,35,0.15); color: #f5a623; border: 1px solid rgba(245,166,35,0.35); }
 .badge-you   { background: rgba(31,111,235,0.2);  color: #58a6ff; border: 1px solid rgba(88,166,255,0.3); }
-.badge-user  { background: rgba(139,148,158,0.1); color: #8b949e; border: 1px solid #30363d; }
 
-/* Badges cell */
-.badges-cell { display: flex; gap: 6px; flex-wrap: wrap; }
+/* Action buttons */
+.actions { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.btn-edit   { background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); color: #58a6ff; padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; font-weight: 600; transition: background 0.12s; }
+.btn-edit:hover { background: rgba(88,166,255,0.2); }
+.btn-del    { background: rgba(248,81,73,0.1); border: 1px solid rgba(248,81,73,0.3); color: #f85149; padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; font-weight: 600; transition: background 0.12s; }
+.btn-del:hover { background: rgba(248,81,73,0.25); }
+.btn-self-del { opacity: 0.3; pointer-events: none; }
 
 /* No results */
-.no-results { display: none; padding: 32px 0; color: #484f58; font-size: 13px; }
+.no-results { display: none; padding: 32px 0; color: #484f58; font-size: 13px; text-align: center; }
+
+/* ── Modal ── */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300; align-items: center; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 28px 32px; width: 420px; max-width: 95vw; }
+.modal-title { font-size: 16px; font-weight: 700; color: #f0f6fc; margin-bottom: 6px; }
+.modal-sub { font-size: 12px; color: #8b949e; margin-bottom: 22px; }
+.form-group { margin-bottom: 18px; }
+.form-label { font-size: 11px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 7px; display: block; }
+.form-input { width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #f0f6fc; outline: none; transition: border-color 0.15s; }
+.form-input:focus { border-color: #1f6feb; }
+.form-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; }
+.toggle-label { font-size: 13px; color: #c9d1d9; }
+.toggle-label small { display: block; font-size: 11px; color: #8b949e; margin-top: 2px; }
+.toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-track { position: absolute; inset: 0; background: #30363d; border-radius: 99px; cursor: pointer; transition: background 0.2s; }
+.toggle input:checked + .toggle-track { background: #f5a623; }
+.toggle-thumb { position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: transform 0.2s; pointer-events: none; }
+.toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+.btn-cancel-m { background: none; border: 1px solid #30363d; color: #8b949e; padding: 8px 18px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.btn-cancel-m:hover { color: #f0f6fc; border-color: #8b949e; }
+.btn-confirm { background: #1f6feb; border: none; color: #fff; padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: opacity 0.15s; }
+.btn-confirm:hover { opacity: 0.85; }
+.btn-confirm.danger { background: #da3633; }
+.modal-error { font-size: 12px; color: #f85149; margin-top: 10px; display: none; }
 
 /* Note */
-.note { font-size: 12px; color: #484f58; margin-top: 24px; line-height: 1.6; max-width: 580px; }
+.note { font-size: 12px; color: #484f58; margin-top: 20px; max-width: 660px; line-height: 1.6; }
 .note code { background: #21262d; padding: 1px 6px; border-radius: 4px; color: #8b949e; font-size: 11px; }
 </style>
 </head>
@@ -94,7 +121,7 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
     <span class="header-logo">👥</span>
     <div>
       <div class="header-title">Users</div>
-      <div class="header-sub">Allowed Google accounts for this app</div>
+      <div class="header-sub">Manage Google accounts allowed to access this app</div>
     </div>
   </div>
   <div class="header-right">
@@ -117,72 +144,227 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 <div class="main">
   <div class="page-title">Users</div>
-  <div class="page-sub">Google accounts allowed to access this application.</div>
+  <div class="page-sub">Add, edit or remove Google accounts that can log in.</div>
 
   <div class="top-bar">
-    <div class="user-count">Total: <strong>{{ allowed_emails | length }}</strong> users</div>
-    <div class="search-wrap">
-      <span class="search-icon">🔍</span>
-      <input type="text" id="searchInput" placeholder="Search by email…" oninput="filterUsers(this.value)">
+    <div class="top-bar-left">
+      <div class="user-count">Total: <strong id="totalCount">{{ users | length }}</strong> users</div>
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Search by email…" oninput="filterUsers(this.value)">
+      </div>
     </div>
+    <button class="add-btn" onclick="openAdd()">+ Add User</button>
   </div>
 
-  <table class="users-table" id="usersTable">
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>User</th>
-        <th>Role</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for email in allowed_emails %}
-      {% set is_admin = email in admin_emails %}
-      {% set is_you   = email == user.email %}
-      <tr data-email="{{ email | lower }}">
-        <td>{{ loop.index }}</td>
-        <td>
-          <div class="avatar-cell">
-            <div class="user-avatar {% if is_admin %}admin-av{% endif %}">{{ email[0].upper() }}</div>
-            <span class="user-email-text">{{ email }}</span>
-          </div>
-        </td>
-        <td>
-          <div class="badges-cell">
-            {% if is_admin %}
-            <span class="badge badge-admin">⭐ Admin</span>
-            {% else %}
-            <span class="badge badge-user">User</span>
-            {% endif %}
-            {% if is_you %}
-            <span class="badge badge-you">You</span>
-            {% endif %}
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  <div class="no-results" id="noResults">No users match your search.</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>User</th><th>Role</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="usersBody">
+        {% for u in users %}
+        {% set is_admin = u.is_admin %}
+        {% set is_you   = u.email == user.email %}
+        <tr data-email="{{ u.email | lower }}" data-admin="{{ 'true' if is_admin else 'false' }}">
+          <td>{{ loop.index }}</td>
+          <td>
+            <div class="avatar-cell">
+              <div class="user-avatar {% if is_admin %}admin-av{% endif %}">{{ u.email[0].upper() }}</div>
+              <span class="email-text">
+                {{ u.email }}
+                {% if is_admin %}<span class="badge badge-admin">⭐ Admin</span>{% endif %}
+                {% if is_you   %}<span class="badge badge-you">You</span>{% endif %}
+              </span>
+            </div>
+          </td>
+          <td style="color:#8b949e;font-size:12px;">{{ "Admin" if is_admin else "User" }}</td>
+          <td>
+            <div class="actions">
+              <button class="btn-edit" onclick="openEdit('{{ u.email }}', {{ 'true' if is_admin else 'false' }})">Edit</button>
+              <button class="btn-del {% if is_you %}btn-self-del{% endif %}"
+                      onclick="openDelete('{{ u.email }}', {{ 'true' if is_you else 'false' }})">Delete</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="no-results" id="noResults">No users match your search.</div>
+  </div>
 
   <div class="note">
-    To add or remove users, edit <code>ALLOWED_EMAILS</code> in <code>config.py</code> and redeploy.<br>
-    To change admin access, update <code>ADMIN_EMAILS</code> in <code>config.py</code>.
+    Changes take effect immediately. New users can log in on their next visit.<br>
+    You cannot delete your own account while logged in.
   </div>
 </div>
+</div>
+
+<!-- ═══ ADD MODAL ═══ -->
+<div class="modal-overlay" id="addModal">
+  <div class="modal">
+    <div class="modal-title">Add User</div>
+    <div class="modal-sub">Enter the Google email address to grant access.</div>
+    <div class="form-group">
+      <label class="form-label">Email Address</label>
+      <input class="form-input" id="addEmail" type="email" placeholder="user@gmail.com">
+    </div>
+    <div class="form-group">
+      <div class="toggle-row">
+        <div class="toggle-label">
+          Admin
+          <small>Can manage users and settings</small>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="addAdmin">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+    <div class="modal-error" id="addError"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModals()">Cancel</button>
+      <button class="btn-confirm" onclick="submitAdd()">Add User</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ EDIT MODAL ═══ -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <div class="modal-title">Edit User</div>
+    <div class="modal-sub">Update role for this user.</div>
+    <div class="form-group">
+      <label class="form-label">Email Address</label>
+      <input class="form-input" id="editEmail" type="email" disabled>
+    </div>
+    <div class="form-group">
+      <div class="toggle-row">
+        <div class="toggle-label">
+          Admin
+          <small>Can manage users and settings</small>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="editAdmin">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+    <div class="modal-error" id="editError"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModals()">Cancel</button>
+      <button class="btn-confirm" onclick="submitEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DELETE MODAL ═══ -->
+<div class="modal-overlay" id="deleteModal">
+  <div class="modal">
+    <div class="modal-title">Delete User</div>
+    <div class="modal-sub" id="deleteSubText"></div>
+    <div class="form-group">
+      <label class="form-label">Email Address</label>
+      <input class="form-input" id="deleteEmail" type="email" disabled>
+    </div>
+    <div class="modal-error" id="deleteError"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel-m" onclick="closeModals()">Cancel</button>
+      <button class="btn-confirm danger" onclick="submitDelete()">Delete</button>
+    </div>
+  </div>
 </div>
 
 <script>
+const ME = "{{ user.email }}";
+
+// ── Filter ────────────────────────────────────────────────────────────────────
 function filterUsers(q) {
   q = q.toLowerCase().trim();
   let found = 0;
-  document.querySelectorAll("#usersTable tbody tr").forEach(row => {
-    const match = !q || row.dataset.email.includes(q);
-    row.classList.toggle("hidden", !match);
+  document.querySelectorAll("#usersBody tr").forEach(r => {
+    const match = !q || r.dataset.email.includes(q);
+    r.classList.toggle("hidden", !match);
     if (match) found++;
   });
   document.getElementById("noResults").style.display = found === 0 ? "block" : "none";
+}
+
+// ── Modals ────────────────────────────────────────────────────────────────────
+function closeModals() {
+  ["addModal","editModal","deleteModal"].forEach(id =>
+    document.getElementById(id).classList.remove("open"));
+}
+function openAdd() {
+  document.getElementById("addEmail").value = "";
+  document.getElementById("addAdmin").checked = false;
+  document.getElementById("addError").style.display = "none";
+  document.getElementById("addModal").classList.add("open");
+  setTimeout(() => document.getElementById("addEmail").focus(), 50);
+}
+function openEdit(email, isAdmin) {
+  document.getElementById("editEmail").value = email;
+  document.getElementById("editAdmin").checked = isAdmin;
+  document.getElementById("editError").style.display = "none";
+  document.getElementById("editModal").classList.add("open");
+}
+function openDelete(email, isSelf) {
+  document.getElementById("deleteEmail").value = email;
+  document.getElementById("deleteSubText").textContent =
+    isSelf ? "You cannot delete your own account." :
+    `This will revoke access for ${email}. They will not be able to log in.`;
+  document.getElementById("deleteError").style.display = "none";
+  document.querySelector("#deleteModal .btn-confirm").disabled = isSelf;
+  document.querySelector("#deleteModal .btn-confirm").style.opacity = isSelf ? "0.4" : "1";
+  document.getElementById("deleteModal").classList.add("open");
+}
+
+// Close on backdrop click
+document.querySelectorAll(".modal-overlay").forEach(o =>
+  o.addEventListener("click", e => { if (e.target === o) closeModals(); }));
+
+// ── API helpers ───────────────────────────────────────────────────────────────
+function showErr(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.style.display = "block";
+}
+
+async function submitAdd() {
+  const email   = document.getElementById("addEmail").value.trim();
+  const isAdmin = document.getElementById("addAdmin").checked;
+  if (!email) { showErr("addError", "Email is required."); return; }
+  const r = await fetch("/api/users", {
+    method: "POST", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({email, is_admin: isAdmin})
+  });
+  const d = await r.json();
+  if (!d.ok) { showErr("addError", d.message); return; }
+  closeModals();
+  location.reload();
+}
+
+async function submitEdit() {
+  const email   = document.getElementById("editEmail").value;
+  const isAdmin = document.getElementById("editAdmin").checked;
+  const r = await fetch(`/api/users/${encodeURIComponent(email)}`, {
+    method: "PATCH", headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({is_admin: isAdmin})
+  });
+  const d = await r.json();
+  if (!d.ok) { showErr("editError", d.message); return; }
+  closeModals();
+  location.reload();
+}
+
+async function submitDelete() {
+  const email = document.getElementById("deleteEmail").value;
+  const r = await fetch(`/api/users/${encodeURIComponent(email)}`, { method: "DELETE" });
+  const d = await r.json();
+  if (!d.ok) { showErr("deleteError", d.message); return; }
+  closeModals();
+  location.reload();
 }
 </script>
 </body>
