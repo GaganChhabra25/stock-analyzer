@@ -264,20 +264,34 @@ def _get_upcoming_expiries() -> list:
 
 
 def _get_expiries_for_instrument(instrument: str) -> list:
-    """Return upcoming expiry dates for the given instrument from DB."""
+    """
+    Return expiry dates for the given instrument from DB.
+    Prefers future/current-week expiries; falls back to most recent past ones.
+    """
     if not db_available():
         return []
+    today = date.today()
     try:
         with _get_conn() as conn:
             if conn is None:
                 return []
             with conn.cursor() as cur:
+                # First try: future/current expiries
                 cur.execute("""
                     SELECT DISTINCT expiry FROM option_chain
-                    WHERE instrument = %s AND expiry >= CURRENT_DATE
+                    WHERE instrument = %s AND expiry >= %s
                     ORDER BY expiry ASC LIMIT 6
-                """, (instrument.upper(),))
-                return [r[0] for r in cur.fetchall()]
+                """, (instrument.upper(), today))
+                rows = [r[0] for r in cur.fetchall()]
+                if rows:
+                    return rows
+                # Fallback: most recent past expiries (reversed to get nearest first)
+                cur.execute("""
+                    SELECT DISTINCT expiry FROM option_chain
+                    WHERE instrument = %s AND expiry < %s
+                    ORDER BY expiry DESC LIMIT 6
+                """, (instrument.upper(), today))
+                return list(reversed([r[0] for r in cur.fetchall()]))
     except Exception as exc:
         logger.warning("expiry query failed for %s: %s", instrument, exc)
         return []
@@ -317,57 +331,58 @@ def _get_spot_for_instrument(instrument: str) -> Optional[float]:
 def _get_oi_levels(instrument: str, expiry: date, atm: int, top_n: int = 5) -> dict:
     """
     Query top OI CE strikes (resistance) and top OI PE strikes (support)
-    for the given instrument and expiry. Returns {'support': [...], 'resistance': [...]}.
+    for the given instrument and expiry.
+    Falls back to volume ranking if OI is all-zero (some historical backfills).
+    Returns {'support': [...], 'resistance': [...]}.
     Each item: {strike, oi_lakh, oi_raw}.
     """
     result = {"support": [], "resistance": []}
     if not db_available():
         return result
+
+    def _query_side(cur, option_type: str, strike_op: str, metric: str) -> list:
+        """metric = 'oi' or 'volume'"""
+        cur.execute(f"""
+            SELECT strike, MAX({metric}) AS val
+            FROM option_chain
+            WHERE instrument  = %s
+              AND expiry      = %s
+              AND option_type = %s
+              AND strike      {strike_op} %s
+              AND {metric}    > 0
+            GROUP BY strike
+            ORDER BY val DESC
+            LIMIT %s
+        """, (instrument.upper(), expiry, option_type, atm, top_n))
+        return cur.fetchall()
+
     try:
         with _get_conn() as conn:
             if conn is None:
                 return result
             with conn.cursor() as cur:
-                # Top CE OI above ATM = resistance
-                cur.execute("""
-                    SELECT strike, MAX(oi) AS max_oi
-                    FROM option_chain
-                    WHERE instrument  = %s
-                      AND expiry      = %s
-                      AND option_type = 'CE'
-                      AND strike      >= %s
-                      AND oi          > 0
-                    GROUP BY strike
-                    ORDER BY max_oi DESC
-                    LIMIT %s
-                """, (instrument.upper(), expiry, atm, top_n))
-                for row in cur.fetchall():
-                    oi_raw = int(row[1])
+                # ── Resistance: CE above ATM ──────────────────────────────────
+                rows = _query_side(cur, "CE", ">=", "oi")
+                if not rows:   # fallback to volume
+                    rows = _query_side(cur, "CE", ">=", "volume")
+                for row in rows:
+                    val = int(row[1])
                     result["resistance"].append({
-                        "strike":   int(row[0]),
-                        "oi_lakh":  round(oi_raw / 100000, 1),
-                        "oi_raw":   oi_raw,
+                        "strike":  int(row[0]),
+                        "oi_lakh": round(val / 100000, 1),
+                        "oi_raw":  val,
                     })
 
-                # Top PE OI below ATM = support
-                cur.execute("""
-                    SELECT strike, MAX(oi) AS max_oi
-                    FROM option_chain
-                    WHERE instrument  = %s
-                      AND expiry      = %s
-                      AND option_type = 'PE'
-                      AND strike      <= %s
-                      AND oi          > 0
-                    GROUP BY strike
-                    ORDER BY max_oi DESC
-                    LIMIT %s
-                """, (instrument.upper(), expiry, atm, top_n))
-                for row in cur.fetchall():
-                    oi_raw = int(row[1])
+                # ── Support: PE below ATM ─────────────────────────────────────
+                rows = _query_side(cur, "PE", "<=", "oi")
+                if not rows:   # fallback to volume
+                    rows = _query_side(cur, "PE", "<=", "volume")
+                for row in rows:
+                    val = int(row[1])
                     result["support"].append({
-                        "strike":   int(row[0]),
-                        "oi_lakh":  round(oi_raw / 100000, 1),
-                        "oi_raw":   oi_raw,
+                        "strike":  int(row[0]),
+                        "oi_lakh": round(val / 100000, 1),
+                        "oi_raw":  val,
                     })
     except Exception as exc:
         logger.warning("OI levels query failed for %s %s: %s", instrument, expiry, exc)
@@ -413,23 +428,28 @@ def get_options_levels(instrument: str = "NIFTY") -> dict:
 
     atm = int(round(spot / step) * step)
 
-    # Expiries
+    # Expiries from DB (handles NSE holidays, BankNifty Wednesday expiry, etc.)
     expiries = _get_expiries_for_instrument(instrument)
 
-    # Weekly = nearest expiry (could be this week or next)
-    weekly_expiry = expiries[0] if expiries else _next_thursday(today)
-    # Monthly = first expiry > 20 DTE, or last Thursday of month
+    # Weekly = nearest expiry in DB; fallback uses range_predict's smarter helper
+    if expiries:
+        weekly_expiry = expiries[0]
+    else:
+        from options.range_predict import _next_expiry
+        weekly_expiry = _next_expiry(instrument, "weekly", today)
+
+    # Monthly = first expiry > 20 DTE, else last expiry in list, else compute
     monthly_expiry = None
     for e in expiries:
-        if (e - today).days > 20:
+        if abs((e - today).days) > 20:
             monthly_expiry = e
             break
     if monthly_expiry is None:
-        monthly_expiry = _last_thursday_of_month(today.year, today.month)
-        if monthly_expiry <= today:
-            nm = today.month + 1 if today.month < 12 else 1
-            ny = today.year if today.month < 12 else today.year + 1
-            monthly_expiry = _last_thursday_of_month(ny, nm)
+        if len(expiries) > 1:
+            monthly_expiry = expiries[-1]
+        else:
+            from options.range_predict import _next_expiry
+            monthly_expiry = _next_expiry(instrument, "monthly", today)
 
     weekly_dte  = max((weekly_expiry  - today).days, 0)
     monthly_dte = max((monthly_expiry - today).days, 0)

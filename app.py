@@ -936,6 +936,48 @@ def api_exit_group(group_id):
     return jsonify(result), (200 if result["ok"] else 500)
 
 
+@app.route("/api/debug-levels")
+@login_required
+def api_debug_levels():
+    """Diagnostic: show what's in option_chain for OI debugging."""
+    from screener.db import _get_conn, is_available
+    if not is_available():
+        return jsonify({"error": "DB not available"})
+    instrument = request.args.get("instrument", "NIFTY").upper()
+    result = {}
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                # All distinct expiries for instrument
+                cur.execute("""
+                    SELECT DISTINCT expiry, COUNT(*) as rows,
+                           SUM(CASE WHEN oi > 0 THEN 1 ELSE 0 END) as oi_rows
+                    FROM option_chain
+                    WHERE instrument = %s
+                    GROUP BY expiry ORDER BY expiry DESC LIMIT 10
+                """, (instrument,))
+                result["expiries"] = [
+                    {"expiry": str(r[0]), "rows": r[1], "oi_rows": r[2]}
+                    for r in cur.fetchall()
+                ]
+                # Latest ts
+                cur.execute("SELECT MAX(ts) FROM option_chain WHERE instrument=%s", (instrument,))
+                result["latest_ts"] = str(cur.fetchone()[0])
+                # Sample OI row
+                cur.execute("""
+                    SELECT expiry, strike, option_type, oi, ltp
+                    FROM option_chain WHERE instrument=%s AND oi > 0
+                    ORDER BY ts DESC LIMIT 5
+                """, (instrument,))
+                result["sample_oi"] = [
+                    {"expiry": str(r[0]), "strike": r[1], "type": r[2], "oi": r[3], "ltp": float(r[4] or 0)}
+                    for r in cur.fetchall()
+                ]
+    except Exception as exc:
+        result["error"] = str(exc)
+    return jsonify(result)
+
+
 @app.route("/api/weekly-range")
 @login_required
 def api_weekly_range():
