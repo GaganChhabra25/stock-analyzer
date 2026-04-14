@@ -4,8 +4,11 @@ Pipeline Watchdog — self-healing monitor for all options data collection.
 Runs every 10 minutes during all market hours via cron.
 
 Market windows monitored:
-  NFO (NIFTY/BANKNIFTY) : 09:14 – 15:35 IST
-  MCX (NatGas/Crude)     : 09:00 – 23:35 IST
+  NFO (NIFTY/BANKNIFTY) : 09:14 – 15:35 IST  (NSE holidays respected)
+  MCX (NatGas/Crude)     : 09:00 – 23:35 IST  (MCX holidays + evening-only days respected)
+
+Uses the same is_open() from each ExchangeCollector — single source of truth.
+No checks or Telegram messages fire outside actual market hours.
 
 Logic per active window:
   1. Data flowing                   → healthy, clear any stale alerts
@@ -41,11 +44,15 @@ IST     = ZoneInfo("Asia/Kolkata")
 VENV_PY = str(Path(__file__).parent.parent / "venv/bin/python3")
 APP_DIR = str(Path(__file__).parent.parent)
 
-# (market_open, market_close, label, instrument_to_check)
-MARKET_WINDOWS = [
-    (time(9, 14),  time(15, 35), "NFO", "NIFTY"),
-    (time(9,  0),  time(23, 35), "MCX", "NATURALGAS"),
-]
+# Each entry: (label, instrument_to_check, collector_class)
+# is_open() on the collector is the single source of truth for market hours.
+def _build_windows():
+    from options.exchange.nfo import NFOCollector
+    from options.exchange.mcx import MCXCollector
+    return [
+        ("NFO", "NIFTY",      NFOCollector()),
+        ("MCX", "NATURALGAS", MCXCollector()),
+    ]
 
 
 # ── Core checks ────────────────────────────────────────────────────────────────
@@ -231,13 +238,13 @@ def _check_window(label: str, instrument: str, now: datetime) -> None:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def run_watchdog() -> None:
-    now      = _ist_now()
-    now_time = now.time()
+    now     = _ist_now()
+    windows = _build_windows()
 
     active = [
         (label, instrument)
-        for (open_t, close_t, label, instrument) in MARKET_WINDOWS
-        if open_t <= now_time <= close_t
+        for (label, instrument, collector) in windows
+        if collector.is_open()
     ]
 
     if not active:
