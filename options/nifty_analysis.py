@@ -263,6 +263,210 @@ def _get_upcoming_expiries() -> list:
         return []
 
 
+def _get_expiries_for_instrument(instrument: str) -> list:
+    """Return upcoming expiry dates for the given instrument from DB."""
+    if not db_available():
+        return []
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return []
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT expiry FROM option_chain
+                    WHERE instrument = %s AND expiry >= CURRENT_DATE
+                    ORDER BY expiry ASC LIMIT 6
+                """, (instrument.upper(),))
+                return [r[0] for r in cur.fetchall()]
+    except Exception as exc:
+        logger.warning("expiry query failed for %s: %s", instrument, exc)
+        return []
+
+
+def _get_spot_for_instrument(instrument: str) -> Optional[float]:
+    """Get latest spot price for the given instrument from option_chain."""
+    if not db_available():
+        return None
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return None
+            with conn.cursor() as cur:
+                # Try market_snapshot first
+                cur.execute("""
+                    SELECT spot_price FROM market_snapshot
+                    WHERE instrument = %s AND spot_price IS NOT NULL
+                    ORDER BY ts DESC LIMIT 1
+                """, (instrument.upper(),))
+                row = cur.fetchone()
+                if row and row[0]:
+                    return float(row[0])
+                # Fall back to option_chain underlying_ltp
+                cur.execute("""
+                    SELECT underlying_ltp FROM option_chain
+                    WHERE instrument = %s AND underlying_ltp IS NOT NULL
+                    ORDER BY ts DESC LIMIT 1
+                """, (instrument.upper(),))
+                row = cur.fetchone()
+                return float(row[0]) if row and row[0] else None
+    except Exception as exc:
+        logger.warning("spot query failed for %s: %s", instrument, exc)
+        return None
+
+
+def _get_oi_levels(instrument: str, expiry: date, atm: int, top_n: int = 5) -> dict:
+    """
+    Query top OI CE strikes (resistance) and top OI PE strikes (support)
+    for the given instrument and expiry. Returns {'support': [...], 'resistance': [...]}.
+    Each item: {strike, oi_lakh, oi_raw}.
+    """
+    result = {"support": [], "resistance": []}
+    if not db_available():
+        return result
+    try:
+        with _get_conn() as conn:
+            if conn is None:
+                return result
+            with conn.cursor() as cur:
+                # Top CE OI above ATM = resistance
+                cur.execute("""
+                    SELECT strike, MAX(oi) AS max_oi
+                    FROM option_chain
+                    WHERE instrument  = %s
+                      AND expiry      = %s
+                      AND option_type = 'CE'
+                      AND strike      >= %s
+                      AND oi          > 0
+                    GROUP BY strike
+                    ORDER BY max_oi DESC
+                    LIMIT %s
+                """, (instrument.upper(), expiry, atm, top_n))
+                for row in cur.fetchall():
+                    oi_raw = int(row[1])
+                    result["resistance"].append({
+                        "strike":   int(row[0]),
+                        "oi_lakh":  round(oi_raw / 100000, 1),
+                        "oi_raw":   oi_raw,
+                    })
+
+                # Top PE OI below ATM = support
+                cur.execute("""
+                    SELECT strike, MAX(oi) AS max_oi
+                    FROM option_chain
+                    WHERE instrument  = %s
+                      AND expiry      = %s
+                      AND option_type = 'PE'
+                      AND strike      <= %s
+                      AND oi          > 0
+                    GROUP BY strike
+                    ORDER BY max_oi DESC
+                    LIMIT %s
+                """, (instrument.upper(), expiry, atm, top_n))
+                for row in cur.fetchall():
+                    oi_raw = int(row[1])
+                    result["support"].append({
+                        "strike":   int(row[0]),
+                        "oi_lakh":  round(oi_raw / 100000, 1),
+                        "oi_raw":   oi_raw,
+                    })
+    except Exception as exc:
+        logger.warning("OI levels query failed for %s %s: %s", instrument, expiry, exc)
+    return result
+
+
+# ── Simple levels entry point ──────────────────────────────────────────────────
+
+_FALLBACK_SPOT = {
+    "NIFTY":     22500.0,
+    "BANKNIFTY": 48000.0,
+}
+
+_STRIKE_STEP_MAP = {
+    "NIFTY":     50,
+    "BANKNIFTY": 100,
+}
+
+
+def get_options_levels(instrument: str = "NIFTY") -> dict:
+    """
+    Return S/R levels for the given instrument (NIFTY or BANKNIFTY).
+    Queries DB for weekly and monthly expiry OI-based support/resistance.
+
+    Structure:
+      available     bool
+      instrument    str
+      spot          float
+      as_of         str
+      weekly        {expiry, dte, support:[...], resistance:[...]}
+      monthly       {expiry, dte, support:[...], resistance:[...]}
+    """
+    instrument = instrument.upper()
+    today = date.today()
+    step = _STRIKE_STEP_MAP.get(instrument, 50)
+
+    # Spot
+    spot = _get_spot_for_instrument(instrument)
+    as_of = "DB data"
+    if spot is None:
+        spot = _FALLBACK_SPOT.get(instrument, 22500.0)
+        as_of = "Static fallback"
+
+    atm = int(round(spot / step) * step)
+
+    # Expiries
+    expiries = _get_expiries_for_instrument(instrument)
+
+    # Weekly = nearest expiry (could be this week or next)
+    weekly_expiry = expiries[0] if expiries else _next_thursday(today)
+    # Monthly = first expiry > 20 DTE, or last Thursday of month
+    monthly_expiry = None
+    for e in expiries:
+        if (e - today).days > 20:
+            monthly_expiry = e
+            break
+    if monthly_expiry is None:
+        monthly_expiry = _last_thursday_of_month(today.year, today.month)
+        if monthly_expiry <= today:
+            nm = today.month + 1 if today.month < 12 else 1
+            ny = today.year if today.month < 12 else today.year + 1
+            monthly_expiry = _last_thursday_of_month(ny, nm)
+
+    weekly_dte  = max((weekly_expiry  - today).days, 0)
+    monthly_dte = max((monthly_expiry - today).days, 0)
+
+    # OI-based levels from DB
+    w_levels = _get_oi_levels(instrument, weekly_expiry,  atm)
+    m_levels = _get_oi_levels(instrument, monthly_expiry, atm)
+
+    # Sort support desc (highest strike first), resistance asc (lowest first)
+    w_levels["support"]    = sorted(w_levels["support"],    key=lambda x: x["strike"], reverse=True)
+    w_levels["resistance"] = sorted(w_levels["resistance"], key=lambda x: x["strike"])
+    m_levels["support"]    = sorted(m_levels["support"],    key=lambda x: x["strike"], reverse=True)
+    m_levels["resistance"] = sorted(m_levels["resistance"], key=lambda x: x["strike"])
+
+    return {
+        "available":   True,
+        "instrument":  instrument,
+        "spot":        spot,
+        "atm":         atm,
+        "as_of":       as_of,
+        "weekly": {
+            "expiry":      weekly_expiry.strftime("%d %b %Y"),
+            "expiry_dow":  weekly_expiry.strftime("%A"),
+            "dte":         weekly_dte,
+            "support":     w_levels["support"],
+            "resistance":  w_levels["resistance"],
+        },
+        "monthly": {
+            "expiry":      monthly_expiry.strftime("%d %b %Y"),
+            "expiry_dow":  monthly_expiry.strftime("%A"),
+            "dte":         monthly_dte,
+            "support":     m_levels["support"],
+            "resistance":  m_levels["resistance"],
+        },
+    }
+
+
 def _get_iv_for_expiry(expiry: date, spot: float) -> Optional[float]:
     """Latest ATM IV (avg CE+PE) for a given expiry from option_chain."""
     if not db_available():

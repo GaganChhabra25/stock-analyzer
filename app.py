@@ -510,9 +510,12 @@ def insights():
 @app.route("/nifty")
 @login_required
 def nifty_intelligence():
-    from options.nifty_analysis import get_nifty_intelligence
+    from options.nifty_analysis import get_options_levels
+    instrument = request.args.get("instrument", "NIFTY").upper()
+    if instrument not in ("NIFTY", "BANKNIFTY"):
+        instrument = "NIFTY"
     try:
-        data = get_nifty_intelligence()
+        data = get_options_levels(instrument)
     except Exception as exc:
         data = {"available": False, "error": str(exc)}
     return render_template("nifty_levels.html", user=session["user"], data=data)
