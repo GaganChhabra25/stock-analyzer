@@ -278,6 +278,8 @@ def backtest_iron_fly(
 
                     per_day.append({
                         "date":          str(trade_date),
+                        "entry_time":    "09:20",
+                        "exit_time":     "15:10",
                         "expiry":        str(expiry),
                         "atm":           atm,
                         "wing_width":    wing,
@@ -633,6 +635,8 @@ def backtest_oi_strangle(
 
                     per_day.append({
                         "date":          str(trade_date),
+                        "entry_time":    "10:30",
+                        "exit_time":     "14:45",
                         "expiry":        str(expiry),
                         "dte":           dte,
                         "spot":          round(spot, 1),
@@ -781,6 +785,8 @@ def backtest_0dte_straddle(
 
                     per_day.append({
                         "date":        str(trade_date),
+                        "entry_time":  "09:30",
+                        "exit_time":   "13:30",
                         "expiry":      str(expiry),
                         "dte":         0,
                         "spot":        round(spot, 1),

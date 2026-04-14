@@ -777,6 +777,8 @@ function renderResults(data) {
       : `<td>${d.wing_width}</td>`;
     return `<tr class="${d.win ? "win-row" : "loss-row"}">
       <td>${d.date}</td>
+      <td>${d.entry_time || "—"}</td>
+      <td>${d.exit_time || "—"}</td>
       <td>${d.dte ?? "—"}</td>
       <td>${d.atm || d.sell_ce}</td>
       <td>${d.sell_ce}C / ${d.sell_pe}P</td>
@@ -847,7 +849,7 @@ function renderResults(data) {
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>Date</th><th>DTE</th><th>ATM</th><th>Sell</th>
+            <th>Date</th><th>Entry</th><th>Exit</th><th>DTE</th><th>ATM</th><th>Sell</th>
             <th>Premium</th>${thExtra}
             <th>P&L pts</th><th>P&L ₹</th><th>Result</th>
           </tr></thead>
