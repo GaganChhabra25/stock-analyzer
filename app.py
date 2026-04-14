@@ -1152,6 +1152,22 @@ def api_force_exit_deployment(dep_id):
     return jsonify({"ok": ok})
 
 
+@app.route("/deployments")
+@login_required
+def deployments_page():
+    """Deployed Strategies — live and historical deployments."""
+    return render_template("deployments.html", user=session["user"])
+
+
+@app.route("/users")
+@login_required
+def users_page():
+    """Users — allowed Google accounts."""
+    from config import ALLOWED_EMAILS
+    allowed = list(ALLOWED_EMAILS)
+    return render_template("users.html", user=session["user"], allowed_emails=allowed)
+
+
 # ── Start deployment scheduler on boot ────────────────────────────────────────
 
 def _start_deployment_scheduler():

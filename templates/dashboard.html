@@ -242,8 +242,6 @@ body {
         <div class="user-email">{{ user.email }}</div>
       </div>
     </div>
-    <a href="/nifty" class="logout-btn" style="background:rgba(139,93,255,0.25);border-color:rgba(189,143,255,0.4);">&#127911; Options Intel</a>
-    <a href="/insights" class="logout-btn" style="background:rgba(31,111,235,0.25);border-color:rgba(88,166,255,0.4);">DB Insights</a>
     <a href="/logout" class="logout-btn">Sign Out</a>
   </div>
 </div>
@@ -253,18 +251,28 @@ body {
 
 <!-- Sidebar -->
 <nav class="sidebar">
-  <a href="/"         class="sidebar-item active">
+  <a href="/"              class="sidebar-item active">
     <span class="sidebar-icon">📊</span> Dashboard
   </a>
-  <a href="/backtest" class="sidebar-item">
+  <a href="/backtest"      class="sidebar-item">
     <span class="sidebar-icon">📉</span> Backtest
   </a>
   <div class="sidebar-divider"></div>
-  <a href="/nifty"    class="sidebar-item">
+  <a href="/nifty"         class="sidebar-item">
     <span class="sidebar-icon">🎯</span> Options Intel
   </a>
-  <a href="/insights" class="sidebar-item">
+  <a href="/weekly"        class="sidebar-item">
+    <span class="sidebar-icon">📅</span> Weekly Range
+  </a>
+  <a href="/insights"      class="sidebar-item">
     <span class="sidebar-icon">🔬</span> DB Insights
+  </a>
+  <div class="sidebar-divider"></div>
+  <a href="/deployments"   class="sidebar-item">
+    <span class="sidebar-icon">🚀</span> Deployed Strategies
+  </a>
+  <a href="/users"         class="sidebar-item">
+    <span class="sidebar-icon">👥</span> Users
   </a>
 </nav>
 
