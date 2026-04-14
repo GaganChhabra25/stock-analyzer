@@ -640,7 +640,8 @@ const CAL_MONTHS = ["January","February","March","April","May","June","July","Au
 function openCal(target) {
   if (!S.availDates.length) return;
   CAL.target = target;
-  const ref = (target === "from" ? S.dateFrom : S.dateTo) || S.availDates[S.availDates.length - 1];
+  // availDates is descending — [0] is most recent, use it as default
+  const ref = (target === "from" ? S.dateFrom : S.dateTo) || S.availDates[0];
   const [y,m] = ref.split("-").map(Number);
   CAL.year = y; CAL.month = m - 1;
   renderCal();
@@ -681,16 +682,19 @@ function renderCal() {
 function pickDate(iso) {
   if (CAL.target === "from") {
     S.dateFrom = iso;
-    if (S.dateTo && S.dateFrom > S.dateTo) S.dateTo = null;
+    if (S.dateTo && S.dateFrom > S.dateTo) { S.dateTo = null; setDateDisp("to", null); }
     setDateDisp("from", iso);
-    if (S.dateTo) setDateDisp("to", S.dateTo);
+    // Auto-switch to "to" selection
+    CAL.target = "to";
+    document.getElementById("calHint").textContent = "Now select end date";
+    renderCal();
   } else {
     S.dateTo = iso;
-    if (S.dateFrom && S.dateTo < S.dateFrom) S.dateFrom = null;
+    if (S.dateFrom && S.dateTo < S.dateFrom) { S.dateFrom = null; setDateDisp("from", null); }
     setDateDisp("to", iso);
-    if (S.dateFrom) setDateDisp("from", S.dateFrom);
+    // Auto-close after both dates picked
+    closeCal();
   }
-  renderCal();
 }
 function clearDates() {
   S.dateFrom = null; S.dateTo = null;
