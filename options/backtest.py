@@ -532,7 +532,6 @@ def backtest_oi_strangle(
                     if skip_high_vol:
                         prev_rng = 0.0
                         for lag in range(1, 5):
-                            from datetime import timedelta
                             pd = trade_date - timedelta(days=lag)
                             if pd in prev_ranges:
                                 prev_rng = prev_ranges[pd]
