@@ -29,10 +29,13 @@ Target prices:
 """
 
 import calendar
+import logging
 import math
 import time
 import warnings
 warnings.filterwarnings("ignore")
+
+logger = logging.getLogger(__name__)
 
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -53,29 +56,29 @@ except ImportError:
 # ── Signal weights ─────────────────────────────────────────────────────────────
 
 _NIFTY_W: Dict[str, float] = {
-    "hist_wr":  0.10,   # historical week-of-month win rate
-    "tech":     0.18,   # RSI + MACD + Bollinger Bands + SMA + ADX
-    "vix":      0.18,   # India VIX level + trend
-    "pcr":      0.28,   # Put-Call Ratio — most reliable options intelligence for Nifty
-    "max_pain": 0.18,   # Max pain gravitational pull (very reliable near expiry)
-    "global":   0.05,   # S&P 500 + Nikkei 225 sentiment
-    "fii":      0.03,   # FII net cash flow (noisy, low weight)
+    "pcr_trend": 0.20,   # DB: PCR level + 3-day trend from market_snapshot
+    "oi_change": 0.20,   # DB: net OI change direction from option_chain
+    "max_pain":  0.18,   # DB/API: max pain strike gravitational pull
+    "tech":      0.15,   # RSI + MACD + Bollinger + SMA + ADX from price
+    "vix":       0.13,   # DB: India VIX from market_snapshot
+    "hist_wr":   0.08,   # historical week-of-month win rate from price
+    "iv_pct":    0.06,   # DB: IV percentile from option_chain.iv
 }
 
 _CRUDE_W: Dict[str, float] = {
-    "hist_wr":  0.20,
-    "tech":     0.35,
-    "global":   0.25,   # global Brent/WTI price momentum matters most
-    "seasonal": 0.10,   # driving-season demand cycle
-    "vix":      0.10,   # risk-off proxy
+    "oi_conf":  0.35,   # DB: price + OI confluence from mcx_ohlc
+    "tech":     0.30,   # DB: RSI + MACD + BB + SMA from mcx_ohlc
+    "volume":   0.15,   # DB: volume vs 20-day avg from mcx_ohlc
+    "seasonal": 0.12,   # DB: empirical monthly return from mcx_ohlc history
+    "hist_wr":  0.08,   # DB: historical monthly win rate from mcx_ohlc
 }
 
 _NATGAS_W: Dict[str, float] = {
-    "hist_wr":  0.15,
-    "tech":     0.35,
-    "global":   0.25,
-    "seasonal": 0.15,   # nat gas has very strong seasonal pattern
-    "vix":      0.10,
+    "oi_conf":  0.33,   # DB: price + OI confluence from mcx_ohlc
+    "tech":     0.28,   # DB: RSI + MACD + BB + SMA from mcx_ohlc
+    "seasonal": 0.20,   # DB: NatGas has very strong seasonal pattern
+    "volume":   0.12,   # DB: volume confirmation
+    "hist_wr":  0.07,   # DB: historical monthly win rate
 }
 
 # Week-level confidence decay: further weeks → probability pulled toward 50 %
@@ -579,6 +582,293 @@ def _seasonal_signal(commodity: str, today: date) -> float:
     return 0.0
 
 
+# ── DB-based signal functions (no yfinance, no external APIs) ─────────────────
+
+def _db_vix_signal() -> float:
+    """India VIX from market_snapshot. Same scale as _india_vix_signal()."""
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok():
+        return 0.0
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT vix FROM market_snapshot
+                    WHERE instrument = 'NIFTY' AND vix IS NOT NULL
+                    ORDER BY ts DESC LIMIT 1
+                """)
+                row = cur.fetchone()
+        if not row or not row[0]:
+            return 0.0
+        vix = float(row[0])
+        if   vix < 11: return +0.70
+        elif vix < 14: return +0.40
+        elif vix < 17: return +0.10
+        elif vix < 20: return -0.30
+        elif vix < 25: return -0.60
+        else:          return -0.90
+    except Exception:
+        return 0.0
+
+
+def _db_pcr_trend_signal() -> float:
+    """
+    PCR level + 3-day trend from market_snapshot.
+    Rising PCR = more put buying = hedging = bullish for underlying.
+    Returns -1..+1.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok():
+        return 0.0
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT pcr_oi FROM market_snapshot
+                    WHERE instrument = 'NIFTY' AND pcr_oi IS NOT NULL
+                    ORDER BY ts DESC LIMIT 40
+                """)
+                rows = [float(r[0]) for r in cur.fetchall()]
+        if not rows:
+            return 0.0
+
+        latest = rows[0]
+        if   latest > 1.5: level = +0.90
+        elif latest > 1.2: level = +0.60
+        elif latest > 1.0: level = +0.30
+        elif latest > 0.8: level = -0.20
+        elif latest > 0.6: level = -0.60
+        else:              level = -0.90
+
+        trend = 0.0
+        if len(rows) >= 12:
+            older = rows[12:24] if len(rows) >= 24 else rows[6:]
+            older_avg = sum(older) / len(older)
+            delta = (latest - older_avg) / (abs(older_avg) + 1e-9)
+            if   delta >  0.15: trend = +0.50
+            elif delta >  0.05: trend = +0.25
+            elif delta < -0.15: trend = -0.50
+            elif delta < -0.05: trend = -0.25
+
+        return round(max(-1.0, min(1.0, level * 0.60 + trend * 0.40)), 3)
+    except Exception:
+        return 0.0
+
+
+def _db_oi_change_signal(expiry: "date") -> float:
+    """
+    Net OI change direction from option_chain (last trading day).
+    PE OI adding + CE OI reducing → bulls defending → bullish.
+    CE OI adding + PE OI reducing → bears pressing → bearish.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok() or expiry is None:
+        return 0.0
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT option_type, SUM(oi_change) AS net
+                    FROM option_chain
+                    WHERE instrument = 'NIFTY'
+                      AND expiry = %s
+                      AND oi_change IS NOT NULL
+                      AND ts >= NOW() - INTERVAL '1 day'
+                    GROUP BY option_type
+                """, (expiry,))
+                data = {r[0]: float(r[1]) for r in cur.fetchall() if r[1] is not None}
+        ce = data.get("CE", 0.0)
+        pe = data.get("PE", 0.0)
+        total = abs(ce) + abs(pe)
+        if total < 100:
+            return 0.0
+        # pe - ce > 0 means puts are being added relative to calls → bullish
+        raw = (pe - ce) / (total + 1e-9)
+        return round(max(-1.0, min(1.0, raw * 1.5)), 3)
+    except Exception:
+        return 0.0
+
+
+def _db_iv_percentile_signal(expiry: "date", atm: int) -> float:
+    """
+    ATM IV percentile vs 52-week range from option_chain.iv.
+    High percentile (>75%) → expensive options → mean reversion bias (slight bearish directional).
+    Low percentile (<25%) → compressed → trend continuation more likely.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok() or expiry is None:
+        return 0.0
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT AVG(iv) FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry = %s
+                      AND strike = %s AND iv > 0
+                      AND ts >= NOW() - INTERVAL '2 days'
+                """, (expiry, atm))
+                r = cur.fetchone()
+                current_iv = float(r[0]) if r and r[0] else None
+                if current_iv is None:
+                    return 0.0
+                cur.execute("""
+                    SELECT MIN(iv), MAX(iv) FROM option_chain
+                    WHERE instrument = 'NIFTY' AND strike = %s
+                      AND iv > 0
+                      AND ts >= NOW() - INTERVAL '365 days'
+                """, (atm,))
+                r = cur.fetchone()
+                if not r or not r[0] or not r[1]:
+                    return 0.0
+                iv_min, iv_max = float(r[0]), float(r[1])
+        if iv_max <= iv_min:
+            return 0.0
+        pct = (current_iv - iv_min) / (iv_max - iv_min) * 100
+        if   pct > 80: return -0.40
+        elif pct > 65: return -0.20
+        elif pct > 45: return  0.00
+        elif pct > 25: return +0.15
+        else:          return +0.30
+    except Exception:
+        return 0.0
+
+
+def _db_max_pain_signal(expiry: "date", cmp: float) -> Optional[float]:
+    """
+    Compute max pain from option_chain OI (DB-native, no NSE API needed).
+    Returns the max_pain_to_signal value, or None if data unavailable.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok() or expiry is None or cmp <= 0:
+        return None
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT strike, option_type, MAX(oi) AS max_oi
+                    FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry = %s AND oi > 0
+                    GROUP BY strike, option_type
+                """, (expiry,))
+                rows = cur.fetchall()
+        if not rows:
+            return None
+        ce_oi: Dict[float, float] = {}
+        pe_oi: Dict[float, float] = {}
+        for strike, opt_type, oi in rows:
+            if opt_type == "CE":
+                ce_oi[float(strike)] = float(oi)
+            elif opt_type == "PE":
+                pe_oi[float(strike)] = float(oi)
+        all_strikes = sorted(set(ce_oi) | set(pe_oi))
+        if not all_strikes:
+            return None
+        losses: Dict[float, float] = {}
+        for s in all_strikes:
+            ce_loss = sum(max(0.0, s - k) * v for k, v in ce_oi.items())
+            pe_loss = sum(max(0.0, k - s) * v for k, v in pe_oi.items())
+            losses[s] = ce_loss + pe_loss
+        max_pain = float(min(losses, key=losses.get))
+        return _max_pain_to_signal(max_pain, cmp)
+    except Exception:
+        return None
+
+
+# ── MCX DataFrame signals (operate on already-loaded mcx_ohlc DataFrame) ───────
+
+def _mcx_oi_confluence(df: "pd.DataFrame") -> float:
+    """
+    Price + OI 5-bar confluence — most reliable futures directional signal.
+      Price UP  + OI UP   → new longs entering    → strong bull (+0.80)
+      Price UP  + OI DOWN → short covering rally   → weak   bull (+0.30)
+      Price DOWN + OI UP  → new shorts entering    → strong bear (-0.80)
+      Price DOWN + OI DOWN → long liquidation      → weak   bear (-0.30)
+    """
+    oi_col = next((c for c in ("oi", "OI") if c in df.columns), None)
+    if oi_col is None or len(df) < 5:
+        return 0.0
+    try:
+        tail = df[["Close", oi_col]].dropna().tail(5)
+        if len(tail) < 2:
+            return 0.0
+        price_chg = float(tail["Close"].iloc[-1]) - float(tail["Close"].iloc[0])
+        oi_chg    = float(tail[oi_col].iloc[-1])  - float(tail[oi_col].iloc[0])
+        p = 1 if price_chg > 0 else (-1 if price_chg < 0 else 0)
+        o = 1 if oi_chg    > 0 else (-1 if oi_chg    < 0 else 0)
+        if p == 0:         return  0.00
+        if p ==  1 and o ==  1: return +0.80
+        if p ==  1 and o == -1: return +0.30
+        if p == -1 and o ==  1: return -0.80
+        if p == -1 and o == -1: return -0.30
+    except Exception:
+        pass
+    return 0.0
+
+
+def _mcx_volume_signal(df: "pd.DataFrame") -> float:
+    """Volume vs 20-day average — confirms or weakens price direction."""
+    vol_col = next((c for c in ("volume", "Volume") if c in df.columns), None)
+    if vol_col is None or len(df) < 20:
+        return 0.0
+    try:
+        avg_vol  = float(df[vol_col].tail(20).mean())
+        curr_vol = float(df[vol_col].iloc[-1])
+        if avg_vol <= 0:
+            return 0.0
+        ratio     = curr_vol / avg_vol
+        close     = df["Close"].dropna()
+        price_dir = 1 if float(close.iloc[-1]) > float(close.iloc[-2]) else -1
+        if   ratio > 1.5: return round(price_dir * 0.70, 2)
+        elif ratio > 1.2: return round(price_dir * 0.40, 2)
+        elif ratio < 0.7: return round(price_dir * 0.10, 2)
+        else:             return round(price_dir * 0.20, 2)
+    except Exception:
+        return 0.0
+
+
+def _mcx_seasonal_from_db(symbol: str) -> float:
+    """
+    Empirical seasonal signal: average monthly return for today's calendar
+    month, computed from full mcx_ohlc history. No hardcoding.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok():
+        return 0.0
+    current_month = date.today().month
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    WITH monthly AS (
+                        SELECT
+                            DATE_TRUNC('month', ts)::date                  AS m,
+                            EXTRACT(month FROM ts)::int                    AS mnum,
+                            (ARRAY_AGG(close ORDER BY ts ASC))[1]          AS m_open,
+                            (ARRAY_AGG(close ORDER BY ts DESC))[1]         AS m_close
+                        FROM mcx_ohlc
+                        WHERE instrument = %s AND interval = 'day'
+                          AND ts < DATE_TRUNC('month', CURRENT_DATE)
+                        GROUP BY DATE_TRUNC('month', ts)
+                    )
+                    SELECT mnum,
+                           AVG((m_close - m_open) / NULLIF(m_open, 0) * 100) AS avg_ret,
+                           COUNT(*) AS months
+                    FROM monthly
+                    WHERE m_open > 0
+                    GROUP BY mnum
+                    HAVING COUNT(*) >= 2
+                """, (symbol,))
+                rows = {int(r[0]): float(r[1]) for r in cur.fetchall()}
+        avg_ret = rows.get(current_month)
+        if avg_ret is None:
+            return 0.0
+        # Normalize: ±5% avg return → ±0.8 signal
+        return round(max(-1.0, min(1.0, avg_ret / 6.25)), 3)
+    except Exception as exc:
+        logger.debug("_mcx_seasonal_from_db %s: %s", symbol, exc)
+        return 0.0
+
+
 # ── Probability engine ─────────────────────────────────────────────────────────
 
 def _multi_signal_prob(
@@ -743,8 +1033,12 @@ def _weekly_schedule(
     expiry_days = _weekdays_in_month(year, month, expiry_wd)
     result      = []
 
-    mp_base_sig = (_max_pain_to_signal(nse_opts["max_pain"], cmp)
-                   if "max_pain" in nse_opts else 0.0)
+    if "max_pain" in nse_opts:
+        mp_base_sig = _max_pain_to_signal(nse_opts["max_pain"], cmp)
+    elif "_max_pain_sig" in nse_opts:
+        mp_base_sig = float(nse_opts["_max_pain_sig"])
+    else:
+        mp_base_sig = 0.0
 
     for i, exp_date in enumerate(expiry_days):
         week_num   = i + 1
@@ -844,6 +1138,8 @@ def _monthly_prediction(
     sigs["hist_wr"] = _hist_wr_to_signal(m_wr)
     if "max_pain" in weights and "max_pain" in nse_opts:
         sigs["max_pain"] = _max_pain_to_signal(nse_opts["max_pain"], cmp) * 0.60
+    elif "max_pain" in weights and "_max_pain_sig" in nse_opts:
+        sigs["max_pain"] = float(nse_opts["_max_pain_sig"]) * 0.60
 
     direction, probability = _multi_signal_prob(sigs, weights, time_decay=0.80)
 
@@ -888,12 +1184,15 @@ def _analyze_instrument(
     monthly_expiry_fn,
     note: str,
     weights: Dict[str, float],
-    vix_sig: float        = 0.0,
-    global_sig: float     = 0.0,
-    fii_sig: float        = 0.0,
-    nse_opts: dict        = None,
-    commodity_type: str   = "",     # "crude" | "natgas" | ""
+    extra_signals: Dict[str, float] = None,
+    nse_opts: dict                  = None,
 ) -> dict:
+    """
+    extra_signals: pre-computed signals dict (keys matching weights).
+                   max_pain handled separately (applied with decay per-week).
+    nse_opts:      NSE options data (pcr, max_pain raw price, atm_iv, etc.)
+                   Used for target-price computation (ATM IV) and max_pain fallback.
+    """
     if nse_opts is None:
         nse_opts = {}
     today = date.today()
@@ -915,18 +1214,23 @@ def _analyze_instrument(
     weekly_wr   = _weekly_win_rates(df, expiry_wd)
     w_atr       = _weekly_atr(df)
 
-    # Build base signals dict (hist_wr added per-week; max_pain added per-week)
-    signals_base: Dict[str, float] = {
-        "tech":   tech,
-        "vix":    vix_sig,
-        "global": global_sig,
-    }
-    if fii_sig != 0.0 and "fii" in weights:
-        signals_base["fii"] = fii_sig
-    if commodity_type and "seasonal" in weights:
-        signals_base["seasonal"] = _seasonal_signal(commodity_type, today)
-    if "pcr" in weights and "pcr" in nse_opts:
-        signals_base["pcr"] = _pcr_to_signal(nse_opts["pcr"])
+    # Extract max_pain signal separately — applied per-week with decay in _weekly_schedule
+    mp_extra_sig = 0.0
+    clean_extra: Dict[str, float] = {}
+    if extra_signals:
+        for k, v in extra_signals.items():
+            if k == "max_pain":
+                mp_extra_sig = float(v) if v else 0.0
+            elif v != 0.0:
+                clean_extra[k] = float(v)
+
+    # If DB max_pain available and NSE API didn't return raw max_pain, store signal for downstream
+    if mp_extra_sig != 0.0 and "max_pain" not in nse_opts:
+        nse_opts["_max_pain_sig"] = mp_extra_sig
+
+    # Build base signals dict — tech always included; extras merged in
+    signals_base: Dict[str, float] = {"tech": tech}
+    signals_base.update(clean_extra)
 
     # Compute monthly prediction first so we can use its expected move
     # in the weekly schedule — ensures last-week and monthly targets match.
@@ -978,9 +1282,6 @@ def _analyze_mcx_from_db(
     monthly_expiry_fn,
     note: str,
     weights: Dict[str, float],
-    vix_sig: float       = 0.0,
-    global_sig: float    = 0.0,
-    commodity_type: str  = "",
 ) -> dict:
     """
     Analyze MCX instrument (CRUDEOIL / NATURALGAS) using mcx_ohlc DB data.
@@ -1027,20 +1328,22 @@ def _analyze_mcx_from_db(
 
     cmp        = round(float(df["Close"].iloc[-1]), 2)
     tech       = _enhanced_tech_score(df) if len(df) >= 50 else _simple_tech_score(df)
-    recent_mom = _recent_week_momentum(df)
     today      = date.today()
 
     monthly_exp = _next_monthly_expiry(monthly_expiry_fn, today)
-    weekly_wr   = _weekly_win_rates(df, expiry_wd=4)   # Friday for MCX
     w_atr       = _weekly_atr(df)
 
+    # ── DB-native signals ─────────────────────────────────────────────────────
+    oi_conf_sig = _mcx_oi_confluence(df)
+    vol_sig     = _mcx_volume_signal(df)
+    seas_sig    = _mcx_seasonal_from_db(symbol)
+
     signals_base: Dict[str, float] = {
-        "tech":   tech,
-        "vix":    vix_sig,
-        "global": global_sig,
+        "tech":     tech,
+        "oi_conf":  oi_conf_sig,
+        "volume":   vol_sig,
+        "seasonal": seas_sig,
     }
-    if commodity_type and "seasonal" in weights:
-        signals_base["seasonal"] = _seasonal_signal(commodity_type, today)
 
     monthly = _monthly_prediction(
         df, cmp, signals_base, weights, monthly_exp, {}
@@ -1067,26 +1370,49 @@ def fetch_market_overview() -> dict:
     """
     Fetch Nifty 50, MCX Crude Oil, MCX Natural Gas analysis.
 
-    Pre-fetches shared signals once to avoid redundant API calls:
-      - India VIX (^INDIAVIX via yfinance)
-      - Global sentiment (^GSPC, ^N225 via yfinance)
-      - FII net flow (NSE API)
-      - Nifty options chain — PCR, Max Pain, ATM IV (NSE API)
+    Signal sourcing (DB-first):
+      Nifty: VIX, PCR trend, OI change, IV percentile, Max Pain — all from DB.
+             Falls back to yfinance VIX and NSE API if DB returns nothing.
+      MCX:   price+OI confluence, volume, seasonal — all from mcx_ohlc DB table.
     """
     global _DL_CACHE, _NSE_SESSION
-    _DL_CACHE.clear()       # fresh market data each run
-    _NSE_SESSION = None     # fresh NSE session each run
+    _DL_CACHE.clear()
+    _NSE_SESSION = None
 
-    usd_inr    = _usdinr()
-    vix_sig    = _india_vix_signal()
-    global_sig = _global_sentiment_signal()
-    fii_sig    = _fii_net_signal()
+    usd_inr = _usdinr()
+    today   = date.today()
 
-    # Quick Nifty CMP needed before options fetch (for ATM strike selection)
-    _nifty_q = _download("^NSEI", period="5d")
+    # ── Nifty CMP (needed before DB signal calls requiring ATM/expiry) ────────
+    _nifty_q  = _download("^NSEI", period="5d")
     nifty_cmp = (float(_nifty_q["Close"].dropna().iloc[-1])
                  if _nifty_q is not None else 0.0)
-    nse_opts  = _nse_options_analysis(nifty_cmp)
+
+    # ── Nifty weekly expiry: next Thursday (0=Mon … 3=Thu) ───────────────────
+    days_ahead   = (3 - today.weekday()) % 7
+    nifty_expiry = today + timedelta(days=days_ahead if days_ahead else 7)
+    nifty_atm    = int(round(nifty_cmp / 50) * 50) if nifty_cmp > 0 else 0
+
+    # ── DB-native signals for Nifty ───────────────────────────────────────────
+    vix_sig = _db_vix_signal()
+    if vix_sig == 0.0:
+        vix_sig = _india_vix_signal()          # yfinance fallback
+
+    pcr_sig = _db_pcr_trend_signal()
+    oi_sig  = _db_oi_change_signal(nifty_expiry)
+    iv_sig  = _db_iv_percentile_signal(nifty_expiry, nifty_atm)
+    mp_sig  = _db_max_pain_signal(nifty_expiry, nifty_cmp)  # returns signal or None
+
+    nifty_extra: Dict[str, float] = {
+        "vix":       vix_sig,
+        "pcr_trend": pcr_sig,
+        "oi_change": oi_sig,
+        "iv_pct":    iv_sig,
+    }
+    if mp_sig is not None:
+        nifty_extra["max_pain"] = mp_sig
+
+    # NSE options: used for ATM IV (target-price calculation) and as max_pain fallback
+    nse_opts = _nse_options_analysis(nifty_cmp)
 
     nifty = _analyze_instrument(
         ticker="^NSEI", name="Nifty 50", fx_mult=1.0,
@@ -1094,7 +1420,7 @@ def fetch_market_overview() -> dict:
         monthly_expiry_fn=_last_thursday,
         note="NSE • Weekly: every Thursday • Monthly: last Thursday",
         weights=_NIFTY_W,
-        vix_sig=vix_sig, global_sig=global_sig, fii_sig=fii_sig,
+        extra_signals=nifty_extra,
         nse_opts=nse_opts,
     )
     crude = _analyze_mcx_from_db(
@@ -1103,9 +1429,6 @@ def fetch_market_overview() -> dict:
         monthly_expiry_fn=_mcx_crude_expiry,
         note="MCX • Monthly expiry only (~20th)",
         weights=_CRUDE_W,
-        vix_sig=vix_sig * 0.50,
-        global_sig=global_sig,
-        commodity_type="crude",
     )
     nat_gas = _analyze_mcx_from_db(
         symbol="NATURALGAS",
@@ -1113,9 +1436,6 @@ def fetch_market_overview() -> dict:
         monthly_expiry_fn=_mcx_natgas_expiry,
         note="MCX • Monthly expiry only (last day)",
         weights=_NATGAS_W,
-        vix_sig=vix_sig * 0.50,
-        global_sig=global_sig,
-        commodity_type="natgas",
     )
 
     return {
@@ -1124,11 +1444,11 @@ def fetch_market_overview() -> dict:
         "nat_gas":   nat_gas,
         "usd_inr":   usd_inr,
         "meta_signals": {
-            "india_vix":  round(vix_sig,    2),
-            "global":     round(global_sig, 2),
-            "fii":        round(fii_sig,    2),
-            "pcr":        nse_opts.get("pcr"),
-            "max_pain":   nse_opts.get("max_pain"),
+            "india_vix":  round(vix_sig,  2),
+            "pcr_trend":  round(pcr_sig,  2),
+            "oi_change":  round(oi_sig,   2),
+            "iv_pct":     round(iv_sig,   2),
+            "max_pain_sig": round(mp_sig, 2) if mp_sig is not None else None,
             "atm_iv":     nse_opts.get("atm_iv"),
             "support":    nse_opts.get("support"),
             "resistance": nse_opts.get("resistance"),
