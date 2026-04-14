@@ -34,3 +34,5 @@ logs/*.log
 # Deployment scripts with embedded credentials
 deploy/gcp_remote_setup.ps1
 deploy/gcp_remote_setup.sh
+# Added by code-review-graph
+.code-review-graph/
