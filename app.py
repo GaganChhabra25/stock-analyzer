@@ -1163,9 +1163,10 @@ def deployments_page():
 @login_required
 def users_page():
     """Users — allowed Google accounts."""
-    from config import ALLOWED_EMAILS
+    from config import ALLOWED_EMAILS, ADMIN_EMAILS
     allowed = list(ALLOWED_EMAILS)
-    return render_template("users.html", user=session["user"], allowed_emails=allowed)
+    return render_template("users.html", user=session["user"],
+                           allowed_emails=allowed, admin_emails=ADMIN_EMAILS)
 
 
 # ── Start deployment scheduler on boot ────────────────────────────────────────

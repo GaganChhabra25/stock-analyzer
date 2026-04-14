@@ -145,3 +145,8 @@ ALLOWED_EMAILS = [
     "gagan.chhabra1990@gmail.com",
     "gc1133@gmail.com",
 ]
+
+# Admins get an "Admin" badge on the Users page
+ADMIN_EMAILS = {
+    "gagan.chhabra1990@gmail.com",
+}
