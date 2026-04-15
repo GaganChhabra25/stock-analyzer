@@ -63,12 +63,13 @@ def main():
     print("=" * 60)
     print()
 
-    # Ensure schema exists
+    # Step 1: wipe (init_schema before clear — may fail on duplicate index, that's ok)
     init_schema()
-
-    # Step 1: wipe
     print("[1/3] Clearing existing predictions...")
     clear_predictions()
+
+    # Re-run init_schema after clearing so unique indexes are built clean
+    init_schema()
 
     # Step 2: fetch fresh market overview (DB-native signals + yfinance prices)
     print()

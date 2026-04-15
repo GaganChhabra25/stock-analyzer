@@ -842,7 +842,6 @@ def _mcx_seasonal_from_db(symbol: str) -> float:
                     WITH monthly AS (
                         SELECT
                             DATE_TRUNC('month', ts)::date                  AS m,
-                            EXTRACT(month FROM ts)::int                    AS mnum,
                             (ARRAY_AGG(close ORDER BY ts ASC))[1]          AS m_open,
                             (ARRAY_AGG(close ORDER BY ts DESC))[1]         AS m_close
                         FROM mcx_ohlc
@@ -850,12 +849,12 @@ def _mcx_seasonal_from_db(symbol: str) -> float:
                           AND ts < DATE_TRUNC('month', CURRENT_DATE)
                         GROUP BY DATE_TRUNC('month', ts)
                     )
-                    SELECT mnum,
+                    SELECT EXTRACT(month FROM m)::int AS mnum,
                            AVG((m_close - m_open) / NULLIF(m_open, 0) * 100) AS avg_ret,
                            COUNT(*) AS months
                     FROM monthly
                     WHERE m_open > 0
-                    GROUP BY mnum
+                    GROUP BY EXTRACT(month FROM m)
                     HAVING COUNT(*) >= 2
                 """, (symbol,))
                 rows = {int(r[0]): float(r[1]) for r in cur.fetchall()}
