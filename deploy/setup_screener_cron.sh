@@ -2,15 +2,19 @@
 # =============================================================================
 # Stock Analyzer — PostgreSQL + Cron Setup
 # =============================================================================
-# Run this ONCE on your GCP VM after deploying the app.
+# Run this ONCE on your Contabo VPS after deploying the app.
+# (Contabo: Ubuntu 24.04, 4 vCPU, 8 GB RAM, 150 GB SSD)
+#
+# NOTE: For a full fresh Contabo setup, prefer deploy/contabo/setup.sh instead.
+# This script is useful if you only need to add PostgreSQL + cron to an
+# already-running app deployment.
 #
 # What it does:
 #   1. Installs PostgreSQL
 #   2. Creates DB + user
-#   3. Adds 2 GB swap (prevents OOM on e2-micro)
-#   4. Appends DB_URL + Telegram vars to .env
-#   5. Installs daily cron job (8:30 AM IST = 3:00 AM UTC, Mon–Sat)
-#   6. Runs the screener once immediately to verify everything works
+#   3. Appends DB_URL + Telegram vars to .env
+#   4. Installs daily cron job (8:30 AM IST = 5:30 AM CEST, Mon–Sat)
+#   5. Runs the screener once immediately to verify everything works
 #
 # Usage:
 #   chmod +x deploy/setup_screener_cron.sh
@@ -62,21 +66,8 @@ read -p "Telegram chat ID: " TG_CHAT
 
 echo ""
 
-# ── 1. Swap file ──────────────────────────────────────────────────────────────
-info "[1/6] Setting up 2 GB swap file (prevents OOM on 1 GB RAM)..."
-if swapon --show | grep -q /swapfile; then
-    info "Swap file already active — skipping."
-else
-    sudo fallocate -l 2G /swapfile
-    sudo chmod 600 /swapfile
-    sudo mkswap /swapfile
-    sudo swapon /swapfile
-    grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-    success "2 GB swap enabled."
-fi
-
-# ── 2. PostgreSQL ─────────────────────────────────────────────────────────────
-info "[2/6] Installing PostgreSQL..."
+# ── 1. PostgreSQL ─────────────────────────────────────────────────────────────
+info "[1/6] Installing PostgreSQL..."
 sudo apt-get update -qq
 sudo apt-get install -y postgresql postgresql-contrib
 sudo systemctl enable postgresql
@@ -99,17 +90,18 @@ GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
 SQL
 success "Database ready."
 
-# ── 3. PostgreSQL tuning for 1 GB RAM ─────────────────────────────────────────
-info "[3/6] Tuning PostgreSQL for 1 GB RAM..."
+# ── 2. PostgreSQL tuning for 8 GB RAM (Contabo) ───────────────────────────────
+info "[2/6] Tuning PostgreSQL for 8 GB RAM..."
 PG_CONF=$(sudo -u postgres psql -t -c "SHOW config_file;" | tr -d ' ')
-sudo sed -i "s/^#*max_connections\s*=.*/max_connections = 20/"    "$PG_CONF"
-sudo sed -i "s/^#*shared_buffers\s*=.*/shared_buffers = 128MB/"  "$PG_CONF"
-sudo sed -i "s/^#*work_mem\s*=.*/work_mem = 4MB/"                "$PG_CONF"
+sudo sed -i "s/^#*max_connections\s*=.*/max_connections = 100/"     "$PG_CONF"
+sudo sed -i "s/^#*shared_buffers\s*=.*/shared_buffers = 2GB/"       "$PG_CONF"
+sudo sed -i "s/^#*work_mem\s*=.*/work_mem = 16MB/"                  "$PG_CONF"
+sudo sed -i "s/^#*effective_cache_size\s*=.*/effective_cache_size = 6GB/" "$PG_CONF"
 sudo systemctl reload postgresql
-success "PostgreSQL tuned."
+success "PostgreSQL tuned for Contabo (8 GB RAM)."
 
-# ── 4. Update .env ────────────────────────────────────────────────────────────
-info "[4/6] Updating .env with DB and Telegram credentials..."
+# ── 3. Update .env ────────────────────────────────────────────────────────────
+info "[3/6] Updating .env with DB and Telegram credentials..."
 ENV_FILE="$APP_DIR/.env"
 DB_URL="postgresql://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME"
 
@@ -131,11 +123,13 @@ ENV
 chmod 600 "$ENV_FILE"
 success ".env updated."
 
-# ── 5. Cron job ───────────────────────────────────────────────────────────────
-info "[5/6] Installing daily cron job (8:30 AM IST = 3:00 AM UTC, Mon–Sat)..."
+# ── 4. Cron job ───────────────────────────────────────────────────────────────
+info "[4/6] Installing daily cron job (8:30 AM IST = 5:30 AM CEST, Mon–Sat)..."
 mkdir -p "$APP_DIR/logs"
 
-CRON_CMD="0 3 * * 1-6 cd $APP_DIR && $VENV/bin/python run_screener.py --no-open >> $LOG_FILE 2>&1"
+# Contabo server timezone: Europe/Berlin (CEST = UTC+2 summer, CET = UTC+1 winter)
+# IST 09:00 = CEST 05:30
+CRON_CMD="30 5 * * 1-6 cd $APP_DIR && $VENV/bin/python run_screener.py --no-open >> $LOG_FILE 2>&1"
 
 # Remove old entry if exists, then add fresh
 ( crontab -l 2>/dev/null | grep -v "run_screener.py" ; echo "$CRON_CMD" ) | crontab -
@@ -145,8 +139,8 @@ echo ""
 crontab -l | grep "run_screener"
 echo ""
 
-# ── 6. Verification run ───────────────────────────────────────────────────────
-info "[6/6] Running screener now to verify end-to-end setup..."
+# ── 5. Verification run ───────────────────────────────────────────────────────
+info "[5/6] Running screener now to verify end-to-end setup..."
 echo ""
 warn "This will take 2–3 minutes (fetching market data)..."
 echo ""

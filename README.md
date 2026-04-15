@@ -426,7 +426,7 @@ Jobs run in the background — the dashboard polls for status and shows a live l
 
 ---
 
-## Server Deployment (Google Cloud / Any Ubuntu Server)
+## Server Deployment (Contabo VPS / Any Ubuntu Server)
 
 ### First-Time Setup
 
