@@ -135,6 +135,72 @@ def _last_thursday(year: int, month: int) -> date:
     return _weekdays_in_month(year, month, 3)[-1]
 
 
+def _last_tuesday(year: int, month: int) -> date:
+    return _weekdays_in_month(year, month, 1)[-1]
+
+
+def _nifty_next_expiry_from_db(today: date) -> Optional[date]:
+    """
+    Query option_chain for the actual next Nifty expiry date.
+    NSE changes expiry days (e.g. moved from Thursday to Tuesday);
+    this approach is policy-agnostic and handles holiday shifts automatically.
+    Returns None if DB unavailable or no upcoming expiry found.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok():
+        return None
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT MIN(expiry) FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry >= %s
+                """, (today,))
+                r = cur.fetchone()
+                if r and r[0]:
+                    return r[0] if isinstance(r[0], date) else r[0].date()
+    except Exception:
+        pass
+    return None
+
+
+def _nifty_monthly_expiry_from_db(today: date) -> Optional[date]:
+    """
+    Query option_chain for the last (furthest out) Nifty expiry of the
+    current month. Falls back to next month if no current-month expiry found.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok():
+        return None
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                # Try current month first
+                cur.execute("""
+                    SELECT MAX(expiry) FROM option_chain
+                    WHERE instrument = 'NIFTY'
+                      AND expiry >= %s
+                      AND EXTRACT(month FROM expiry) = EXTRACT(month FROM %s::date)
+                      AND EXTRACT(year  FROM expiry) = EXTRACT(year  FROM %s::date)
+                """, (today, today, today))
+                r = cur.fetchone()
+                if r and r[0]:
+                    exp = r[0] if isinstance(r[0], date) else r[0].date()
+                    if exp >= today:
+                        return exp
+                # Fall back to next available month
+                cur.execute("""
+                    SELECT MIN(expiry) FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry > %s
+                """, (today,))
+                r = cur.fetchone()
+                if r and r[0]:
+                    return r[0] if isinstance(r[0], date) else r[0].date()
+    except Exception:
+        pass
+    return None
+
+
 def _mcx_crude_expiry(year: int, month: int) -> date:
     d = date(year, month, 20)
     while d.weekday() >= 5:
@@ -1435,10 +1501,21 @@ def fetch_market_overview() -> dict:
     nifty_cmp = (float(_nifty_q["Close"].dropna().iloc[-1])
                  if _nifty_q is not None else 0.0)
 
-    # ── Nifty weekly expiry: next Thursday (0=Mon … 3=Thu) ───────────────────
-    days_ahead   = (3 - today.weekday()) % 7
-    nifty_expiry = today + timedelta(days=days_ahead if days_ahead else 7)
-    nifty_atm    = int(round(nifty_cmp / 50) * 50) if nifty_cmp > 0 else 0
+    # ── Nifty expiry: query DB for actual dates (policy-agnostic) ────────────
+    # NSE changed weekly expiry from Thursday to Tuesday; querying DB directly
+    # avoids hardcoding a weekday and handles holiday shifts automatically.
+    nifty_expiry = _nifty_next_expiry_from_db(today)
+    if nifty_expiry is None:
+        # fallback: next Tuesday (current NSE policy)
+        days_ahead   = (1 - today.weekday()) % 7
+        nifty_expiry = today + timedelta(days=days_ahead if days_ahead else 7)
+
+    nifty_monthly_exp = _nifty_monthly_expiry_from_db(today)
+    # For _analyze_instrument we still need expiry_wd for win-rate bucketing.
+    # Detect it from the actual DB expiry day.
+    nifty_expiry_wd = nifty_expiry.weekday()   # 1=Tue, 3=Thu, etc.
+
+    nifty_atm = int(round(nifty_cmp / 50) * 50) if nifty_cmp > 0 else 0
 
     # ── DB-native signals for Nifty ───────────────────────────────────────────
     vix_sig = _db_vix_signal()
@@ -1462,11 +1539,15 @@ def fetch_market_overview() -> dict:
     # NSE options: used for ATM IV (target-price calculation) and as max_pain fallback
     nse_opts = _nse_options_analysis(nifty_cmp)
 
+    # Determine the correct monthly expiry function based on actual expiry weekday
+    nifty_monthly_fn = _last_tuesday if nifty_expiry_wd == 1 else _last_thursday
+    nifty_expiry_label = "Tuesday" if nifty_expiry_wd == 1 else "Thursday"
+
     nifty = _analyze_instrument(
         ticker="^NSEI", name="Nifty 50", fx_mult=1.0,
-        expiry_wd=3,
-        monthly_expiry_fn=_last_thursday,
-        note="NSE • Weekly: every Thursday • Monthly: last Thursday",
+        expiry_wd=nifty_expiry_wd,
+        monthly_expiry_fn=nifty_monthly_fn,
+        note=f"NSE • Weekly: every {nifty_expiry_label} • Monthly: last {nifty_expiry_label}",
         weights=_NIFTY_W,
         extra_signals=nifty_extra,
         nse_opts=nse_opts,
