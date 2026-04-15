@@ -657,9 +657,12 @@ def _db_pcr_trend_signal() -> float:
 
 def _db_oi_change_signal(expiry: "date") -> float:
     """
-    Net OI change direction from option_chain (last trading day).
+    Net OI change direction from option_chain (last trading session).
     PE OI adding + CE OI reducing → bulls defending → bullish.
     CE OI adding + PE OI reducing → bears pressing → bearish.
+
+    Uses 3-day window because screener runs at 9 AM IST (before market),
+    so yesterday's session (9:14 AM–3:30 PM) needs a wider lookback.
     """
     from screener.db import _get_conn, is_available as _ok
     if not _ok() or expiry is None:
@@ -673,7 +676,7 @@ def _db_oi_change_signal(expiry: "date") -> float:
                     WHERE instrument = 'NIFTY'
                       AND expiry = %s
                       AND oi_change IS NOT NULL
-                      AND ts >= NOW() - INTERVAL '1 day'
+                      AND ts >= NOW() - INTERVAL '3 days'
                     GROUP BY option_type
                 """, (expiry,))
                 data = {r[0]: float(r[1]) for r in cur.fetchall() if r[1] is not None}
@@ -705,7 +708,7 @@ def _db_iv_percentile_signal(expiry: "date", atm: int) -> float:
                     SELECT AVG(iv) FROM option_chain
                     WHERE instrument = 'NIFTY' AND expiry = %s
                       AND strike = %s AND iv > 0
-                      AND ts >= NOW() - INTERVAL '2 days'
+                      AND ts >= NOW() - INTERVAL '4 days'
                 """, (expiry, atm))
                 r = cur.fetchone()
                 current_iv = float(r[0]) if r and r[0] else None
@@ -826,46 +829,84 @@ def _mcx_volume_signal(df: "pd.DataFrame") -> float:
         return 0.0
 
 
+
+# ── Expert seasonal priors for energy commodities ─────────────────────────────
+# Used ONLY as fallback when DB lacks ≥2 years of per-month history.
+# Based on well-established demand cycles:
+#   Crude: weak Apr (shoulder season, refineries switching), strong Jun-Aug (driving),
+#          strong Oct-Nov (winter stocking).
+#   NatGas: very weak Apr-Sep (injection season, low demand),
+#            very strong Nov-Feb (winter heating demand).
+# Scaled to ±0.35 max — weaker than DB-derived signal so new data overrides quickly.
+_MCX_SEASONAL_PRIOR: Dict[str, Dict[int, float]] = {
+    "CRUDEOIL": {
+        1: +0.10, 2: +0.05, 3: -0.10, 4: -0.25,   # Jan-Apr
+        5: +0.05, 6: +0.20, 7: +0.25, 8: +0.20,   # May-Aug (driving season)
+        9: -0.05, 10: +0.15, 11: +0.10, 12: -0.05, # Sep-Dec
+    },
+    "NATURALGAS": {
+        1: +0.30, 2: +0.20, 3: -0.20, 4: -0.35,   # Jan-Apr
+        5: -0.25, 6: -0.15, 7: -0.10, 8: +0.05,   # May-Aug
+        9: +0.10, 10: +0.20, 11: +0.35, 12: +0.35, # Sep-Dec (winter demand)
+    },
+}
+
+
 def _mcx_seasonal_from_db(symbol: str) -> float:
     """
-    Empirical seasonal signal: average monthly return for today's calendar
-    month, computed from full mcx_ohlc history. No hardcoding.
+    Empirical seasonal signal: average monthly return for today's calendar month.
+
+    Primary: computed from full mcx_ohlc history (requires ≥2 data points per month).
+    Fallback: expert-calibrated seasonal prior for energy commodities — used at
+              60 % weight when DB history is insufficient.  As DB accumulates data,
+              the DB-derived signal automatically takes over.
     """
     from screener.db import _get_conn, is_available as _ok
-    if not _ok():
-        return 0.0
+
     current_month = date.today().month
-    try:
-        with _get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    WITH monthly AS (
-                        SELECT
-                            DATE_TRUNC('month', ts)::date                  AS m,
-                            (ARRAY_AGG(close ORDER BY ts ASC))[1]          AS m_open,
-                            (ARRAY_AGG(close ORDER BY ts DESC))[1]         AS m_close
-                        FROM mcx_ohlc
-                        WHERE instrument = %s AND interval = 'day'
-                          AND ts < DATE_TRUNC('month', CURRENT_DATE)
-                        GROUP BY DATE_TRUNC('month', ts)
-                    )
-                    SELECT EXTRACT(month FROM m)::int AS mnum,
-                           AVG((m_close - m_open) / NULLIF(m_open, 0) * 100) AS avg_ret,
-                           COUNT(*) AS months
-                    FROM monthly
-                    WHERE m_open > 0
-                    GROUP BY EXTRACT(month FROM m)
-                    HAVING COUNT(*) >= 2
-                """, (symbol,))
-                rows = {int(r[0]): float(r[1]) for r in cur.fetchall()}
-        avg_ret = rows.get(current_month)
-        if avg_ret is None:
-            return 0.0
-        # Normalize: ±5% avg return → ±0.8 signal
-        return round(max(-1.0, min(1.0, avg_ret / 6.25)), 3)
-    except Exception as exc:
-        logger.debug("_mcx_seasonal_from_db %s: %s", symbol, exc)
-        return 0.0
+
+    # ── DB-derived signal ─────────────────────────────────────────────────────
+    db_signal = None
+    if _ok():
+        try:
+            with _get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        WITH monthly AS (
+                            SELECT
+                                DATE_TRUNC('month', ts)::date                  AS m,
+                                (ARRAY_AGG(close ORDER BY ts ASC))[1]          AS m_open,
+                                (ARRAY_AGG(close ORDER BY ts DESC))[1]         AS m_close
+                            FROM mcx_ohlc
+                            WHERE instrument = %s AND interval = 'day'
+                              AND ts < DATE_TRUNC('month', CURRENT_DATE)
+                            GROUP BY DATE_TRUNC('month', ts)
+                        )
+                        SELECT EXTRACT(month FROM m)::int AS mnum,
+                               AVG((m_close - m_open) / NULLIF(m_open, 0) * 100) AS avg_ret,
+                               COUNT(*) AS months
+                        FROM monthly
+                        WHERE m_open > 0
+                        GROUP BY EXTRACT(month FROM m)
+                        HAVING COUNT(*) >= 2
+                    """, (symbol,))
+                    rows = {int(r[0]): (float(r[1]), int(r[2])) for r in cur.fetchall()}
+
+            if current_month in rows:
+                avg_ret, n_months = rows[current_month]
+                raw = max(-1.0, min(1.0, avg_ret / 6.25))
+                # Confidence scales from 0.6 (at 2 months) → 1.0 (at 10+ months)
+                conf = min(1.0, 0.60 + (n_months - 2) * 0.05)
+                db_signal = round(raw * conf, 3)
+        except Exception as exc:
+            logger.debug("_mcx_seasonal_from_db %s: %s", symbol, exc)
+
+    if db_signal is not None:
+        return db_signal
+
+    # ── Expert seasonal prior (fallback) ──────────────────────────────────────
+    prior = _MCX_SEASONAL_PRIOR.get(symbol, {})
+    return round(prior.get(current_month, 0.0), 3)
 
 
 # ── Probability engine ─────────────────────────────────────────────────────────
@@ -1305,7 +1346,7 @@ def _analyze_mcx_from_db(
                 return error_result
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT ts, open, high, low, close, volume
+                    SELECT ts, open, high, low, close, volume, oi
                     FROM mcx_ohlc
                     WHERE instrument = %s AND interval = 'day'
                     ORDER BY ts ASC
@@ -1319,7 +1360,7 @@ def _analyze_mcx_from_db(
         logger.warning("mcx_ohlc: not enough data for %s (%d rows)", symbol, len(rows))
         return error_result
 
-    df = pd.DataFrame(rows, columns=["ts", "Open", "High", "Low", "Close", "Volume"])
+    df = pd.DataFrame(rows, columns=["ts", "Open", "High", "Low", "Close", "Volume", "oi"])
     df["ts"] = pd.to_datetime(df["ts"]).dt.tz_localize(None)
     df = df.set_index("ts").sort_index()
     for col in ("Open", "High", "Low", "Close"):
