@@ -747,6 +747,111 @@ def _db_pcr_trend_signal() -> float:
         return 0.0
 
 
+def _db_expiry_snapshot(instrument: str, expiry: date, atm: int) -> dict:
+    """
+    Single DB call per expiry — returns everything needed for target calculation:
+      atm_iv    : avg CE+PE IV at ATM strike (latest snapshot, annualised %)
+      max_pain  : strike where total OI-weighted intrinsic payout is minimised
+      resistance: highest CE OI strike (gamma wall — sellers capping upside)
+      support   : highest PE OI strike (gamma wall — buyers flooring downside)
+    Returns {} on any failure — callers must handle gracefully.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok() or expiry is None:
+        return {}
+    result: dict = {}
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                # ATM IV (both legs, latest 4-day window)
+                cur.execute("""
+                    SELECT AVG(iv) FROM option_chain
+                    WHERE instrument = %s AND expiry = %s
+                      AND strike = %s AND iv > 0
+                      AND ts >= NOW() - INTERVAL '4 days'
+                """, (instrument, expiry, atm))
+                r = cur.fetchone()
+                if r and r[0]:
+                    result["atm_iv"] = round(float(r[0]), 2)
+
+                # All OI per strike/type — used for max pain + gamma walls
+                cur.execute("""
+                    SELECT strike, option_type, MAX(oi) AS oi
+                    FROM option_chain
+                    WHERE instrument = %s AND expiry = %s AND oi > 0
+                    GROUP BY strike, option_type
+                """, (instrument, expiry))
+                rows = cur.fetchall()
+
+        if not rows:
+            return result
+
+        ce_oi: Dict[float, float] = {}
+        pe_oi: Dict[float, float] = {}
+        for strike, opt_type, oi in rows:
+            if opt_type == "CE":
+                ce_oi[float(strike)] = float(oi)
+            elif opt_type == "PE":
+                pe_oi[float(strike)] = float(oi)
+
+        all_strikes = sorted(set(ce_oi) | set(pe_oi))
+
+        # Max pain: strike minimising total intrinsic payout to option buyers
+        if all_strikes:
+            losses: Dict[float, float] = {}
+            for s in all_strikes:
+                losses[s] = (sum(max(0.0, s - k) * v for k, v in ce_oi.items()) +
+                             sum(max(0.0, k - s) * v for k, v in pe_oi.items()))
+            result["max_pain"] = float(min(losses, key=losses.get))
+
+        # Gamma walls
+        if ce_oi:
+            result["resistance"] = float(max(ce_oi, key=ce_oi.get))
+        if pe_oi:
+            result["support"] = float(max(pe_oi, key=pe_oi.get))
+
+    except Exception as exc:
+        logger.debug("_db_expiry_snapshot %s %s: %s", instrument, expiry, exc)
+    return result
+
+
+def _resolve_target(
+    cmp: float,
+    direction: str,
+    exp_move: float,
+    snap: dict,
+) -> tuple:
+    """
+    Compute (target, range_hi, range_lo) using professional options logic:
+
+    target   — max_pain if within 1.5σ of CMP (gravity centre), else CMP ± 1σ move
+    range_hi — resistance (highest CE OI wall) if above CMP, else CMP + 1σ
+    range_lo — support   (highest PE OI wall) if below CMP, else CMP − 1σ
+
+    Guarantees: range_lo ≤ target ≤ range_hi
+    """
+    max_pain   = snap.get("max_pain")
+    resistance = snap.get("resistance")
+    support    = snap.get("support")
+
+    # Target: max pain if reachable, else directional IV move
+    if max_pain and abs(max_pain - cmp) <= exp_move * 1.5:
+        target = round(max_pain, 2)
+    else:
+        target = round(cmp + exp_move if direction == "UP" else cmp - exp_move, 2)
+
+    # Range bounds from OI gamma walls
+    range_hi = (round(resistance, 2) if resistance and resistance > cmp
+                else round(cmp + exp_move, 2))
+    range_lo = (round(support, 2) if support and support < cmp
+                else round(cmp - exp_move, 2))
+
+    # Clamp target inside range
+    target = round(max(range_lo, min(range_hi, float(target))), 2)
+
+    return target, range_hi, range_lo
+
+
 def _db_oi_change_signal(expiry: "date") -> float:
     """
     Net OI change direction from option_chain (last trading session).
@@ -1158,19 +1263,14 @@ def _weekly_schedule(
     w_atr: float,
     recent_momentum: float,
     nse_opts: dict,
-    monthly_exp_move: float = 0.0,   # pre-computed monthly expected move for consistency
+    monthly_exp_move: float = 0.0,
+    instrument: str = "NIFTY",
+    atm: int = 0,
 ) -> List[dict]:
     today       = date.today()
     year, month = monthly_exp.year, monthly_exp.month
     expiry_days = _weekdays_in_month(year, month, expiry_wd)
     result      = []
-
-    if "max_pain" in nse_opts:
-        mp_base_sig = _max_pain_to_signal(nse_opts["max_pain"], cmp)
-    elif "_max_pain_sig" in nse_opts:
-        mp_base_sig = float(nse_opts["_max_pain_sig"])
-    else:
-        mp_base_sig = 0.0
 
     for i, exp_date in enumerate(expiry_days):
         week_num   = i + 1
@@ -1184,38 +1284,47 @@ def _weekly_schedule(
         wr    = weekly_wr.get(week_num, 52.0)
         decay = _DECAY.get(week_num, 0.40)
 
-        # Per-week signals
+        # ── Signals ───────────────────────────────────────────────────────────
         sigs = dict(signals_base)
         sigs["hist_wr"] = _hist_wr_to_signal(wr)
 
-        # Blend recent momentum into tech (decays week by week)
         mom_w = max(0.0, 1.0 - (week_num - 1) * 0.30)
         if "tech" in sigs:
             sigs["tech"] = max(-1.0, min(1.0,
                                          sigs["tech"] + recent_momentum * 0.15 * mom_w))
 
-        # Max pain pull degrades for further-out weeks
-        if "max_pain" in weights and mp_base_sig != 0.0:
-            mp_decay      = max(0.0, 1.0 - (week_num - 1) * 0.50)
-            sigs["max_pain"] = mp_base_sig * mp_decay
+        # ── Per-expiry DB snapshot (IV, max pain, OI walls) ───────────────────
+        dte  = max(1, (exp_date - today).days)
+        snap: dict = {}
+        if not is_past:
+            snap = _db_expiry_snapshot(instrument, exp_date, atm)
+
+            # Max pain signal for probability (direction pull)
+            if "max_pain" in weights and snap.get("max_pain"):
+                mp_decay = max(0.0, 1.0 - (week_num - 1) * 0.50)
+                sigs["max_pain"] = _max_pain_to_signal(snap["max_pain"], cmp) * mp_decay
+            elif "max_pain" in weights and "_max_pain_sig" in nse_opts:
+                mp_decay = max(0.0, 1.0 - (week_num - 1) * 0.50)
+                sigs["max_pain"] = float(nse_opts["_max_pain_sig"]) * mp_decay
 
         direction, probability = _multi_signal_prob(sigs, weights, time_decay=decay)
 
-        # Expected move: for monthly expiry week use the same monthly_exp_move
-        # so weekly and monthly targets are always consistent.
-        # For other weeks: prefer ATM IV, fall back to scaled ATR.
-        dte      = max(1, (exp_date - today).days)
+        # ── Expected move: ATM IV per-expiry → DTE-correct 1σ move ───────────
+        # Priority: DB IV for this expiry > NSE API IV > ATR fallback
         exp_move = 0.0
-        if is_monthly and monthly_exp_move > 0:
-            exp_move = monthly_exp_move
-        elif nse_opts.get("atm_iv"):
-            exp_move = _options_expected_move(cmp, nse_opts["atm_iv"], dte)
-        if exp_move <= 0:
-            exp_move = w_atr * math.sqrt(week_num)
+        if not is_past:
+            if snap.get("atm_iv"):
+                exp_move = _options_expected_move(cmp, snap["atm_iv"], dte)
+            elif nse_opts.get("atm_iv"):
+                exp_move = _options_expected_move(cmp, nse_opts["atm_iv"], dte)
+            if exp_move <= 0:
+                exp_move = w_atr  # ATR is already a weekly move estimate
 
-        target   = round(cmp + exp_move if direction == "UP" else cmp - exp_move, 2)
-        range_hi = round(target + exp_move * 0.35, 2)
-        range_lo = round(target - exp_move * 0.35, 2)
+        # ── Target + range from OI walls ──────────────────────────────────────
+        if not is_past and exp_move > 0:
+            target, range_hi, range_lo = _resolve_target(cmp, direction, exp_move, snap)
+        else:
+            target = range_hi = range_lo = None
 
         # Actual result for past weeks
         actual_close = actual_dir = actual_pct = None
@@ -1245,6 +1354,10 @@ def _weekly_schedule(
             "target":            target,
             "range_hi":          range_hi,
             "range_lo":          range_lo,
+            "max_pain":          snap.get("max_pain"),
+            "resistance":        snap.get("resistance"),
+            "support":           snap.get("support"),
+            "atm_iv":            snap.get("atm_iv"),
             "hist_wr":           wr,
             "actual_close":      actual_close,
             "actual_dir":        actual_dir,
@@ -1275,29 +1388,32 @@ def _monthly_prediction(
 
     direction, probability = _multi_signal_prob(sigs, weights, time_decay=0.80)
 
-    full_month_move = _monthly_expected_move(df)
     dte = max(1, (monthly_exp - today).days)
 
-    # Scale expected move by √(DTE / 21) — standard square-root-of-time rule.
-    # 21 = avg MCX/NSE trading days in a month.
-    # Without this, a 1-day expiry shows the same ₹1400 target as a 20-day expiry.
-    trading_days_fraction = min(1.0, dte / 21.0)
-    m_move = full_month_move * math.sqrt(trading_days_fraction)
+    # ── Expected move: IV-first, ATR fallback ─────────────────────────────────
+    # For Nifty monthly: snap already fetched in fetch_market_overview and
+    # passed via nse_opts. For MCX: nse_opts is empty, use ATR-based fallback.
+    atm_iv = nse_opts.get("atm_iv") or nse_opts.get("_monthly_atm_iv")
+    if atm_iv:
+        m_move = _options_expected_move(cmp, atm_iv, dte)
+    else:
+        # ATR-based: scale full-month historical move by √(DTE/21)
+        full_month_move = _monthly_expected_move(df)
+        m_move = full_month_move * math.sqrt(min(1.0, dte / 21.0))
 
-    # For Nifty: blend with IV-derived expected move (already DTE-scaled internally)
-    if nse_opts.get("atm_iv"):
-        iv_move = _options_expected_move(cmp, nse_opts["atm_iv"], dte)
-        if iv_move > 0:
-            m_move = m_move * 0.40 + iv_move * 0.60  # IV is forward-looking, weight more
+    m_move = max(m_move, cmp * 0.005)   # floor: at least 0.5% of CMP
 
+    # ── Target + range from OI walls ─────────────────────────────────────────
+    snap = nse_opts.get("_monthly_snap") or {}
+    target, range_hi, range_lo = _resolve_target(cmp, direction, m_move, snap)
+
+    # Bull/bear secondary targets for display
     if direction == "UP":
-        bull_target = round(cmp + m_move, 2)
+        bull_target = target
         bear_target = round(cmp - m_move * 0.55, 2)
-        expected    = bull_target
     else:
         bull_target = round(cmp + m_move * 0.55, 2)
-        bear_target = round(cmp - m_move, 2)
-        expected    = bear_target
+        bear_target = target
 
     return {
         "label":          monthly_exp.strftime("%b %Y"),
@@ -1305,11 +1421,15 @@ def _monthly_prediction(
         "days_to_expiry": dte,
         "direction":      direction,
         "probability":    probability,
-        "expected_price": expected,
+        "expected_price": target,
         "bull_target":    bull_target,
         "bear_target":    bear_target,
+        "max_pain":       snap.get("max_pain"),
+        "resistance":     snap.get("resistance"),
+        "support":        snap.get("support"),
+        "atm_iv":         atm_iv,
         "hist_wr":        m_wr,
-        "_exp_move":      round(m_move, 2),   # internal — passed to weekly schedule
+        "_exp_move":      round(m_move, 2),
     }
 
 
@@ -1352,34 +1472,36 @@ def _analyze_instrument(
     monthly_exp = _next_monthly_expiry(monthly_expiry_fn, today)
     weekly_wr   = _weekly_win_rates(df, expiry_wd)
     w_atr       = _weekly_atr(df)
+    atm         = int(round(cmp / 50) * 50)   # ATM strike (nearest 50)
 
-    # Extract max_pain signal separately — applied per-week with decay in _weekly_schedule
-    mp_extra_sig = 0.0
+    # Pre-fetch monthly expiry snapshot so _monthly_prediction has IV + OI walls
+    monthly_snap = _db_expiry_snapshot("NIFTY", monthly_exp, atm)
+    if monthly_snap.get("atm_iv"):
+        nse_opts["_monthly_atm_iv"] = monthly_snap["atm_iv"]
+    nse_opts["_monthly_snap"] = monthly_snap
+
+    # Extra signals — strip max_pain (applied per-week with decay)
     clean_extra: Dict[str, float] = {}
     if extra_signals:
         for k, v in extra_signals.items():
             if k == "max_pain":
-                mp_extra_sig = float(v) if v else 0.0
+                if v and v != 0.0:
+                    nse_opts["_max_pain_sig"] = float(v)
             elif v != 0.0:
                 clean_extra[k] = float(v)
 
-    # If DB max_pain available and NSE API didn't return raw max_pain, store signal for downstream
-    if mp_extra_sig != 0.0 and "max_pain" not in nse_opts:
-        nse_opts["_max_pain_sig"] = mp_extra_sig
-
-    # Build base signals dict — tech always included; extras merged in
     signals_base: Dict[str, float] = {"tech": tech}
     signals_base.update(clean_extra)
 
-    # Compute monthly prediction first so we can use its expected move
-    # in the weekly schedule — ensures last-week and monthly targets match.
     monthly  = _monthly_prediction(df, cmp, signals_base, weights, monthly_exp, nse_opts)
-    m_move   = monthly.pop("_exp_move", 0.0)   # extract internal field, don't expose in output
+    m_move   = monthly.pop("_exp_move", 0.0)
 
     schedule = _weekly_schedule(
         df, cmp, signals_base, weights,
         expiry_wd, monthly_exp, weekly_wr, w_atr, recent_mom, nse_opts,
         monthly_exp_move=m_move,
+        instrument="NIFTY",
+        atm=atm,
     )
 
     # Assemble signal display metadata for the report
