@@ -1275,9 +1275,16 @@ def _monthly_prediction(
 
     direction, probability = _multi_signal_prob(sigs, weights, time_decay=0.80)
 
-    m_move = _monthly_expected_move(df)
-    dte    = max(1, (monthly_exp - today).days)
-    # For Nifty: blend historical move with IV-derived expected move
+    full_month_move = _monthly_expected_move(df)
+    dte = max(1, (monthly_exp - today).days)
+
+    # Scale expected move by √(DTE / 21) — standard square-root-of-time rule.
+    # 21 = avg MCX/NSE trading days in a month.
+    # Without this, a 1-day expiry shows the same ₹1400 target as a 20-day expiry.
+    trading_days_fraction = min(1.0, dte / 21.0)
+    m_move = full_month_move * math.sqrt(trading_days_fraction)
+
+    # For Nifty: blend with IV-derived expected move (already DTE-scaled internally)
     if nse_opts.get("atm_iv"):
         iv_move = _options_expected_move(cmp, nse_opts["atm_iv"], dte)
         if iv_move > 0:
