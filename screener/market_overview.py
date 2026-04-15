@@ -202,6 +202,7 @@ def _nifty_monthly_expiry_from_db(today: date) -> Optional[date]:
 
 
 def _mcx_crude_expiry(year: int, month: int) -> date:
+    """Fallback formula: ~20th of the month, adjusted for weekends."""
     d = date(year, month, 20)
     while d.weekday() >= 5:
         d -= timedelta(days=1)
@@ -209,11 +210,36 @@ def _mcx_crude_expiry(year: int, month: int) -> date:
 
 
 def _mcx_natgas_expiry(year: int, month: int) -> date:
+    """Fallback formula: last working day of the month."""
     last = calendar.monthrange(year, month)[1]
     d = date(year, month, last)
     while d.weekday() >= 5:
         d -= timedelta(days=1)
     return d
+
+
+def _mcx_next_expiry_from_db(symbol: str, today: date) -> Optional[date]:
+    """
+    Query option_chain for the actual next MCX expiry for CRUDEOIL / NATURALGAS.
+    Zerodha's instrument master has the real exchange-published expiry dates —
+    far more reliable than any formula (handles holiday adjustments, MCX rule changes).
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok():
+        return None
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT MIN(expiry) FROM option_chain
+                    WHERE instrument = %s AND expiry >= %s
+                """, (symbol, today))
+                r = cur.fetchone()
+                if r and r[0]:
+                    return r[0] if isinstance(r[0], date) else r[0].date()
+    except Exception:
+        pass
+    return None
 
 
 def _next_monthly_expiry(calc_fn, today: date) -> date:
@@ -1433,12 +1459,20 @@ def _analyze_mcx_from_db(
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["Close"])
 
-    cmp        = round(float(df["Close"].iloc[-1]), 2)
-    tech       = _enhanced_tech_score(df) if len(df) >= 50 else _simple_tech_score(df)
-    today      = date.today()
+    cmp   = round(float(df["Close"].iloc[-1]), 2)
+    tech  = _enhanced_tech_score(df) if len(df) >= 50 else _simple_tech_score(df)
+    today = date.today()
 
-    monthly_exp = _next_monthly_expiry(monthly_expiry_fn, today)
-    w_atr       = _weekly_atr(df)
+    # Use actual expiry from Zerodha/option_chain DB; fall back to formula only
+    # if DB has no upcoming expiry for this symbol.
+    monthly_exp = _mcx_next_expiry_from_db(symbol, today)
+    if monthly_exp is None:
+        monthly_exp = _next_monthly_expiry(monthly_expiry_fn, today)
+        logger.debug("_analyze_mcx_from_db %s: using formula expiry %s", symbol, monthly_exp)
+    else:
+        logger.debug("_analyze_mcx_from_db %s: DB expiry %s", symbol, monthly_exp)
+
+    w_atr = _weekly_atr(df)
 
     # ── DB-native signals ─────────────────────────────────────────────────────
     oi_conf_sig = _mcx_oi_confluence(df)
