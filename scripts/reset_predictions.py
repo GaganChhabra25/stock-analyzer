@@ -16,6 +16,12 @@ import sys
 import os
 from pathlib import Path
 
+# Ensure app root is on sys.path (scripts/ dir is not the root)
+_APP_ROOT = Path(__file__).parent.parent
+if str(_APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_APP_ROOT))
+os.chdir(_APP_ROOT)
+
 # Load .env so DATABASE_URL is available
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
