@@ -8,15 +8,19 @@ Signals used per instrument:
   ┌────────────────────────┬────────┬────────┬──────────┐
   │ Signal                 │ Nifty  │ Crude  │ Nat Gas  │
   ├────────────────────────┼────────┼────────┼──────────┤
-  │ Historical win rate    │  15 %  │  20 %  │  15 %    │
-  │ Technical (RSI/MACD/   │  20 %  │  35 %  │  35 %    │
+  │ PCR trend (options)    │  17 %  │   —    │   —      │
+  │ OI velocity (session)  │  15 %  │   —    │   —      │
+  │ Max Pain pull          │  17 %  │   —    │   —      │
+  │ Technical (RSI/MACD/   │  14 %  │  35 %  │  35 %    │
   │   Bollinger/SMA/ADX)   │        │        │          │
-  │ India VIX level+trend  │  22 %  │  10 %  │  10 %    │
-  │ NSE PCR (options)      │  22 %  │   —    │   —      │
-  │ Max Pain pull          │  12 %  │   —    │   —      │
-  │ Global (S&P 500/Nikkei)│   6 %  │  25 %  │  25 %    │
-  │ FII net flow           │   3 %  │   —    │   —      │
-  │ Seasonal demand bias   │   —    │  10 %  │  15 %    │
+  │ Dealer GEX (flip pt)   │  12 %  │   —    │   —      │
+  │ India VIX level+trend  │  10 %  │  10 %  │  10 %    │
+  │ IV Skew (put vs call)  │   7 %  │   —    │   —      │
+  │ IV Percentile          │   4 %  │   —    │   —      │
+  │ Historical win rate    │   4 %  │  20 %  │  15 %    │
+  │ OI+price confluence    │   —    │  35 %  │  33 %    │
+  │ Volume confirmation    │   —    │  15 %  │  12 %    │
+  │ Seasonal demand bias   │   —    │  12 %  │  20 %    │
   └────────────────────────┴────────┴────────┴──────────┘
 
 Probability range: 50 %–78 %
@@ -56,13 +60,15 @@ except ImportError:
 # ── Signal weights ─────────────────────────────────────────────────────────────
 
 _NIFTY_W: Dict[str, float] = {
-    "pcr_trend": 0.20,   # DB: PCR level + 3-day trend from market_snapshot
-    "oi_change": 0.20,   # DB: net OI change direction from option_chain
-    "max_pain":  0.18,   # DB/API: max pain strike gravitational pull
-    "tech":      0.15,   # RSI + MACD + Bollinger + SMA + ADX from price
-    "vix":       0.13,   # DB: India VIX from market_snapshot
-    "hist_wr":   0.08,   # historical week-of-month win rate from price
-    "iv_pct":    0.06,   # DB: IV percentile from option_chain.iv
+    "pcr_trend":   0.17,  # DB: PCR level + 3-day trend from market_snapshot
+    "oi_velocity": 0.15,  # DB: session OI build direction (fresh money this session)
+    "max_pain":    0.17,  # DB: max pain strike gravitational pull
+    "tech":        0.14,  # RSI + MACD + Bollinger + SMA + ADX from price
+    "gex":         0.12,  # DB: dealer gamma exposure flip point (pinning vs trending)
+    "vix":         0.10,  # DB: India VIX from market_snapshot
+    "iv_skew":     0.07,  # DB: OTM PE vs CE IV skew (institutional fear gauge)
+    "iv_pct":      0.04,  # DB: IV percentile from option_chain.iv
+    "hist_wr":     0.04,  # historical week-of-month win rate from price
 }
 
 _CRUDE_W: Dict[str, float] = {
@@ -1168,6 +1174,238 @@ def _options_expected_move(cmp: float, atm_iv_pct: float, dte: int) -> float:
     return cmp * (atm_iv_pct / 100.0) * math.sqrt(dte / 365.0)
 
 
+def _bs_gamma(S: float, K: float, T: float, sigma: float, r: float = 0.065) -> float:
+    """
+    Black-Scholes gamma — identical for calls and puts.
+    S: spot price, K: strike, T: years to expiry,
+    sigma: annualised IV (decimal), r: risk-free rate.
+    """
+    if sigma <= 0 or T <= 0 or S <= 0 or K <= 0:
+        return 0.0
+    try:
+        d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+        return math.exp(-0.5 * d1 ** 2) / (math.sqrt(2 * math.pi) * S * sigma * math.sqrt(T))
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _db_gex_signal(expiry: "date", atm: int, cmp: float) -> float:
+    """
+    Dealer Gamma Exposure (GEX) flip-point signal.
+
+    Market makers are net option sellers (short gamma).  The GEX flip strike
+    is where CE gamma exposure equals PE gamma exposure.
+
+      CMP < flip  → PE gamma dominates below flip → MMs buy every dip → bullish
+      CMP > flip  → CE gamma dominates above flip → MMs sell every rally → bearish
+
+    Magnitude scales with distance from flip as % of CMP.
+    Returns -1..+1.  Returns 0.0 on any data/compute failure.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok() or expiry is None or cmp <= 0:
+        return 0.0
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT strike, option_type,
+                           MAX(oi)               AS oi,
+                           AVG(NULLIF(iv, 0))    AS avg_iv
+                    FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry = %s AND oi > 0
+                    GROUP BY strike, option_type
+                """, (expiry,))
+                rows = cur.fetchall()
+
+        if not rows:
+            return 0.0
+
+        T   = max(1, (expiry - date.today()).days) / 365.0
+        LOT = 75  # Nifty lot size (contracts × lot = total delta units)
+
+        ce_gex: Dict[float, float] = {}
+        pe_gex: Dict[float, float] = {}
+
+        for strike, opt_type, oi, iv in rows:
+            if not iv or not oi:
+                continue
+            sigma = float(iv) / 100.0
+            g     = _bs_gamma(cmp, float(strike), T, sigma)
+            gval  = g * float(oi) * LOT
+            if opt_type == "CE":
+                ce_gex[float(strike)] = gval
+            elif opt_type == "PE":
+                pe_gex[float(strike)] = gval
+
+        if not ce_gex and not pe_gex:
+            return 0.0
+
+        # Cumulative (CE_GEX − PE_GEX) from lowest to highest strike.
+        # The flip strike is where this cumulative sum first turns positive —
+        # below the flip PE gamma rules (dealers buy dips), above it CE gamma rules.
+        all_strikes = sorted(set(ce_gex) | set(pe_gex))
+        cum         = 0.0
+        flip_strike: Optional[float] = None
+        for k in all_strikes:
+            cum += ce_gex.get(k, 0.0) - pe_gex.get(k, 0.0)
+            if cum >= 0 and flip_strike is None:
+                flip_strike = k
+
+        if flip_strike is None:
+            # PE dominates everywhere → strong support under market → bullish
+            return +0.50
+
+        dist_pct = (flip_strike - cmp) / cmp * 100  # positive = flip above CMP
+
+        # 3 % distance = full signal strength; tapers below
+        if dist_pct > 0:   # CMP below flip → bullish
+            return round(min(+1.0, dist_pct / 3.0) * 0.80, 3)
+        else:               # CMP above flip → bearish
+            return round(max(-1.0, dist_pct / 3.0) * 0.80, 3)
+
+    except Exception as exc:
+        logger.debug("_db_gex_signal: %s", exc)
+        return 0.0
+
+
+def _db_iv_skew_signal(expiry: "date", atm: int, cmp: float) -> float:
+    """
+    IV skew: OTM put IV minus OTM call IV (~2 % OTM each side).
+
+    High put premium  → institutions buying protection → bearish (-ve signal).
+    Low / inverted skew → complacency or bullish speculation → bullish (+ve signal).
+
+    Nifty natural skew baseline ≈ 4–8 % (put IV always commands a premium).
+    Returns -1..+1.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok() or expiry is None or cmp <= 0 or atm <= 0:
+        return 0.0
+    try:
+        # ~2 % OTM strikes, rounded to nearest 50
+        otm_dist      = max(100, int(round(cmp * 0.02 / 50) * 50))
+        otm_pe_strike = atm - otm_dist
+        otm_ce_strike = atm + otm_dist
+
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT option_type, strike, AVG(iv) AS avg_iv
+                    FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry = %s
+                      AND strike IN (%s, %s) AND iv > 0
+                      AND ts >= NOW() - INTERVAL '4 days'
+                    GROUP BY option_type, strike
+                    HAVING AVG(iv) > 0
+                """, (expiry, otm_pe_strike, otm_ce_strike))
+                rows = cur.fetchall()
+
+        pe_iv = ce_iv = None
+        for opt_type, strike, avg_iv in rows:
+            if opt_type == "PE" and int(strike) == otm_pe_strike:
+                pe_iv = float(avg_iv)
+            elif opt_type == "CE" and int(strike) == otm_ce_strike:
+                ce_iv = float(avg_iv)
+
+        if pe_iv is None or ce_iv is None:
+            return 0.0
+
+        # Normalised skew = (PE_IV − CE_IV) as % of their average
+        avg_iv = (pe_iv + ce_iv) / 2.0
+        norm_skew = (pe_iv - ce_iv) / (avg_iv + 1e-9) * 100
+
+        # Interpretation thresholds (calibrated for Nifty's typical 4–8 % natural skew)
+        if   norm_skew > 20: return -0.90   # extreme fear / crash hedging
+        elif norm_skew > 12: return -0.60
+        elif norm_skew > 6:  return -0.20   # elevated put demand, still normal
+        elif norm_skew > 2:  return  0.00   # baseline / normal
+        elif norm_skew > 0:  return +0.20   # very low skew = calm / slightly bullish
+        else:                return +0.50   # inverted (CE > PE) = bullish speculation
+
+    except Exception as exc:
+        logger.debug("_db_iv_skew_signal: %s", exc)
+        return 0.0
+
+
+def _db_oi_velocity_signal(expiry: "date", cmp: float) -> float:
+    """
+    Session-focused OI velocity: where is fresh money entering THIS session?
+
+    Unlike the 3-day cumulative oi_change, this looks at OI built/unwound
+    during the most recent trading session (max ts date in DB for this expiry):
+
+      OTM CE building above CMP  → call writers capping upside  → bearish
+      OTM PE building below CMP  → put writers building support  → bullish
+      ITM CE building below CMP  → aggressive bear bets (×1.5)  → bearish
+      ITM PE building above CMP  → aggressive bull bets (×1.5)  → bullish
+
+    Requires ≥ 500 lots of intra-session OI build per strike to filter noise.
+    Returns -1..+1.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok() or expiry is None or cmp <= 0:
+        return 0.0
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                # Most recent trading date for this expiry
+                cur.execute("""
+                    SELECT MAX(ts)::date FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry = %s
+                """, (expiry,))
+                r = cur.fetchone()
+                if not r or not r[0]:
+                    return 0.0
+                last_date = r[0]
+
+                # OI build per strike during that session
+                cur.execute("""
+                    SELECT strike, option_type,
+                           MAX(oi) - MIN(oi) AS oi_built
+                    FROM option_chain
+                    WHERE instrument = 'NIFTY' AND expiry = %s
+                      AND ts::date = %s AND oi IS NOT NULL
+                    GROUP BY strike, option_type
+                    HAVING MAX(oi) - MIN(oi) > 500
+                """, (expiry, last_date))
+                rows = cur.fetchall()
+
+        if not rows:
+            return 0.0
+
+        bull_score = 0.0
+        bear_score = 0.0
+
+        for strike, opt_type, oi_built in rows:
+            k   = float(strike)
+            oi  = float(oi_built)
+            moneyness = (k - cmp) / cmp  # positive = above CMP, negative = below
+
+            if opt_type == "CE":
+                if moneyness > 0.01:      # OTM call: resistance ceiling → bearish
+                    bear_score += oi
+                elif moneyness < -0.01:   # ITM call: aggressive bear bet → stronger bearish
+                    bear_score += oi * 1.5
+
+            elif opt_type == "PE":
+                if moneyness < -0.01:     # OTM put: support floor → bullish
+                    bull_score += oi
+                elif moneyness > 0.01:    # ITM put: aggressive bull bet → stronger bullish
+                    bull_score += oi * 1.5
+
+        total = bull_score + bear_score
+        if total < 1_000:
+            return 0.0
+
+        raw = (bull_score - bear_score) / total
+        return round(max(-1.0, min(1.0, raw * 1.5)), 3)
+
+    except Exception as exc:
+        logger.debug("_db_oi_velocity_signal: %s", exc)
+        return 0.0
+
+
 # ── Historical win rates ────────────────────────────────────────────────────────
 
 def _week_num_in_month(d: date, expiry_wd: int) -> int:
@@ -1685,16 +1923,20 @@ def fetch_market_overview() -> dict:
     if vix_sig == 0.0:
         vix_sig = _india_vix_signal()          # yfinance fallback
 
-    pcr_sig = _db_pcr_trend_signal()
-    oi_sig  = _db_oi_change_signal(nifty_expiry)
-    iv_sig  = _db_iv_percentile_signal(nifty_expiry, nifty_atm)
-    mp_sig  = _db_max_pain_signal(nifty_expiry, nifty_cmp)  # returns signal or None
+    pcr_sig     = _db_pcr_trend_signal()
+    oi_vel_sig  = _db_oi_velocity_signal(nifty_expiry, nifty_cmp)
+    iv_sig      = _db_iv_percentile_signal(nifty_expiry, nifty_atm)
+    mp_sig      = _db_max_pain_signal(nifty_expiry, nifty_cmp)
+    gex_sig     = _db_gex_signal(nifty_expiry, nifty_atm, nifty_cmp)
+    iv_skew_sig = _db_iv_skew_signal(nifty_expiry, nifty_atm, nifty_cmp)
 
     nifty_extra: Dict[str, float] = {
-        "vix":       vix_sig,
-        "pcr_trend": pcr_sig,
-        "oi_change": oi_sig,
-        "iv_pct":    iv_sig,
+        "vix":         vix_sig,
+        "pcr_trend":   pcr_sig,
+        "oi_velocity": oi_vel_sig,
+        "iv_pct":      iv_sig,
+        "gex":         gex_sig,
+        "iv_skew":     iv_skew_sig,
     }
     if mp_sig is not None:
         nifty_extra["max_pain"] = mp_sig
@@ -1736,13 +1978,15 @@ def fetch_market_overview() -> dict:
         "nat_gas":   nat_gas,
         "usd_inr":   usd_inr,
         "meta_signals": {
-            "india_vix":  round(vix_sig,  2),
-            "pcr_trend":  round(pcr_sig,  2),
-            "oi_change":  round(oi_sig,   2),
-            "iv_pct":     round(iv_sig,   2),
+            "india_vix":    round(vix_sig,      2),
+            "pcr_trend":    round(pcr_sig,      2),
+            "oi_velocity":  round(oi_vel_sig,   2),
+            "iv_pct":       round(iv_sig,       2),
+            "gex":          round(gex_sig,      2),
+            "iv_skew":      round(iv_skew_sig,  2),
             "max_pain_sig": round(mp_sig, 2) if mp_sig is not None else None,
-            "atm_iv":     nse_opts.get("atm_iv"),
-            "support":    nse_opts.get("support"),
-            "resistance": nse_opts.get("resistance"),
+            "atm_iv":       nse_opts.get("atm_iv"),
+            "support":      nse_opts.get("support"),
+            "resistance":   nse_opts.get("resistance"),
         },
     }
