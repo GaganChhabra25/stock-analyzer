@@ -71,6 +71,7 @@ class LegSpec:
     lot_size:        int
     entry_price:     float
     sl_price:        float       # exit if LTP crosses this
+    expiry:          Optional[date] = None
     order_id:        str  = ""
     db_id:           int  = 0
 

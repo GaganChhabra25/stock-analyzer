@@ -89,6 +89,7 @@ def enter_oi_strangle(
             lots=lots, lot_size=lot_size,
             entry_price=best_ce.ltp,
             sl_price=_sl_price_for_sell(best_ce.ltp),
+            expiry=expiry,
             order_id=ce_order.order_id,
         ))
 
@@ -100,6 +101,7 @@ def enter_oi_strangle(
             lots=lots, lot_size=lot_size,
             entry_price=best_pe.ltp,
             sl_price=_sl_price_for_sell(best_pe.ltp),
+            expiry=expiry,
             order_id=pe_order.order_id,
         ))
     except OrderError:
@@ -158,6 +160,7 @@ def enter_iron_fly(
                 lots=lots, lot_size=lot_size,
                 entry_price=quote.ltp,
                 sl_price=_sl_price_for_sell(quote.ltp) if direction == "SELL" else 0.0,
+                expiry=expiry,
                 order_id=order.order_id,
             ))
     except (OrderError, BrokerError):
@@ -209,6 +212,7 @@ def enter_zero_dte_straddle(
                 lots=lots, lot_size=lot_size,
                 entry_price=quote.ltp,
                 sl_price=_sl_price_for_sell(quote.ltp),
+                expiry=expiry,
                 order_id=order.order_id,
             ))
     except (OrderError, BrokerError):
