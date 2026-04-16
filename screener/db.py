@@ -179,6 +179,17 @@ def init_schema() -> bool:
                     ON fii_derivative_stats (trade_date DESC);
             """)
 
+            # ── Schema migrations (safe on existing tables) ───────────────────
+            # Add confidence tracking columns if they don't exist yet
+            cur.execute("""
+                ALTER TABLE market_predictions
+                    ADD COLUMN IF NOT EXISTS confidence       VARCHAR(10),
+                    ADD COLUMN IF NOT EXISTS agreement_pct   NUMERIC(5,1),
+                    ADD COLUMN IF NOT EXISTS rescore_dir     VARCHAR(4),
+                    ADD COLUMN IF NOT EXISTS rescore_prob    NUMERIC(5,2),
+                    ADD COLUMN IF NOT EXISTS rescored_at     TIMESTAMPTZ;
+            """)
+
             # ── Analytical views ──────────────────────────────────────────────
             cur.execute("""
                 CREATE OR REPLACE VIEW v_model_accuracy AS
@@ -412,9 +423,11 @@ def save_market_overview(overview: dict) -> int:
                                  target_price, range_hi, range_lo,
                                  hist_wr, tech_signal, vix_signal, pcr_value,
                                  max_pain, atm_iv, global_signal, fii_signal,
-                                 seasonal_signal, put_oi_wall, call_oi_wall)
+                                 seasonal_signal, put_oi_wall, call_oi_wall,
+                                 confidence, agreement_pct)
                             VALUES (%s,%s,%s,%s, %s,%s,%s, %s,%s,%s,
-                                    %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s)
+                                    %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s,
+                                    %s,%s)
                             ON CONFLICT DO NOTHING
                         """, (
                             code, exp_d, wk, "WEEKLY",
@@ -423,6 +436,7 @@ def save_market_overview(overview: dict) -> int:
                             _f(w.get("hist_wr")), tech, vix, pcr_v,
                             mp, iv, glo, fii,
                             seas, sup, res,
+                            w.get("confidence"), _f(w.get("agreement_pct")),
                         ))
                         saved += 1
 
@@ -437,9 +451,11 @@ def save_market_overview(overview: dict) -> int:
                              direction, probability, cmp, target_price,
                              hist_wr, tech_signal, vix_signal, pcr_value,
                              max_pain, atm_iv, global_signal, fii_signal,
-                             seasonal_signal, put_oi_wall, call_oi_wall)
+                             seasonal_signal, put_oi_wall, call_oi_wall,
+                             confidence, agreement_pct)
                         VALUES (%s,%s,%s,%s, %s,%s,%s,%s,
-                                %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s)
+                                %s,%s,%s,%s, %s,%s,%s,%s, %s,%s,%s,
+                                %s,%s)
                         ON CONFLICT DO NOTHING
                     """, (
                         code, exp_d, None, "MONTHLY",
@@ -448,6 +464,7 @@ def save_market_overview(overview: dict) -> int:
                         _f(monthly.get("hist_wr")), tech, vix, pcr_v,
                         mp, iv, glo, fii,
                         seas, sup, res,
+                        monthly.get("confidence"), _f(monthly.get("agreement_pct")),
                     ))
                     saved += 1
 

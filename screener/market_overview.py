@@ -1119,19 +1119,22 @@ def _multi_signal_prob(
     signals: Dict[str, float],
     weights: Dict[str, float],
     time_decay: float = 1.0,
-) -> Tuple[str, float]:
+) -> Tuple[str, float, str, float]:
     """
-    Compute (direction, probability%) from multiple -1..+1 signals.
+    Compute (direction, probability%, confidence, agreement_pct).
 
-    score = Σ signal_i × weight_i  (normalised by present-signal weights)
-    prob  = 50 + score × _PROB_SWING
+    score       = Σ signal_i × weight_i  (normalised by present-signal weights)
+    prob        = 50 + score × _PROB_SWING
+    agreement   = % of total weight whose signals point in the predicted direction
+    confidence  = HIGH (≥75 % aligned) | MEDIUM (55–75 %) | LOW (< 55 %)
 
     time_decay pulls score toward 0 for further-out weeks (higher uncertainty).
+    Only HIGH/MEDIUM confidence predictions should trigger trades.
     """
     present = {k: v for k, v in signals.items() if k in weights}
     total_w = sum(weights[k] for k in present)
     if total_w < 0.01:
-        return "UP", 50.0
+        return "UP", 50.0, "LOW", 50.0
 
     score = sum(present[k] * weights[k] for k in present) / total_w
     score = max(-1.0, min(1.0, score * time_decay))
@@ -1139,10 +1142,22 @@ def _multi_signal_prob(
     prob_up = 50.0 + score * _PROB_SWING
     prob_up = max(22.0, min(78.0, prob_up))
 
-    if prob_up >= 50.0:
-        return "UP", round(prob_up, 1)
+    direction   = "UP" if prob_up >= 50.0 else "DOWN"
+    probability = round(prob_up, 1) if direction == "UP" else round(100.0 - prob_up, 1)
+
+    # Agreement: fraction of weight where signal clearly aligns with direction
+    # Threshold ±0.05 filters near-zero / neutral signals from counting
+    if direction == "UP":
+        aligned_w = sum(weights[k] for k in present if present[k] > 0.05)
     else:
-        return "DOWN", round(100.0 - prob_up, 1)
+        aligned_w = sum(weights[k] for k in present if present[k] < -0.05)
+    agreement_pct = round(aligned_w / total_w * 100, 1) if total_w > 0 else 50.0
+
+    if   agreement_pct >= 75: confidence = "HIGH"
+    elif agreement_pct >= 55: confidence = "MEDIUM"
+    else:                     confidence = "LOW"
+
+    return direction, probability, confidence, agreement_pct
 
 
 # ── Weekly ATR and options-based expected move ─────────────────────────────────
@@ -1612,7 +1627,8 @@ def _weekly_schedule(
                 mp_decay = max(0.0, 1.0 - (week_num - 1) * 0.50)
                 sigs["max_pain"] = float(nse_opts["_max_pain_sig"]) * mp_decay
 
-        direction, probability = _multi_signal_prob(sigs, weights, time_decay=decay)
+        direction, probability, confidence, agreement_pct = _multi_signal_prob(
+            sigs, weights, time_decay=decay)
 
         # ── Expected move: ATM IV per-expiry → DTE-correct 1σ move ───────────
         # Priority: DB IV for this expiry > NSE API IV > ATR fallback
@@ -1664,6 +1680,8 @@ def _weekly_schedule(
             "support":           snap.get("support"),
             "atm_iv":            snap.get("atm_iv"),
             "hist_wr":           wr,
+            "confidence":        confidence,
+            "agreement_pct":     agreement_pct,
             "actual_close":      actual_close,
             "actual_dir":        actual_dir,
             "actual_pct":        actual_pct,
@@ -1691,7 +1709,8 @@ def _monthly_prediction(
     elif "max_pain" in weights and "_max_pain_sig" in nse_opts:
         sigs["max_pain"] = float(nse_opts["_max_pain_sig"]) * 0.60
 
-    direction, probability = _multi_signal_prob(sigs, weights, time_decay=0.80)
+    direction, probability, confidence, agreement_pct = _multi_signal_prob(
+        sigs, weights, time_decay=0.80)
 
     dte = max(1, (monthly_exp - today).days)
 
@@ -1734,6 +1753,8 @@ def _monthly_prediction(
         "support":        snap.get("support"),
         "atm_iv":         atm_iv,
         "hist_wr":        m_wr,
+        "confidence":     confidence,
+        "agreement_pct":  agreement_pct,
         "_exp_move":      round(m_move, 2),
     }
 

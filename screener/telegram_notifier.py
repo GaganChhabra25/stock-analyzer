@@ -126,23 +126,26 @@ def send_predictions(overview: dict, accuracy_rows: list) -> bool:
             prob    = monthly.get("probability", 0)
             target  = _inr(monthly.get("expected_price"))
             exp_d   = monthly.get("expiry_date", "")
-            hist_wr = monthly.get("hist_wr", 0)
+            conf    = monthly.get("confidence", "")
+            conf_str = f" [{conf}]" if conf else ""
             lines.append(
-                f"  Monthly ({exp_d}): {icon} <b>{monthly['direction']} {prob:.0f}%</b>"
-                f" → {target}  |  Hist WR: {hist_wr:.0f}%"
+                f"  Monthly ({exp_d}): {icon} <b>{monthly['direction']} {prob:.0f}%{conf_str}</b>"
+                f" → {target}"
             )
 
         # Next two upcoming weekly expiries
         schedule     = inst.get("weekly_schedule", [])
         future_weeks = [w for w in schedule if not w.get("is_past")][:2]
         for w in future_weeks:
-            icon   = _dir_icon(w["direction"])
-            prob   = w.get("probability", 0)
-            target = _inr(w.get("target"))
-            exp_d  = w.get("expiry_date", "")
+            icon     = _dir_icon(w["direction"])
+            prob     = w.get("probability", 0)
+            target   = _inr(w.get("target"))
+            exp_d    = w.get("expiry_date", "")
+            conf     = w.get("confidence", "")
+            conf_str = f" [{conf}]" if conf else ""
             label_wk = "This week" if w is future_weeks[0] else "Next week"
             lines.append(
-                f"  {label_wk} ({exp_d}): {icon} <b>{w['direction']} {prob:.0f}%</b>"
+                f"  {label_wk} ({exp_d}): {icon} <b>{w['direction']} {prob:.0f}%{conf_str}</b>"
                 f" → {target}"
             )
 
@@ -257,6 +260,57 @@ def send_fii_status(fii_rows: list, stored: int) -> bool:
             lines.append("  Trend: 🔴 Net Distribution")
 
     lines.append(f"\n<i>Stored {stored} row(s) · {today_str}</i>")
+    return _send("\n".join(lines))
+
+
+def send_rescore_summary(updates: list) -> bool:
+    """
+    Send 2 PM intraday re-score summary alert.
+
+    updates: list of dicts from intraday_rescore.rescore_predictions()
+    Each dict has: label, orig_dir, orig_prob, orig_conf,
+                   new_dir, new_prob, new_conf, direction_flip
+    """
+    today_str = date.today().strftime("%d %b %Y")
+
+    if not updates:
+        text = (
+            f"<b>🔄 2 PM Re-score — {today_str}</b>\n\n"
+            f"  No significant signal changes. Morning predictions stand."
+        )
+        return _send(text)
+
+    flips   = [u for u in updates if u.get("direction_flip")]
+    shifts  = [u for u in updates if not u.get("direction_flip")]
+
+    lines = [f"<b>🔄 2 PM Re-score — {today_str}</b>\n"]
+
+    if flips:
+        lines.append("⚠️ <b>Direction Flip(s):</b>")
+        for u in flips:
+            old_icon = _dir_icon(u["orig_dir"])
+            new_icon = _dir_icon(u["new_dir"])
+            lines.append(
+                f"  {u['label']}\n"
+                f"    {old_icon} {u['orig_dir']} {u['orig_prob']:.0f}% ({u['orig_conf'] or '?'})"
+                f"  →  {new_icon} <b>{u['new_dir']} {u['new_prob']:.0f}% ({u['new_conf']})</b>"
+            )
+        lines.append("")
+
+    if shifts:
+        lines.append("📊 <b>Probability Shift(s):</b>")
+        for u in shifts:
+            icon = _dir_icon(u["new_dir"])
+            delta = u["new_prob"] - u["orig_prob"]
+            sign  = "+" if delta >= 0 else ""
+            lines.append(
+                f"  {u['label']}: {icon} {u['new_dir']}"
+                f" {u['orig_prob']:.0f}%→<b>{u['new_prob']:.0f}%</b>"
+                f" ({sign}{delta:.0f}pp)  {u['new_conf']}"
+            )
+        lines.append("")
+
+    lines.append(f"<i>2 PM re-score · {today_str}</i>")
     return _send("\n".join(lines))
 
 
