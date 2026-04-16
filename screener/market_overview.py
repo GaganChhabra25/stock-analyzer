@@ -60,12 +60,13 @@ except ImportError:
 # ── Signal weights ─────────────────────────────────────────────────────────────
 
 _NIFTY_W: Dict[str, float] = {
-    "pcr_trend":   0.17,  # DB: PCR level + 3-day trend from market_snapshot
-    "oi_velocity": 0.15,  # DB: session OI build direction (fresh money this session)
-    "max_pain":    0.17,  # DB: max pain strike gravitational pull
-    "tech":        0.14,  # RSI + MACD + Bollinger + SMA + ADX from price
+    "pcr_trend":   0.15,  # DB: PCR level + 3-day trend from market_snapshot
+    "oi_velocity": 0.13,  # DB: session OI build direction (fresh money this session)
+    "max_pain":    0.15,  # DB: max pain strike gravitational pull
+    "tech":        0.13,  # RSI + MACD + Bollinger + SMA + ADX from price
     "gex":         0.12,  # DB: dealer gamma exposure flip point (pinning vs trending)
-    "vix":         0.10,  # DB: India VIX from market_snapshot
+    "vix":         0.09,  # DB: India VIX from market_snapshot
+    "fii":         0.08,  # DB: FII net futures position from fii_derivative_stats
     "iv_skew":     0.07,  # DB: OTM PE vs CE IV skew (institutional fear gauge)
     "iv_pct":      0.04,  # DB: IV percentile from option_chain.iv
     "hist_wr":     0.04,  # historical week-of-month win rate from price
@@ -1406,6 +1407,67 @@ def _db_oi_velocity_signal(expiry: "date", cmp: float) -> float:
         return 0.0
 
 
+def _db_fii_derivative_signal() -> float:
+    """
+    FII net futures position from fii_derivative_stats table.
+
+    FII are the largest institutional participants in Nifty F&O.
+    Their net futures position (long - short contracts) tells us:
+      Positive net futures → FII expect Nifty to RISE → bullish
+      Negative net futures → FII expect Nifty to FALL → bearish
+
+    Signal uses:
+      - Latest day's net position for level signal
+      - 5-day change in net position for trend signal (momentum of FII positioning)
+      - Level 60% + Trend 40%
+
+    Returns -1..+1. Returns 0.0 if DB has fewer than 2 rows.
+    """
+    from screener.db import _get_conn, is_available as _ok
+    if not _ok():
+        return 0.0
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT trade_date, fii_net_fut, fii_net_opt
+                    FROM fii_derivative_stats
+                    WHERE fii_net_fut IS NOT NULL
+                    ORDER BY trade_date DESC
+                    LIMIT 10
+                """)
+                rows = cur.fetchall()
+
+        if not rows:
+            return 0.0
+
+        # Latest net futures position
+        latest_net_fut = float(rows[0][1])
+        latest_net_opt = float(rows[0][2]) if rows[0][2] is not None else 0.0
+
+        # Level signal: FII net futures (contracts; positive = net long = bullish)
+        # Typical daily range: ±20,000 contracts
+        level_sig = max(-1.0, min(1.0, latest_net_fut / 15_000.0))
+
+        # Trend: 5-day change in net position
+        trend_sig = 0.0
+        if len(rows) >= 5:
+            older_net = float(rows[4][1])
+            delta = latest_net_fut - older_net
+            trend_sig = max(-1.0, min(1.0, delta / 10_000.0))
+
+        # Options net: FII buying calls net of puts → secondary confirmation
+        opt_sig = max(-1.0, min(1.0, latest_net_opt / 20_000.0))
+
+        # Combined: futures 60% (most reliable) + trend 25% + options 15%
+        combined = level_sig * 0.60 + trend_sig * 0.25 + opt_sig * 0.15
+        return round(max(-1.0, min(1.0, combined)), 3)
+
+    except Exception as exc:
+        logger.debug("_db_fii_derivative_signal: %s", exc)
+        return 0.0
+
+
 # ── Historical win rates ────────────────────────────────────────────────────────
 
 def _week_num_in_month(d: date, expiry_wd: int) -> int:
@@ -1929,6 +1991,7 @@ def fetch_market_overview() -> dict:
     mp_sig      = _db_max_pain_signal(nifty_expiry, nifty_cmp)
     gex_sig     = _db_gex_signal(nifty_expiry, nifty_atm, nifty_cmp)
     iv_skew_sig = _db_iv_skew_signal(nifty_expiry, nifty_atm, nifty_cmp)
+    fii_sig     = _db_fii_derivative_signal()
 
     nifty_extra: Dict[str, float] = {
         "vix":         vix_sig,
@@ -1937,6 +2000,7 @@ def fetch_market_overview() -> dict:
         "iv_pct":      iv_sig,
         "gex":         gex_sig,
         "iv_skew":     iv_skew_sig,
+        "fii":         fii_sig,
     }
     if mp_sig is not None:
         nifty_extra["max_pain"] = mp_sig
@@ -1984,6 +2048,7 @@ def fetch_market_overview() -> dict:
             "iv_pct":       round(iv_sig,       2),
             "gex":          round(gex_sig,      2),
             "iv_skew":      round(iv_skew_sig,  2),
+            "fii":          round(fii_sig,      2),
             "max_pain_sig": round(mp_sig, 2) if mp_sig is not None else None,
             "atm_iv":       nse_opts.get("atm_iv"),
             "support":      nse_opts.get("support"),

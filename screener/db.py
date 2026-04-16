@@ -161,6 +161,22 @@ def init_schema() -> bool:
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_lookup
                     ON mcx_ohlc (instrument, interval, ts DESC);
+
+                CREATE TABLE IF NOT EXISTS fii_derivative_stats (
+                    id                BIGSERIAL    PRIMARY KEY,
+                    trade_date        DATE         NOT NULL UNIQUE,
+                    fii_idx_fut_long  NUMERIC(15,2),
+                    fii_idx_fut_short NUMERIC(15,2),
+                    fii_idx_fut_oi    NUMERIC(15,2),
+                    fii_idx_opt_long  NUMERIC(15,2),
+                    fii_idx_opt_short NUMERIC(15,2),
+                    fii_idx_opt_oi    NUMERIC(15,2),
+                    fii_net_fut       NUMERIC(15,2),
+                    fii_net_opt       NUMERIC(15,2),
+                    fetched_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_fii_stats_date
+                    ON fii_derivative_stats (trade_date DESC);
             """)
 
             # ── Analytical views ──────────────────────────────────────────────

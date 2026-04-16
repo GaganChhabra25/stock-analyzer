@@ -287,14 +287,28 @@ success "SSH keys added."
 # ── 10. Cron jobs ─────────────────────────────────────────────────────────────
 info "[10/10] Installing cron jobs..."
 
-SCREENER_CRON="0 3 * * 1-6 cd $APP_DIR && $VENV/bin/python run_screener.py --no-open >> $APP_DIR/logs/screener.log 2>&1"
+# ── Cron time reference (Contabo = Europe/Berlin = IST - 3.5h in summer CEST) ──
+# IST 09:45 = CEST 06:15 = UTC 04:15  ← predictions (market open 30 min data ready)
+# IST 17:00 = CEST 13:30 = UTC 11:30  ← FII data (NSE publishes EOD stats by 5 PM)
+# IST 18:30 = CEST 15:00 = UTC 13:00  ← outcomes (market closed, prices settled)
 
-# Options collector placeholder — activated once Kite Connect is configured
+SCREENER_CRON="15 4 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/reset_predictions.py >> $APP_DIR/logs/predictions.log 2>&1"
+FII_CRON="30 11 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/collect_fii_data.py >> $APP_DIR/logs/fii.log 2>&1"
+OUTCOMES_CRON="0 13 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/record_outcomes.py >> $APP_DIR/logs/outcomes.log 2>&1"
+
+# Options collector — activated once Kite Connect is configured
 OPTIONS_CRON="# */1 9-15 * * 1-5 cd $APP_DIR && $VENV/bin/python options/collector.py >> $APP_DIR/logs/options.log 2>&1"
 
 (
-    crontab -u "$APP_USER" -l 2>/dev/null | grep -v "run_screener.py" | grep -v "options/collector.py"
+    crontab -u "$APP_USER" -l 2>/dev/null \
+        | grep -v "run_screener.py" \
+        | grep -v "reset_predictions.py" \
+        | grep -v "collect_fii_data.py" \
+        | grep -v "record_outcomes.py" \
+        | grep -v "options/collector.py"
     echo "$SCREENER_CRON"
+    echo "$FII_CRON"
+    echo "$OUTCOMES_CRON"
     echo "$OPTIONS_CRON"
 ) | crontab -u "$APP_USER" -
 
