@@ -1098,9 +1098,17 @@ async function checkBrokerStatus() {
     const data = await resp.json();
     _brokerConnected = data.connected === true;
     badge.className = "broker-status " + (_brokerConnected ? "connected" : "disconnected");
-    badge.textContent = _brokerConnected
-      ? "✓ Zerodha connected — " + (data.user_name || data.user_id || "")
-      : "✗ Zerodha not connected — login at kite.zerodha.com first";
+    if (_brokerConnected) {
+      badge.textContent = "✓ Zerodha connected — " + (data.name || data.user_id || "");
+    } else if (data.reason === "ip_not_whitelisted") {
+      badge.innerHTML = `✗ <strong>IP not whitelisted on Zerodha</strong> —
+        <a href="/api/broker/my-ip" target="_blank" style="color:#f85149">see server IP</a>
+        &nbsp;then add it at&nbsp;
+        <a href="https://developers.kite.trade" target="_blank" style="color:#f85149">developers.kite.trade</a>
+        → My Apps → Settings → Allowed IPs`;
+    } else {
+      badge.textContent = "✗ Zerodha not connected — login at kite.zerodha.com first";
+    }
   } catch {
     _brokerConnected = false;
     badge.className = "broker-status disconnected";

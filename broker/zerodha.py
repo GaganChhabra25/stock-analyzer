@@ -18,6 +18,20 @@ from .base import AuthError, BrokerBase, BrokerError, OrderError, PlacedOrder, Q
 
 logger = logging.getLogger(__name__)
 
+_IP_WHITELIST_MSG = (
+    "Zerodha API error: 'No IPs configured for this app'. "
+    "Fix: go to https://developers.kite.trade → My Apps → your app → "
+    "Settings → Allowed IPs → add your server IP (or 0.0.0.0/0 to allow all). "
+    "Then re-login via /kite/login."
+)
+
+
+def _raise_if_ip_error(exc: Exception) -> None:
+    """Re-raise with a clear fix message if this is the Zerodha IP whitelist error."""
+    if "no ip" in str(exc).lower() or "no ips" in str(exc).lower():
+        raise AuthError(_IP_WHITELIST_MSG) from exc
+
+
 # Spot index symbols as Zerodha exchange:symbol pairs
 _INDEX_QUOTE_KEY = {
     "NIFTY":     "NSE:NIFTY 50",
@@ -50,7 +64,8 @@ class ZerodhaAdapter(BrokerBase):
         try:
             self._kite.profile()
             return True
-        except Exception:
+        except Exception as exc:
+            _raise_if_ip_error(exc)
             return False
 
     def get_login_url(self) -> str:
@@ -68,6 +83,7 @@ class ZerodhaAdapter(BrokerBase):
         except KeyError:
             raise BrokerError(f"No quote data for {symbol}")
         except Exception as exc:
+            _raise_if_ip_error(exc)
             raise BrokerError(f"get_spot({symbol}): {exc}") from exc
 
     def get_option_chain(self, symbol: str, expiry: date) -> List[Quote]:
@@ -75,6 +91,7 @@ class ZerodhaAdapter(BrokerBase):
         try:
             insts = self._kite.instruments("NFO")
         except Exception as exc:
+            _raise_if_ip_error(exc)
             raise BrokerError(f"instruments() failed: {exc}") from exc
 
         # Filter to relevant options
@@ -92,6 +109,7 @@ class ZerodhaAdapter(BrokerBase):
         try:
             quotes_raw = self._kite.quote(keys)
         except Exception as exc:
+            _raise_if_ip_error(exc)
             raise BrokerError(f"quote() batch failed: {exc}") from exc
 
         result: List[Quote] = []
@@ -119,6 +137,7 @@ class ZerodhaAdapter(BrokerBase):
         except KeyError:
             raise BrokerError(f"No LTP data for {trading_symbol}")
         except Exception as exc:
+            _raise_if_ip_error(exc)
             raise BrokerError(f"get_ltp({trading_symbol}): {exc}") from exc
 
     def get_nearest_expiry(self, symbol: str) -> date:
@@ -126,6 +145,7 @@ class ZerodhaAdapter(BrokerBase):
         try:
             insts = self._kite.instruments("NFO")
         except Exception as exc:
+            _raise_if_ip_error(exc)
             raise BrokerError(f"instruments() failed: {exc}") from exc
 
         today = date.today()

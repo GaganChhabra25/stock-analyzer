@@ -1137,9 +1137,40 @@ def api_broker_status():
         return jsonify({"connected": True, "user_id": user_id,
                         "name": profile.get("user_name", user_id),
                         "broker": "zerodha"})
-    except Exception:
+    except Exception as exc:
+        err = str(exc)
+        if "no ip" in err.lower() or "no ips" in err.lower():
+            return jsonify({
+                "connected": False,
+                "reason": "ip_not_whitelisted",
+                "error": (
+                    "Zerodha blocked this server's IP. "
+                    "Fix: developers.kite.trade → My Apps → your app → "
+                    "Settings → Allowed IPs → add your server IP or 0.0.0.0/0"
+                ),
+                "my_ip_url": url_for("api_broker_my_ip"),
+                "login_url": url_for("kite_login"),
+            })
         return jsonify({"connected": False, "reason": "token_expired",
                         "login_url": url_for("kite_login")})
+
+
+@app.route("/api/broker/my-ip")
+@login_required
+def api_broker_my_ip():
+    """Return this server's outbound public IP — useful for Zerodha IP whitelisting."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=5) as resp:
+            ip = resp.read().decode().strip()
+    except Exception:
+        ip = request.environ.get("SERVER_NAME", "unknown")
+    return jsonify({"server_ip": ip,
+                    "instructions": (
+                        "Add this IP at: developers.kite.trade → My Apps → "
+                        "your app → Settings → Allowed IPs. "
+                        "Or use 0.0.0.0/0 to allow all IPs."
+                    )})
 
 
 @app.route("/api/deploy", methods=["POST"])
