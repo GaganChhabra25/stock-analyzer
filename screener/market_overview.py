@@ -1441,26 +1441,31 @@ def _db_fii_derivative_signal() -> float:
         if not rows:
             return 0.0
 
-        # Latest net futures position
-        latest_net_fut = float(rows[0][1])
-        latest_net_opt = float(rows[0][2]) if rows[0][2] is not None else 0.0
+        # fii_net_fut = FII net cash market value (Crore); positive = net buyer = bullish
+        # fii_net_opt = DII net cash market value (Crore); DII is counter-cyclical so
+        #               DII selling (negative) often confirms FII buying → bullish
+        latest_fii_net = float(rows[0][1] or 0)
+        latest_dii_net = float(rows[0][2] or 0) if rows[0][2] is not None else 0.0
 
-        # Level signal: FII net futures (contracts; positive = net long = bullish)
-        # Typical daily range: ±20,000 contracts
-        level_sig = max(-1.0, min(1.0, latest_net_fut / 15_000.0))
+        # Level signal: typical daily range ±3,000 Cr; >5,000 = very strong
+        level_sig = max(-1.0, min(1.0, latest_fii_net / 3_000.0))
 
-        # Trend: 5-day change in net position
+        # Trend: 5-day cumulative FII flow
         trend_sig = 0.0
-        if len(rows) >= 5:
-            older_net = float(rows[4][1])
-            delta = latest_net_fut - older_net
-            trend_sig = max(-1.0, min(1.0, delta / 10_000.0))
+        if len(rows) >= 3:
+            cumulative_5d = sum(float(r[1] or 0) for r in rows[:5])
+            trend_sig = max(-1.0, min(1.0, cumulative_5d / 8_000.0))
 
-        # Options net: FII buying calls net of puts → secondary confirmation
-        opt_sig = max(-1.0, min(1.0, latest_net_opt / 20_000.0))
+        # DII is usually counter-FII; when DII sells AND FII buys = strong conviction
+        # DII net negative + FII net positive = institutions aligned bullish
+        dii_confirmation = 0.0
+        if latest_fii_net > 0 and latest_dii_net < 0:
+            dii_confirmation = +0.30   # both aligned bullish
+        elif latest_fii_net < 0 and latest_dii_net > 0:
+            dii_confirmation = -0.30   # both aligned bearish
 
-        # Combined: futures 60% (most reliable) + trend 25% + options 15%
-        combined = level_sig * 0.60 + trend_sig * 0.25 + opt_sig * 0.15
+        # Combined: today's FII flow 50% + 5-day trend 35% + DII confirmation 15%
+        combined = level_sig * 0.50 + trend_sig * 0.35 + dii_confirmation * 0.15
         return round(max(-1.0, min(1.0, combined)), 3)
 
     except Exception as exc:
