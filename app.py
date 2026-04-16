@@ -1265,11 +1265,20 @@ def api_force_exit_deployment(dep_id):
     return jsonify({"ok": ok})
 
 
-@app.route("/deployments")
+@app.route("/strategies")
+@app.route("/deployments")   # keep old URL working
 @login_required
 def deployments_page():
-    """Deployed Strategies — live and historical deployments."""
-    return render_template("deployments.html", user=session["user"])
+    """Strategies — deploy and monitor live option strategies."""
+    from options.strategies import as_json_list as strat_list
+    from options.instrument_config import as_json_list as instr_list
+    import json
+    return render_template(
+        "deployments.html",
+        user=session["user"],
+        strategies_json=json.dumps(strat_list()),
+        instruments_json=json.dumps(instr_list()),
+    )
 
 
 @app.route("/users")

@@ -3,18 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Deployed Strategies — Stock Analyzer</title>
+<title>Strategies — Stock Analyzer</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
 
 /* Header */
-.header { background: linear-gradient(135deg, #1a365d 0%, #2d6a4f 100%); padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.header { background: linear-gradient(135deg, #1a365d 0%, #2d6a4f 100%); padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; }
 .header-left { display: flex; align-items: center; gap: 14px; }
 .header-logo { font-size: 24px; }
 .header-title { font-size: 18px; font-weight: 700; color: #fff; }
 .header-sub { font-size: 11px; color: rgba(255,255,255,0.65); margin-top: 2px; }
-.header-right { display: flex; align-items: center; gap: 12px; }
 .nav-btn { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.85); padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; }
 .nav-btn:hover { background: rgba(255,255,255,0.2); }
 
@@ -28,35 +27,88 @@ body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:
 
 /* Layout */
 .page-layout { display: flex; min-height: calc(100vh - 74px); }
-.main { padding: 36px 40px; flex: 1; min-width: 0; }
-.page-title { font-size: 22px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
-.page-sub { font-size: 13px; color: #8b949e; margin-bottom: 28px; }
+.main { padding: 32px 40px; flex: 1; min-width: 0; }
+.section-title { font-size: 13px; font-weight: 700; color: #8b949e; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.section-title::after { content: ""; flex: 1; height: 1px; background: #21262d; }
 
-/* Table */
-.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; margin-bottom: 28px; }
-.card-header { padding: 16px 24px; border-bottom: 1px solid #21262d; display: flex; align-items: center; justify-content: space-between; }
-.card-title { font-size: 14px; font-weight: 700; color: #f0f6fc; }
-.refresh-btn { background: none; border: 1px solid #30363d; color: #8b949e; padding: 5px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; }
+/* ── Strategy Cards ──────────────────────────────────────── */
+.strategies-grid { display: flex; flex-direction: column; gap: 14px; margin-bottom: 32px; }
+
+.strat-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; transition: border-color 0.15s; }
+.strat-card:hover { border-color: #484f58; }
+
+.strat-top { display: flex; align-items: center; gap: 14px; padding: 18px 22px; }
+.strat-info { flex: 1; min-width: 0; }
+.strat-name { font-size: 15px; font-weight: 700; color: #f0f6fc; display: flex; align-items: center; gap: 8px; }
+.strat-meta { font-size: 11px; color: #8b949e; margin-top: 5px; display: flex; gap: 14px; flex-wrap: wrap; }
+.strat-meta span { display: flex; align-items: center; gap: 4px; }
+
+.badge { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 10px; font-weight: 700; }
+.badge-blue   { background: rgba(56,139,253,0.15); color: #58a6ff; border: 1px solid rgba(56,139,253,0.3); }
+.badge-green  { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.badge-orange { background: rgba(210,153,34,0.15); color: #e3b341; border: 1px solid rgba(210,153,34,0.3); }
+.badge-purple { background: rgba(163,113,247,0.15);color: #a371f7; border: 1px solid rgba(163,113,247,0.3); }
+
+.deploy-toggle { background: #1f6feb; border: none; color: #fff; padding: 8px 18px; border-radius: 7px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0; transition: background 0.15s; }
+.deploy-toggle:hover { background: #388bfd; }
+.deploy-toggle.open { background: #21262d; color: #8b949e; border: 1px solid #30363d; }
+
+/* Deploy form */
+.deploy-form { border-top: 1px solid #21262d; padding: 16px 22px; background: #0d1117; display: none; }
+.deploy-form.open { display: block; }
+.form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group label { font-size: 10px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.4px; }
+.form-group select,
+.form-group input { background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 7px 10px; border-radius: 6px; font-size: 12px; min-width: 110px; }
+.form-group select:focus,
+.form-group input:focus { outline: none; border-color: #1f6feb; }
+.form-group input[type=number] { width: 80px; }
+.btn-deploy { background: #238636; border: none; color: #fff; padding: 8px 20px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.btn-deploy:hover { background: #2ea043; }
+.btn-deploy:disabled { opacity: 0.5; cursor: not-allowed; }
+.deploy-msg { font-size: 11px; margin-left: 6px; }
+.deploy-msg.ok  { color: #3fb950; }
+.deploy-msg.err { color: #f85149; }
+
+/* ── Live Banner ─────────────────────────────────────────── */
+.live-banner { background: rgba(63,185,80,0.07); border: 1px solid rgba(63,185,80,0.25); border-radius: 10px; padding: 16px 20px; margin-bottom: 28px; display: none; }
+.live-banner.visible { display: block; }
+.live-banner-title { font-size: 11px; font-weight: 700; color: #3fb950; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.pulse { display: inline-block; width: 7px; height: 7px; background: #3fb950; border-radius: 50%; animation: pulse 1.5s infinite; flex-shrink: 0; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+.live-dep { display: flex; align-items: center; gap: 16px; background: #0d1117; border: 1px solid rgba(63,185,80,0.12); border-radius: 8px; padding: 13px 18px; margin-bottom: 8px; }
+.live-dep:last-child { margin-bottom: 0; }
+.live-dep-info { flex: 1; }
+.live-dep-name { font-size: 14px; font-weight: 700; color: #f0f6fc; }
+.live-dep-meta { font-size: 11px; color: #8b949e; margin-top: 3px; }
+.btn-exit-big   { background: #da3633; border: none; color: #fff; padding: 9px 20px; border-radius: 7px; font-size: 12px; font-weight: 700; cursor: pointer; }
+.btn-exit-big:hover { background: #b91c1a; }
+.btn-cancel-big { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 9px 16px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.btn-cancel-big:hover { border-color: #8b949e; }
+
+/* ── History Table ───────────────────────────────────────── */
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; overflow: hidden; }
+.card-header { padding: 14px 20px; border-bottom: 1px solid #21262d; display: flex; align-items: center; justify-content: space-between; }
+.card-title { font-size: 13px; font-weight: 700; color: #f0f6fc; }
+.refresh-btn { background: none; border: 1px solid #30363d; color: #8b949e; padding: 4px 11px; border-radius: 6px; font-size: 11px; cursor: pointer; }
 .refresh-btn:hover { color: #f0f6fc; border-color: #8b949e; }
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th { text-align: left; color: #8b949e; font-weight: 600; padding: 10px 16px; border-bottom: 1px solid #21262d; text-transform: uppercase; letter-spacing: 0.4px; font-size: 10px; }
-td { padding: 11px 16px; border-bottom: 1px solid #161b22; vertical-align: middle; }
+th { text-align: left; color: #8b949e; font-weight: 600; padding: 9px 16px; border-bottom: 1px solid #21262d; text-transform: uppercase; letter-spacing: 0.4px; font-size: 10px; }
+td { padding: 10px 16px; border-bottom: 1px solid #161b22; vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: #1c2128; }
-.badge { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 10px; font-weight: 700; }
-.badge-active    { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
-.badge-exited    { background: rgba(248,81,73,0.1);   color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
-.badge-pending   { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
-.badge-failed    { background: rgba(248,81,73,0.15);  color: #f85149; border: 1px solid rgba(248,81,73,0.4); }
-.badge-cancelled { background: rgba(139,148,158,0.15); color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
-.badge-closed    { background: rgba(139,148,158,0.15); color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
+.status-badge { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 10px; font-weight: 700; }
+.s-active    { background: rgba(63,185,80,0.15);   color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.s-pending   { background: rgba(227,179,65,0.15);  color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.s-closed    { background: rgba(139,148,158,0.1);  color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
+.s-failed    { background: rgba(248,81,73,0.12);   color: #f85149; border: 1px solid rgba(248,81,73,0.35); }
+.s-cancelled { background: rgba(139,148,158,0.1);  color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
 .pnl-pos { color: #3fb950; font-weight: 700; }
 .pnl-neg { color: #f85149; font-weight: 700; }
-.btn-exit { background: rgba(248,81,73,0.15); border: 1px solid rgba(248,81,73,0.4); color: #f85149; padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; font-weight: 600; }
-.btn-exit:hover { background: rgba(248,81,73,0.3); }
-.btn-cancel { background: rgba(139,148,158,0.1); border: 1px solid #30363d; color: #8b949e; padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; }
-.btn-cancel:hover { color: #f0f6fc; border-color: #8b949e; }
-.empty-row td { text-align: center; color: #484f58; padding: 40px; font-size: 13px; }
+.empty-row td { text-align: center; color: #484f58; padding: 36px; font-size: 13px; }
+#refreshNote { font-size: 10px; color: #484f58; }
 </style>
 </head>
 <body>
@@ -65,13 +117,11 @@ tr:hover td { background: #1c2128; }
   <div class="header-left">
     <span class="header-logo">🚀</span>
     <div>
-      <div class="header-title">Deployed Strategies</div>
-      <div class="header-sub">Live and historical strategy deployments via Zerodha</div>
+      <div class="header-title">Strategies</div>
+      <div class="header-sub">Deploy live option strategies via Zerodha</div>
     </div>
   </div>
-  <div class="header-right">
-    <a href="/logout" class="nav-btn">Sign Out</a>
-  </div>
+  <a href="/logout" class="nav-btn">Sign Out</a>
 </div>
 
 <div class="page-layout">
@@ -83,88 +133,193 @@ tr:hover td { background: #1c2128; }
   <a href="/weekly"      class="sidebar-item"><span class="sidebar-icon">📅</span> Weekly Range</a>
   <a href="/insights"    class="sidebar-item"><span class="sidebar-icon">🔬</span> DB Insights</a>
   <div class="sidebar-divider"></div>
-  <a href="/deployments" class="sidebar-item active"><span class="sidebar-icon">🚀</span> Deployed Strategies</a>
+  <a href="/strategies"  class="sidebar-item active"><span class="sidebar-icon">🚀</span> Strategies</a>
   <a href="/users"       class="sidebar-item"><span class="sidebar-icon">👥</span> Users</a>
 </nav>
 
-<style>
-.live-banner { background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.3); border-radius: 10px; padding: 16px 20px; margin-bottom: 22px; display: none; }
-.live-banner.visible { display: block; }
-.live-banner-title { font-size: 12px; font-weight: 700; color: #3fb950; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-.live-dep { display: flex; align-items: center; gap: 16px; background: #0d1117; border: 1px solid rgba(63,185,80,0.15); border-radius: 8px; padding: 14px 18px; margin-bottom: 8px; }
-.live-dep:last-child { margin-bottom: 0; }
-.live-dep-info { flex: 1; }
-.live-dep-name { font-size: 15px; font-weight: 700; color: #f0f6fc; }
-.live-dep-meta { font-size: 11px; color: #8b949e; margin-top: 4px; }
-.btn-exit-big { background: #da3633; border: none; color: #fff; padding: 11px 24px; border-radius: 7px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
-.btn-exit-big:hover { background: #b91c1a; }
-.btn-cancel-big { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 11px 20px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-.btn-cancel-big:hover { border-color: #8b949e; }
-.pulse { display: inline-block; width: 8px; height: 8px; background: #3fb950; border-radius: 50%; animation: pulse 1.5s infinite; flex-shrink: 0; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-</style>
-
 <div class="main">
-  <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;">
-    Deployed Strategies
-    <span id="refreshNote" style="font-size:11px;color:#484f58;font-weight:400;"></span>
-  </div>
-  <div class="page-sub">Monitor live deployments and exit positions manually.</div>
 
-  <!-- ── Live / Pending deployments ── -->
+  <!-- ── Live / Pending ──────────────────────────────────── -->
   <div class="live-banner" id="liveBanner">
-    <div class="live-banner-title"><span class="pulse"></span> Live Deployments — Exit anytime below</div>
+    <div class="live-banner-title"><span class="pulse"></span> Live Now</div>
     <div id="liveList"></div>
   </div>
 
-  <!-- ── History table ── -->
+  <!-- ── Available Strategies ───────────────────────────── -->
+  <div class="section-title">Available Strategies</div>
+  <div class="strategies-grid" id="stratGrid">
+    <!-- Filled by JS from embedded registry -->
+  </div>
+
+  <!-- ── Deployment History ──────────────────────────────── -->
+  <div class="section-title" style="margin-top:8px;">Deployment History <span id="refreshNote" style="font-size:10px;color:#484f58;font-weight:400;text-transform:none;letter-spacing:0;margin-left:8px;"></span></div>
   <div class="card">
     <div class="card-header">
       <span class="card-title">All Deployments</span>
-      <button class="refresh-btn" onclick="load()">↻ Refresh</button>
+      <button class="refresh-btn" onclick="loadDeployments()">↻ Refresh</button>
     </div>
     <table>
       <thead>
         <tr>
-          <th>#</th><th>Strategy</th><th>Instrument</th><th>Deployed At</th>
-          <th>Status</th><th>P&amp;L ₹</th><th>Error / Notes</th>
+          <th>#</th><th>Strategy</th><th>Instrument</th><th>Queued At</th>
+          <th>Status</th><th>P&amp;L ₹</th><th>Notes</th>
         </tr>
       </thead>
       <tbody id="depBody"><tr class="empty-row"><td colspan="7">Loading…</td></tr></tbody>
     </table>
   </div>
-</div>
-</div>
+
+</div><!-- /main -->
+</div><!-- /page-layout -->
 
 <script>
+// ── Registry from server ─────────────────────────────────────────────────────
+const STRATEGIES = {{ strategies_json | safe }};
+const INSTRUMENTS = {{ instruments_json | safe }};
+// keyed maps
+const STRAT_MAP = Object.fromEntries(STRATEGIES.map(s => [s.key, s]));
+const INSTR_MAP = Object.fromEntries(INSTRUMENTS.map(i => [i.symbol, i]));
+
+// ── Build strategy cards ──────────────────────────────────────────────────────
+function buildStratCards() {
+  const grid = document.getElementById("stratGrid");
+  grid.innerHTML = STRATEGIES.map(s => {
+    const badgeCls = `badge-${s.badge_color}`;
+    const instrOptions = s.instruments.map(sym => {
+      const ic = INSTR_MAP[sym];
+      return `<option value="${sym}">${ic ? ic.display_name : sym}</option>`;
+    }).join("");
+    const wingRow = s.has_wing ? `
+      <div class="form-group">
+        <label>Wing (pts)</label>
+        <select id="wing_${s.key}">
+          ${(INSTR_MAP[s.instruments[0]]?.wing_choices || [200]).map(w =>
+            `<option value="${w}"${w === (INSTR_MAP[s.instruments[0]]?.default_wing||200) ? ' selected':''}>${w}</option>`
+          ).join("")}
+        </select>
+      </div>` : `<input type="hidden" id="wing_${s.key}" value="0">`;
+
+    return `
+    <div class="strat-card" id="card_${s.key}">
+      <div class="strat-top">
+        <div class="strat-info">
+          <div class="strat-name">
+            ${s.display_name}
+            <span class="badge ${badgeCls}">${s.badge}</span>
+          </div>
+          <div class="strat-meta">
+            <span>⏰ Entry ${s.entry_time} · Exit ${s.exit_time}</span>
+            <span>📋 ${s.instruments.join(', ')}</span>
+            <span style="color:#6e7681">${s.short_desc}</span>
+          </div>
+        </div>
+        <button class="deploy-toggle" id="btn_${s.key}" onclick="toggleForm('${s.key}')">Deploy</button>
+      </div>
+      <div class="deploy-form" id="form_${s.key}">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Instrument</label>
+            <select id="instr_${s.key}" onchange="onInstrChange('${s.key}')">${instrOptions}</select>
+          </div>
+          <div class="form-group">
+            <label>Lots</label>
+            <input type="number" id="lots_${s.key}" value="1" min="1" max="20">
+          </div>
+          <div id="wingWrap_${s.key}">${wingRow}</div>
+          <div style="display:flex;align-items:flex-end;gap:10px;">
+            <button class="btn-deploy" id="depBtn_${s.key}" onclick="deployStrat('${s.key}')">⚡ Deploy Now</button>
+            <span class="deploy-msg" id="msg_${s.key}"></span>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function toggleForm(key) {
+  const form = document.getElementById(`form_${key}`);
+  const btn  = document.getElementById(`btn_${key}`);
+  const open = form.classList.toggle("open");
+  btn.textContent = open ? "Cancel" : "Deploy";
+  btn.classList.toggle("open", open);
+}
+
+function onInstrChange(key) {
+  const sym  = document.getElementById(`instr_${key}`).value;
+  const ic   = INSTR_MAP[sym];
+  const strat = STRAT_MAP[key];
+  if (!ic || !strat.has_wing) return;
+  const wrap = document.getElementById(`wingWrap_${key}`);
+  const opts = ic.wing_choices.map(w =>
+    `<option value="${w}"${w === ic.default_wing ? ' selected':''}>${w}</option>`
+  ).join("");
+  wrap.innerHTML = `<div class="form-group"><label>Wing (pts)</label><select id="wing_${key}">${opts}</select></div>`;
+}
+
+async function deployStrat(key) {
+  const instr    = document.getElementById(`instr_${key}`).value;
+  const lots     = parseInt(document.getElementById(`lots_${key}`).value) || 1;
+  const wingEl   = document.getElementById(`wing_${key}`);
+  const wing     = wingEl ? parseInt(wingEl.value) || 0 : 0;
+  const btn      = document.getElementById(`depBtn_${key}`);
+  const msg      = document.getElementById(`msg_${key}`);
+
+  btn.disabled = true;
+  msg.textContent = "Queuing…";
+  msg.className = "deploy-msg";
+
+  try {
+    const r = await fetch("/api/deploy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strategy_key: key, instrument: instr, lots, wing_width: wing, broker: "zerodha" })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      msg.textContent = `✓ Queued (ID ${d.deployment_id})`;
+      msg.className = "deploy-msg ok";
+      setTimeout(() => { toggleForm(key); msg.textContent = ""; btn.disabled = false; loadDeployments(); }, 2000);
+    } else {
+      msg.textContent = "✗ " + (d.error || "Failed");
+      msg.className = "deploy-msg err";
+      btn.disabled = false;
+    }
+  } catch(e) {
+    msg.textContent = "✗ Network error";
+    msg.className = "deploy-msg err";
+    btn.disabled = false;
+  }
+}
+
+// ── Deployments (live + history) ─────────────────────────────────────────────
 let _timer = null;
 
-async function load() {
+async function loadDeployments() {
   try {
     const r    = await fetch("/api/deployments");
     const data = await r.json();
     const deps = Array.isArray(data) ? data : (data.deployments || []);
     const live = deps.filter(d => d.status === "ACTIVE" || d.status === "PENDING");
 
-    // ── Live banner ────────────────────────────────────────────────────
+    // Live banner
     const banner = document.getElementById("liveBanner");
     if (live.length) {
       banner.classList.add("visible");
       document.getElementById("liveList").innerHTML = live.map(d => {
         const isPending = d.status === "PENDING";
         const pnlHtml = d.pnl_inr != null
-          ? `<span style="font-size:14px;font-weight:700;color:${d.pnl_inr>=0?'#3fb950':'#f85149'}">${d.pnl_inr>=0?'+':''}₹${Math.abs(d.pnl_inr).toLocaleString("en-IN")}</span>`
+          ? `<span style="font-weight:700;color:${d.pnl_inr>=0?'#3fb950':'#f85149'}">${d.pnl_inr>=0?'+':''}₹${Math.abs(d.pnl_inr).toLocaleString("en-IN")}</span>`
           : "";
         const statusHtml = isPending
           ? `<span style="color:#e3b341">⏳ PENDING — waiting for entry time</span>`
           : `<span style="color:#3fb950">● ACTIVE</span>`;
         const btn = isPending
           ? `<button class="btn-cancel-big" onclick="cancelDep(${d.id})">✕ Cancel</button>`
-          : `<button class="btn-exit-big"   onclick="forceExit(${d.id})">⚡ Exit Positions</button>`;
+          : `<button class="btn-exit-big" onclick="forceExit(${d.id})">⚡ Exit Positions</button>`;
         return `<div class="live-dep">
           <div class="live-dep-info">
             <div class="live-dep-name">${d.strategy_key} · ${d.instrument} · ${d.lots} lot${d.lots>1?'s':''}</div>
-            <div class="live-dep-meta">${statusHtml} &nbsp;·&nbsp; ${d.created_ist||""} ${pnlHtml}</div>
+            <div class="live-dep-meta">${statusHtml}&nbsp;&nbsp;${d.created_ist||""} &nbsp;${pnlHtml}</div>
           </div>
           ${btn}
         </div>`;
@@ -173,33 +328,35 @@ async function load() {
       banner.classList.remove("visible");
     }
 
-    // ── History table ──────────────────────────────────────────────────
+    // History table
     const tbody = document.getElementById("depBody");
+    const SC = { ACTIVE:"s-active", PENDING:"s-pending", CLOSED:"s-closed", FAILED:"s-failed", CANCELLED:"s-cancelled", EXITED:"s-closed" };
     if (!deps.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No deployments yet. Go to Backtest → Deploy.</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No deployments yet.</td></tr>';
     } else {
-      const _sm = { ACTIVE:"badge-active", EXITED:"badge-exited", CLOSED:"badge-closed", PENDING:"badge-pending", FAILED:"badge-failed", CANCELLED:"badge-cancelled" };
       tbody.innerHTML = deps.map(d => {
-        const pnlCls = (d.pnl_inr||0) >= 0 ? "pnl-pos" : "pnl-neg";
-        const pnl    = d.pnl_inr != null ? (d.pnl_inr>=0?"+":"")+"₹"+Math.abs(d.pnl_inr).toLocaleString("en-IN") : "—";
-        const err    = d.error
-          ? `<span style="color:#f85149;font-size:11px;" title="${(d.error||"").replace(/"/g,'&quot;')}">${d.error.length>60?d.error.slice(0,60)+"…":d.error}</span>`
+        const pnl = d.pnl_inr != null
+          ? `<span class="${d.pnl_inr>=0?'pnl-pos':'pnl-neg'}">${d.pnl_inr>=0?'+':''}₹${Math.abs(d.pnl_inr).toLocaleString("en-IN")}</span>`
           : `<span style="color:#484f58">—</span>`;
+        const note = d.error
+          ? `<span style="color:#f85149;font-size:10px;" title="${(d.error||'').replace(/"/g,'&quot;')}">${d.error.length>55?d.error.slice(0,55)+'…':d.error}</span>`
+          : (d.exit_reason ? `<span style="color:#6e7681;font-size:11px;">${d.exit_reason}</span>` : `<span style="color:#484f58">—</span>`);
         return `<tr>
-          <td>${d.id}</td><td>${d.strategy_key||"—"}</td>
-          <td>${d.instrument||"—"} · ${d.lots}L</td>
-          <td>${d.created_ist||"—"}</td>
-          <td><span class="badge ${_sm[d.status]||'badge-pending'}">${d.status}</span></td>
-          <td class="${pnlCls}">${pnl}</td><td>${err}</td>
+          <td style="color:#484f58">${d.id}</td>
+          <td style="font-weight:600;color:#f0f6fc">${d.strategy_key||"—"}</td>
+          <td>${d.instrument||"—"} <span style="color:#484f58">×${d.lots}L</span></td>
+          <td style="color:#8b949e">${d.created_ist||"—"}</td>
+          <td><span class="status-badge ${SC[d.status]||'s-pending'}">${d.status}</span></td>
+          <td>${pnl}</td>
+          <td>${note}</td>
         </tr>`;
       }).join("");
     }
 
-    // Auto-refresh while live deployments exist
     clearTimeout(_timer);
     if (live.length) {
-      document.getElementById("refreshNote").textContent = "Auto-refreshing every 15s";
-      _timer = setTimeout(load, 15000);
+      document.getElementById("refreshNote").textContent = "auto-refreshing every 15s";
+      _timer = setTimeout(loadDeployments, 15000);
     } else {
       document.getElementById("refreshNote").textContent = "";
     }
@@ -210,20 +367,21 @@ async function load() {
 }
 
 async function forceExit(id) {
-  if (!confirm("Exit ALL positions for this deployment NOW?\nLimit orders will be placed immediately.")) return;
+  if (!confirm("Exit ALL positions for this deployment NOW?")) return;
   const r = await fetch(`/api/deployments/${id}/exit`, { method: "POST" });
   const d = await r.json();
   if (d.error) alert("Exit failed: " + d.error);
-  load();
+  loadDeployments();
 }
 
 async function cancelDep(id) {
   if (!confirm("Cancel this pending deployment?")) return;
   await fetch(`/api/deployments/${id}`, { method: "DELETE" });
-  load();
+  loadDeployments();
 }
 
-load();
+buildStratCards();
+loadDeployments();
 </script>
 </body>
 </html>
