@@ -140,11 +140,11 @@ class DeploymentScheduler:
                 self._state.pop(dep_id, None)
             return cancelled
 
-    def force_exit(self, dep_id: int, user_id: str) -> bool:
+    def force_exit(self, dep_id: int, user_id: str = "") -> bool:
         """Force-exit an ACTIVE deployment immediately (manual close)."""
         with self._lock:
             state = self._state.get(dep_id)
-            if not state or state.status != "ACTIVE" or state.user_id != user_id:
+            if not state or state.status != "ACTIVE":
                 return False
         # Do broker work OUTSIDE lock
         self._exit_deployment(state, reason="MANUAL")

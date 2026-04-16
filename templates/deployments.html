@@ -87,78 +87,138 @@ tr:hover td { background: #1c2128; }
   <a href="/users"       class="sidebar-item"><span class="sidebar-icon">👥</span> Users</a>
 </nav>
 
-<div class="main">
-  <div class="page-title">Deployed Strategies</div>
-  <div class="page-sub">Monitor live deployments and review historical exits.</div>
+<style>
+.live-banner { background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.3); border-radius: 10px; padding: 16px 20px; margin-bottom: 22px; display: none; }
+.live-banner.visible { display: block; }
+.live-banner-title { font-size: 12px; font-weight: 700; color: #3fb950; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.live-dep { display: flex; align-items: center; gap: 16px; background: #0d1117; border: 1px solid rgba(63,185,80,0.15); border-radius: 8px; padding: 14px 18px; margin-bottom: 8px; }
+.live-dep:last-child { margin-bottom: 0; }
+.live-dep-info { flex: 1; }
+.live-dep-name { font-size: 15px; font-weight: 700; color: #f0f6fc; }
+.live-dep-meta { font-size: 11px; color: #8b949e; margin-top: 4px; }
+.btn-exit-big { background: #da3633; border: none; color: #fff; padding: 11px 24px; border-radius: 7px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.btn-exit-big:hover { background: #b91c1a; }
+.btn-cancel-big { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 11px 20px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.btn-cancel-big:hover { border-color: #8b949e; }
+.pulse { display: inline-block; width: 8px; height: 8px; background: #3fb950; border-radius: 50%; animation: pulse 1.5s infinite; flex-shrink: 0; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+</style>
 
+<div class="main">
+  <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;">
+    Deployed Strategies
+    <span id="refreshNote" style="font-size:11px;color:#484f58;font-weight:400;"></span>
+  </div>
+  <div class="page-sub">Monitor live deployments and exit positions manually.</div>
+
+  <!-- ── Live / Pending deployments ── -->
+  <div class="live-banner" id="liveBanner">
+    <div class="live-banner-title"><span class="pulse"></span> Live Deployments — Exit anytime below</div>
+    <div id="liveList"></div>
+  </div>
+
+  <!-- ── History table ── -->
   <div class="card">
     <div class="card-header">
-      <span class="card-title">Active &amp; Recent Deployments</span>
+      <span class="card-title">All Deployments</span>
       <button class="refresh-btn" onclick="load()">↻ Refresh</button>
     </div>
     <table>
       <thead>
         <tr>
           <th>#</th><th>Strategy</th><th>Instrument</th><th>Deployed At</th>
-          <th>Status</th><th>Entry</th><th>P&amp;L ₹</th><th>Error / Notes</th><th>Actions</th>
+          <th>Status</th><th>P&amp;L ₹</th><th>Error / Notes</th>
         </tr>
       </thead>
-      <tbody id="depBody"><tr class="empty-row"><td colspan="8">Loading…</td></tr></tbody>
+      <tbody id="depBody"><tr class="empty-row"><td colspan="7">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
 </div>
 
 <script>
+let _timer = null;
+
 async function load() {
-  const tbody = document.getElementById("depBody");
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="8">Loading…</td></tr>';
   try {
-    const r = await fetch("/api/deployments");
+    const r    = await fetch("/api/deployments");
     const data = await r.json();
     const deps = Array.isArray(data) ? data : (data.deployments || []);
-    if (!deps.length) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No deployments yet. Deploy a strategy from the Backtest page.</td></tr>';
-      return;
+    const live = deps.filter(d => d.status === "ACTIVE" || d.status === "PENDING");
+
+    // ── Live banner ────────────────────────────────────────────────────
+    const banner = document.getElementById("liveBanner");
+    if (live.length) {
+      banner.classList.add("visible");
+      document.getElementById("liveList").innerHTML = live.map(d => {
+        const isPending = d.status === "PENDING";
+        const pnlHtml = d.pnl_inr != null
+          ? `<span style="font-size:14px;font-weight:700;color:${d.pnl_inr>=0?'#3fb950':'#f85149'}">${d.pnl_inr>=0?'+':''}₹${Math.abs(d.pnl_inr).toLocaleString("en-IN")}</span>`
+          : "";
+        const statusHtml = isPending
+          ? `<span style="color:#e3b341">⏳ PENDING — waiting for entry time</span>`
+          : `<span style="color:#3fb950">● ACTIVE</span>`;
+        const btn = isPending
+          ? `<button class="btn-cancel-big" onclick="cancelDep(${d.id})">✕ Cancel</button>`
+          : `<button class="btn-exit-big"   onclick="forceExit(${d.id})">⚡ Exit Positions</button>`;
+        return `<div class="live-dep">
+          <div class="live-dep-info">
+            <div class="live-dep-name">${d.strategy_key} · ${d.instrument} · ${d.lots} lot${d.lots>1?'s':''}</div>
+            <div class="live-dep-meta">${statusHtml} &nbsp;·&nbsp; ${d.created_ist||""} ${pnlHtml}</div>
+          </div>
+          ${btn}
+        </div>`;
+      }).join("");
+    } else {
+      banner.classList.remove("visible");
     }
-    tbody.innerHTML = deps.map(d => {
-      const _statusMap = { ACTIVE:"badge-active", EXITED:"badge-exited", CLOSED:"badge-closed", PENDING:"badge-pending", FAILED:"badge-failed", CANCELLED:"badge-cancelled" };
-      const statusCls = _statusMap[d.status] || "badge-pending";
-      const pnlCls    = (d.pnl_inr || 0) >= 0 ? "pnl-pos" : "pnl-neg";
-      const pnl       = d.pnl_inr != null ? (d.pnl_inr >= 0 ? "+" : "") + "₹" + Math.abs(d.pnl_inr).toLocaleString("en-IN") : "—";
-      const actions   = d.status === "ACTIVE"
-        ? `<button class="btn-exit"   onclick="forceExit(${d.id})">⚡ Exit</button>`
-        : d.status === "PENDING"
-        ? `<button class="btn-cancel" onclick="cancelDep(${d.id})">✕ Cancel</button>`
-        : "—";
-      const errorCell = d.error
-        ? `<span style="color:#f85149;font-size:11px;" title="${(d.error||"").replace(/"/g,'&quot;')}">${d.error.length > 50 ? d.error.slice(0,50) + "…" : d.error}</span>`
-        : `<span style="color:#484f58">—</span>`;
-      return `<tr>
-        <td>${d.id}</td>
-        <td>${d.strategy_key || "—"}</td>
-        <td>${d.instrument || "—"}</td>
-        <td>${d.created_ist || (d.deployed_at ? new Date(d.deployed_at).toLocaleString("en-IN", {dateStyle:"medium",timeStyle:"short"}) : "—")}</td>
-        <td><span class="badge ${statusCls}">${d.status}</span></td>
-        <td>${d.entry_premium != null ? d.entry_premium : "—"}</td>
-        <td class="${pnlCls}">${pnl}</td>
-        <td>${errorCell}</td>
-        <td>${actions}</td>
-      </tr>`;
-    }).join("");
+
+    // ── History table ──────────────────────────────────────────────────
+    const tbody = document.getElementById("depBody");
+    if (!deps.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No deployments yet. Go to Backtest → Deploy.</td></tr>';
+    } else {
+      const _sm = { ACTIVE:"badge-active", EXITED:"badge-exited", CLOSED:"badge-closed", PENDING:"badge-pending", FAILED:"badge-failed", CANCELLED:"badge-cancelled" };
+      tbody.innerHTML = deps.map(d => {
+        const pnlCls = (d.pnl_inr||0) >= 0 ? "pnl-pos" : "pnl-neg";
+        const pnl    = d.pnl_inr != null ? (d.pnl_inr>=0?"+":"")+"₹"+Math.abs(d.pnl_inr).toLocaleString("en-IN") : "—";
+        const err    = d.error
+          ? `<span style="color:#f85149;font-size:11px;" title="${(d.error||"").replace(/"/g,'&quot;')}">${d.error.length>60?d.error.slice(0,60)+"…":d.error}</span>`
+          : `<span style="color:#484f58">—</span>`;
+        return `<tr>
+          <td>${d.id}</td><td>${d.strategy_key||"—"}</td>
+          <td>${d.instrument||"—"} · ${d.lots}L</td>
+          <td>${d.created_ist||"—"}</td>
+          <td><span class="badge ${_sm[d.status]||'badge-pending'}">${d.status}</span></td>
+          <td class="${pnlCls}">${pnl}</td><td>${err}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    // Auto-refresh while live deployments exist
+    clearTimeout(_timer);
+    if (live.length) {
+      document.getElementById("refreshNote").textContent = "Auto-refreshing every 15s";
+      _timer = setTimeout(load, 15000);
+    } else {
+      document.getElementById("refreshNote").textContent = "";
+    }
   } catch(e) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="8">Error loading deployments: ${e.message}</td></tr>`;
+    document.getElementById("depBody").innerHTML =
+      `<tr class="empty-row"><td colspan="7">Error: ${e.message}</td></tr>`;
   }
 }
 
 async function forceExit(id) {
-  if (!confirm("Force-exit this deployment now?")) return;
-  await fetch(`/api/deployments/${id}/exit`, { method: "POST" });
+  if (!confirm("Exit ALL positions for this deployment NOW?\nLimit orders will be placed immediately.")) return;
+  const r = await fetch(`/api/deployments/${id}/exit`, { method: "POST" });
+  const d = await r.json();
+  if (d.error) alert("Exit failed: " + d.error);
   load();
 }
 
 async function cancelDep(id) {
-  if (!confirm("Cancel this deployment?")) return;
+  if (!confirm("Cancel this pending deployment?")) return;
   await fetch(`/api/deployments/${id}`, { method: "DELETE" });
   load();
 }
