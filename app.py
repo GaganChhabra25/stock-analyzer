@@ -8,11 +8,20 @@ Run with gunicorn in production:
 import os
 import sys
 import json
+import socket
 import threading
 import subprocess
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
+
+# Force all outbound connections to use IPv4.
+# Zerodha Kite API rejects IPv6 unless explicitly whitelisted;
+# Contabo servers default to IPv6 which causes "IP not allowed" errors.
+_orig_getaddrinfo = socket.getaddrinfo
+def _force_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+    return _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+socket.getaddrinfo = _force_ipv4
 
 # Load .env for local development (no-op if file absent or vars already set)
 from dotenv import load_dotenv
