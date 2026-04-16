@@ -265,23 +265,28 @@ tr.detail-row td { background: #0d1117; padding: 0; border-top: none; }
 
             <!-- Direction + 2PM rescore -->
             <td>
-              {% if p.direction == 'UP' %}
-                <span class="dir dir-up">▲ UP</span>
-              {% else %}
-                <span class="dir dir-down">▼ DOWN</span>
-              {% endif %}
               {% if rescore_flipped %}
-                <div class="rescore-wrap">
-                  <span class="rescore-flip">
-                    ↺ 2PM:
-                    {% if p.rescore_dir == 'UP' %}▲{% else %}▼{% endif %}
-                    {{ p.rescore_dir }}
+                {# Direction flipped — show old strikethrough + new direction #}
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <span style="text-decoration:line-through; opacity:0.4; font-size:11px;">
+                    {% if p.direction == 'UP' %}▲ UP{% else %}▼ DOWN{% endif %}
                   </span>
+                  <span class="dir {% if p.rescore_dir == 'UP' %}dir-up{% else %}dir-down{% endif %}">
+                    {% if p.rescore_dir == 'UP' %}▲{% else %}▼{% endif %} {{ p.rescore_dir }}
+                  </span>
+                  <span class="rescore-flip">↺ 2PM flipped</span>
                 </div>
-              {% elif rescore_confirmed %}
-                <div class="rescore-wrap">
-                  <span class="rescore-same">↺ 2PM confirmed</span>
-                </div>
+              {% else %}
+                {% if p.direction == 'UP' %}
+                  <span class="dir dir-up">▲ UP</span>
+                {% else %}
+                  <span class="dir dir-down">▼ DOWN</span>
+                {% endif %}
+                {% if rescore_confirmed %}
+                  <div class="rescore-wrap">
+                    <span class="rescore-same">↺ 2PM ✓</span>
+                  </div>
+                {% endif %}
               {% endif %}
             </td>
 
@@ -298,16 +303,26 @@ tr.detail-row td { background: #0d1117; padding: 0; border-top: none; }
               {% endif %}
             </td>
 
-            <!-- Probability + agreement -->
+            <!-- Probability + agreement + 2PM rescore prob -->
             <td>
+              {# Use rescore_prob as display value if available (more current) #}
+              {% set display_prob = p.rescore_prob if p.rescore_prob else p.probability %}
+              {% set display_dir  = p.rescore_dir  if p.rescore_dir  else p.direction %}
               <div class="prob-wrap">
                 <div class="prob-bar" title="{% if p.agreement_pct %}{{ p.agreement_pct }}% signals aligned{% endif %}">
-                  <div class="prob-fill {% if p.direction == 'DOWN' %}prob-down{% else %}prob-up{% endif %}"
-                       style="width:{{ p.probability }}%"></div>
+                  <div class="prob-fill {% if display_dir == 'DOWN' %}prob-down{% else %}prob-up{% endif %}"
+                       style="width:{{ display_prob }}%"></div>
                 </div>
                 <div>
-                  <div class="prob-num">{{ p.probability }}%</div>
-                  {% if p.agreement_pct %}
+                  <div class="prob-num">
+                    {{ "%.1f"|format(display_prob|float) }}%
+                    {% if p.rescore_prob and p.rescore_prob != p.probability %}
+                      <span style="font-size:9px; color:#8b949e; font-weight:400;">↺</span>
+                    {% endif %}
+                  </div>
+                  {% if p.rescore_prob and p.rescore_prob != p.probability %}
+                    <div class="prob-agree">was {{ "%.1f"|format(p.probability|float) }}%</div>
+                  {% elif p.agreement_pct %}
                     <div class="prob-agree">{{ p.agreement_pct | int }}% aligned</div>
                   {% endif %}
                 </div>
