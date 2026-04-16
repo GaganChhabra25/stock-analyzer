@@ -44,9 +44,12 @@ td { padding: 11px 16px; border-bottom: 1px solid #161b22; vertical-align: middl
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: #1c2128; }
 .badge { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 10px; font-weight: 700; }
-.badge-active   { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
-.badge-exited   { background: rgba(248,81,73,0.1);   color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
-.badge-pending  { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.badge-active    { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.badge-exited    { background: rgba(248,81,73,0.1);   color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+.badge-pending   { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.badge-failed    { background: rgba(248,81,73,0.15);  color: #f85149; border: 1px solid rgba(248,81,73,0.4); }
+.badge-cancelled { background: rgba(139,148,158,0.15); color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
+.badge-closed    { background: rgba(139,148,158,0.15); color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
 .pnl-pos { color: #3fb950; font-weight: 700; }
 .pnl-neg { color: #f85149; font-weight: 700; }
 .btn-exit { background: rgba(248,81,73,0.15); border: 1px solid rgba(248,81,73,0.4); color: #f85149; padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; font-weight: 600; }
@@ -97,7 +100,7 @@ tr:hover td { background: #1c2128; }
       <thead>
         <tr>
           <th>#</th><th>Strategy</th><th>Instrument</th><th>Deployed At</th>
-          <th>Status</th><th>Entry</th><th>P&amp;L ₹</th><th>Actions</th>
+          <th>Status</th><th>Entry</th><th>P&amp;L ₹</th><th>Error / Notes</th><th>Actions</th>
         </tr>
       </thead>
       <tbody id="depBody"><tr class="empty-row"><td colspan="8">Loading…</td></tr></tbody>
@@ -113,13 +116,14 @@ async function load() {
   try {
     const r = await fetch("/api/deployments");
     const data = await r.json();
-    const deps = data.deployments || [];
+    const deps = Array.isArray(data) ? data : (data.deployments || []);
     if (!deps.length) {
       tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No deployments yet. Deploy a strategy from the Backtest page.</td></tr>';
       return;
     }
     tbody.innerHTML = deps.map(d => {
-      const statusCls = d.status === "ACTIVE" ? "badge-active" : d.status === "EXITED" ? "badge-exited" : "badge-pending";
+      const _statusMap = { ACTIVE:"badge-active", EXITED:"badge-exited", CLOSED:"badge-closed", PENDING:"badge-pending", FAILED:"badge-failed", CANCELLED:"badge-cancelled" };
+      const statusCls = _statusMap[d.status] || "badge-pending";
       const pnlCls    = (d.pnl_inr || 0) >= 0 ? "pnl-pos" : "pnl-neg";
       const pnl       = d.pnl_inr != null ? (d.pnl_inr >= 0 ? "+" : "") + "₹" + Math.abs(d.pnl_inr).toLocaleString("en-IN") : "—";
       const actions   = d.status === "ACTIVE"
@@ -127,14 +131,18 @@ async function load() {
         : d.status === "PENDING"
         ? `<button class="btn-cancel" onclick="cancelDep(${d.id})">✕ Cancel</button>`
         : "—";
+      const errorCell = d.error
+        ? `<span style="color:#f85149;font-size:11px;" title="${(d.error||"").replace(/"/g,'&quot;')}">${d.error.length > 50 ? d.error.slice(0,50) + "…" : d.error}</span>`
+        : `<span style="color:#484f58">—</span>`;
       return `<tr>
         <td>${d.id}</td>
         <td>${d.strategy_key || "—"}</td>
         <td>${d.instrument || "—"}</td>
-        <td>${d.deployed_at ? new Date(d.deployed_at).toLocaleString("en-IN", {dateStyle:"medium",timeStyle:"short"}) : "—"}</td>
+        <td>${d.created_ist || (d.deployed_at ? new Date(d.deployed_at).toLocaleString("en-IN", {dateStyle:"medium",timeStyle:"short"}) : "—")}</td>
         <td><span class="badge ${statusCls}">${d.status}</span></td>
         <td>${d.entry_premium != null ? d.entry_premium : "—"}</td>
         <td class="${pnlCls}">${pnl}</td>
+        <td>${errorCell}</td>
         <td>${actions}</td>
       </tr>`;
     }).join("");

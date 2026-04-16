@@ -193,7 +193,19 @@ class DeploymentScheduler:
             return
 
         entry_h, entry_m = map(int, strat.entry_time.split(":"))
+        exit_h,  exit_m  = map(int, strat.exit_time.split(":"))
         entry_time = dtime(entry_h, entry_m)
+        exit_time  = dtime(exit_h,  exit_m)
+
+        # If we're already past exit time, it's too late to enter — fail fast
+        if now_time >= exit_time:
+            msg = (f"Deployment created after exit window "
+                   f"({strat.exit_time} IST). Cannot enter {state.strategy_key}.")
+            logger.warning("Failing dep %d: %s", state.dep_id, msg)
+            dep_db.fail_deployment(state.dep_id, msg)
+            with self._lock:
+                self._state.pop(state.dep_id, None)
+            return
 
         if now_time >= entry_time:
             logger.info("Entering deployment %d (%s %s)", state.dep_id, state.strategy_key, state.instrument)

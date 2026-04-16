@@ -728,11 +728,16 @@ def api_backtest_dates():
         with _get_conn() as conn:
             with conn.cursor() as cur:
                 if dte_max is not None:
+                    # Group by trade date and check the NEAREST expiry —
+                    # this correctly includes dates even if far-dated expiry
+                    # rows were also collected alongside near-dated ones.
                     cur.execute("""
-                        SELECT DISTINCT ts::date AS d
+                        SELECT ts::date AS d
                         FROM option_chain
                         WHERE instrument = %s
-                          AND (expiry - ts::date) <= %s
+                          AND expiry >= ts::date
+                        GROUP BY ts::date
+                        HAVING MIN(expiry - ts::date) <= %s
                         ORDER BY d
                     """, (instrument, dte_max))
                 else:
