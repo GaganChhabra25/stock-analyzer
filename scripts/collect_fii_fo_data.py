@@ -112,6 +112,11 @@ def _fo_csv_url(d: date) -> str:
 def _download_fo_csv(d: date, session: requests.Session) -> Optional[pd.DataFrame]:
     """
     Download and parse participant OI CSV for date d.
+    NSE CSV structure:
+      Row 0: Title  ("Participant wise Open Interest ... as on Apr 15, 2026")
+      Row 1: Headers (Client Type, Future Index Long, Future Index Short, ...)
+      Row 2+: Data   (Client, DII, FII, Pro, TOTAL)
+
     Returns DataFrame with columns normalised to lowercase stripped names.
     Returns None if not available (holiday / not yet published).
     """
@@ -127,8 +132,12 @@ def _download_fo_csv(d: date, session: requests.Session) -> Optional[pd.DataFram
             return None
 
         content = resp.content.decode("utf-8", errors="replace")
-        df = pd.read_csv(io.StringIO(content))
-        df.columns = [c.strip().lower() for c in df.columns]
+        # Skip row 0 (title with date); row 1 is the actual header
+        df = pd.read_csv(io.StringIO(content), skiprows=1)
+        df.columns = [c.strip().lower().replace("  ", " ") for c in df.columns]
+        # Strip whitespace from string columns
+        for col in df.select_dtypes(include="object").columns:
+            df[col] = df[col].astype(str).str.strip()
         logger.info("Downloaded %d rows, columns: %s", len(df), list(df.columns))
         return df
     except Exception as exc:
@@ -157,58 +166,70 @@ def _find_col(df: pd.DataFrame, *keywords) -> Optional[str]:
 def _parse_fii_row(df: pd.DataFrame) -> Optional[dict]:
     """
     Extract FII index futures + options data from the participant OI DataFrame.
-    NSE CSV column names are inconsistent across years — we use fuzzy matching.
 
-    Expected row: client type = 'FII' or 'FPI'
+    NSE CSV columns (after skiprows=1 + lowercase):
+      client type | future index long | future index short |
+      future stock long | future stock short |
+      option index call long | option index call short |
+      option index put long  | option index put short  | ...
+
+    Expected FII row: 'client type' column == 'FII' or 'FII/FPI'
     """
-    # Find the client-type column
-    ct_col = _find_col(df, "client") or _find_col(df, "type")
-    if ct_col is None:
-        logger.warning("Cannot find 'client type' column. Columns: %s", list(df.columns))
-        return None
+    # Find the client-type column (first column)
+    ct_col = _find_col(df, "client") or df.columns[0]
 
-    # Find FII row (may be labelled FII or FPI)
-    mask = df[ct_col].astype(str).str.upper().str.contains(r"FII|FPI", regex=True)
+    # Find FII row
+    mask = df[ct_col].astype(str).str.upper().str.contains(r"^FII", regex=True)
     fii_rows = df[mask]
     if fii_rows.empty:
-        logger.warning("No FII/FPI row found in CSV")
+        logger.warning("No FII row found. Rows: %s", df[ct_col].tolist())
         return None
     fii = fii_rows.iloc[0]
+    logger.debug("FII raw row: %s", fii.to_dict())
 
     def _get(*keywords) -> Optional[int]:
+        """Fuzzy-match column name containing all keywords."""
         col = _find_col(df, *keywords)
-        return _safe_int(fii[col]) if col else None
+        if col:
+            return _safe_int(fii[col])
+        # Position-based fallback using known NSE column order
+        return None
 
-    # Index futures
+    # ── Index futures (cols 1 and 2 in NSE CSV) ──────────────────────────
     fut_long  = _get("future", "index", "long")
     fut_short = _get("future", "index", "short")
 
-    # Index options
-    call_long  = _get("option", "index", "call", "long")
-    call_short = _get("option", "index", "call", "short")
-    put_long   = _get("option", "index", "put", "long")
-    put_short  = _get("option", "index", "put", "short")
+    # If fuzzy match failed, try positional (NSE column order is stable)
+    if fut_long is None and len(df.columns) > 2:
+        fut_long  = _safe_int(fii.iloc[1])
+        fut_short = _safe_int(fii.iloc[2])
+        logger.debug("Used positional parse: fut_long=%s fut_short=%s",
+                     fut_long, fut_short)
 
     if fut_long is None and fut_short is None:
-        logger.warning("Could not parse futures columns. Raw FII row: %s", fii.to_dict())
+        logger.warning("Could not parse futures columns. Columns: %s", list(df.columns))
         return None
 
-    net_fut = (fut_long or 0) - (fut_short or 0)
+    # ── Index options (cols 5,6 = call long/short; cols 7,8 = put long/short) ─
+    call_long  = _get("option", "index", "call", "long")  or _safe_int(fii.iloc[5] if len(fii) > 5 else None)
+    call_short = _get("option", "index", "call", "short") or _safe_int(fii.iloc[6] if len(fii) > 6 else None)
+    put_long   = _get("option", "index", "put",  "long")  or _safe_int(fii.iloc[7] if len(fii) > 7 else None)
+    put_short  = _get("option", "index", "put",  "short") or _safe_int(fii.iloc[8] if len(fii) > 8 else None)
 
-    # Put/Call ratio for options (FII options positioning)
+    net_fut  = (fut_long or 0) - (fut_short or 0)
     pc_ratio = None
     if call_long and call_long > 0:
         pc_ratio = round((put_long or 0) / call_long, 3)
 
     result = {
-        "fut_long":  fut_long,
-        "fut_short": fut_short,
-        "net_fut":   net_fut,
-        "call_long": call_long,
+        "fut_long":   fut_long,
+        "fut_short":  fut_short,
+        "net_fut":    net_fut,
+        "call_long":  call_long,
         "call_short": call_short,
-        "put_long":  put_long,
-        "put_short": put_short,
-        "pc_ratio":  pc_ratio,
+        "put_long":   put_long,
+        "put_short":  put_short,
+        "pc_ratio":   pc_ratio,
     }
     logger.info(
         "FII F&O — Idx Fut Long: %s  Short: %s  Net: %+d  "
