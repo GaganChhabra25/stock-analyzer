@@ -55,6 +55,7 @@ except ImportError:
     sys.exit(1)
 
 from screener.db import _get_conn, is_available, init_schema
+from screener.telegram_notifier import send_fii_status, send_error, is_configured as tg_ok
 
 # ── NSE session ────────────────────────────────────────────────────────────────
 
@@ -220,7 +221,8 @@ def main():
     n = store_fii_rows(rows)
     logger.info("Stored %d new/updated row(s) in fii_derivative_stats", n)
 
-    # Show current DB state
+    # Fetch last 5 rows for display + Telegram
+    db_rows = []
     try:
         with _get_conn() as conn:
             if conn:
@@ -239,6 +241,18 @@ def main():
         print()
     except Exception:
         pass
+
+    # ── Telegram alert ────────────────────────────────────────────────────────
+    if tg_ok():
+        try:
+            send_fii_status(db_rows, n)
+            logger.info("Telegram FII alert sent.")
+        except Exception as exc:
+            logger.warning("Telegram FII alert failed: %s", exc)
+            try:
+                send_error("collect_fii_data.py", str(exc))
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

@@ -201,3 +201,96 @@ def send_error(context: str, error: str) -> bool:
         f"<b>Error:</b> <code>{error[:500]}</code>"
     )
     return _send(text)
+
+
+def send_fii_status(fii_rows: list, stored: int) -> bool:
+    """
+    Send FII data collection status alert (5 PM IST).
+
+    fii_rows: list of (trade_date, fii_net_fut, fii_net_opt) from DB
+    stored:   number of rows stored/updated this run
+    """
+    today_str = date.today().strftime("%d %b %Y")
+
+    if stored == 0 and not fii_rows:
+        text = (
+            f"⚠️ <b>FII Data — {today_str}</b>\n\n"
+            f"No data fetched from NSE. Market closed or data not published yet."
+        )
+        return _send(text)
+
+    lines = [f"<b>🏦 FII Flow Update — {today_str}</b>\n"]
+
+    def _cr(v) -> str:
+        try:
+            f = float(v)
+            sign = "+" if f >= 0 else ""
+            return f"{sign}{f:,.0f} Cr"
+        except Exception:
+            return "—"
+
+    def _sentiment(v) -> str:
+        try:
+            f = float(v)
+            if   f >  2000: return "🟢 Strong Buy"
+            elif f >   500: return "🟢 Buy"
+            elif f >  -500: return "⚪ Neutral"
+            elif f > -2000: return "🔴 Sell"
+            else:           return "🔴 Strong Sell"
+        except Exception:
+            return "—"
+
+    for row in fii_rows[:5]:
+        d, fii_net, dii_net = row
+        fii_s = _sentiment(fii_net)
+        lines.append(
+            f"  <b>{d}</b>  FII: {_cr(fii_net)} {fii_s}  |  DII: {_cr(dii_net)}"
+        )
+
+    # 5-day cumulative
+    if len(fii_rows) >= 2:
+        cum = sum(float(r[1] or 0) for r in fii_rows[:5])
+        lines.append(f"\n  5-day FII cumulative: <b>{_cr(cum)}</b>")
+        if cum > 0:
+            lines.append("  Trend: 🟢 Net Accumulation")
+        else:
+            lines.append("  Trend: 🔴 Net Distribution")
+
+    lines.append(f"\n<i>Stored {stored} row(s) · {today_str}</i>")
+    return _send("\n".join(lines))
+
+
+def send_outcomes_status(recorded: int, accuracy_rows: list) -> bool:
+    """
+    Send outcomes recording status alert (6:30 PM IST).
+
+    recorded:      number of outcomes recorded this run
+    accuracy_rows: result of get_accuracy_summary()
+    """
+    today_str = date.today().strftime("%d %b %Y")
+    lines = [f"<b>📋 Outcomes Recorder — {today_str}</b>\n"]
+
+    if recorded == 0:
+        lines.append("  No new expiries to record today.")
+    else:
+        lines.append(f"  ✅ Recorded <b>{recorded}</b> new outcome(s).")
+
+    if accuracy_rows:
+        lines.append("\n<b>Model Accuracy (running total):</b>")
+        for row in accuracy_rows:
+            inst  = row.get("instrument", "")
+            ptype = row.get("prediction_type", "")
+            wk    = row.get("week_num")
+            acc   = row.get("accuracy_pct") or 0
+            total = row.get("total_predictions", 0)
+            corr  = row.get("correct", 0)
+            wk_label = f"W{wk}" if wk else "Monthly"
+            icon = "✅" if float(acc) >= 55 else "⚠️"
+            lines.append(
+                f"  {icon} {inst} {wk_label}: <b>{acc}%</b>  ({corr}/{total})"
+            )
+    else:
+        lines.append("\n  <i>Accuracy data not yet available — need 4+ weeks of expiries.</i>")
+
+    lines.append(f"\n<i>{today_str}</i>")
+    return _send("\n".join(lines))

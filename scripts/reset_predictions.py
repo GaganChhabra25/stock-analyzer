@@ -31,8 +31,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from screener.db import _get_conn, is_available, init_schema, save_market_overview
+from screener.db import _get_conn, is_available, init_schema, save_market_overview, get_accuracy_summary
 from screener.market_overview import fetch_market_overview
+from screener.telegram_notifier import send_predictions, send_error, is_configured as tg_ok
 
 
 def clear_predictions() -> int:
@@ -112,6 +113,22 @@ def main():
     print()
     print("Done. Refresh the DB Insights page to see updated predictions.")
     print()
+
+    # ── Telegram alert ────────────────────────────────────────────────────────
+    if tg_ok():
+        print("Sending Telegram alert...")
+        try:
+            accuracy = get_accuracy_summary()
+            ok = send_predictions(overview, accuracy)
+            print(f"  Telegram: {'sent ✓' if ok else 'failed ✗'}")
+        except Exception as exc:
+            print(f"  Telegram error: {exc}")
+            try:
+                send_error("reset_predictions.py", str(exc))
+            except Exception:
+                pass
+    else:
+        print("  Telegram not configured — skipping alert.")
 
 
 def _print_signals(label: str, signals: dict):

@@ -49,7 +49,8 @@ logger = logging.getLogger(__name__)
 import warnings
 warnings.filterwarnings("ignore")
 
-from screener.db import _get_conn, is_available, init_schema
+from screener.db import _get_conn, is_available, init_schema, get_accuracy_summary
+from screener.telegram_notifier import send_outcomes_status, send_error, is_configured as tg_ok
 
 # ── Price fetchers ─────────────────────────────────────────────────────────────
 
@@ -309,8 +310,20 @@ def main():
     n = record_outcomes(args.lookback)
     logger.info("Recorded %d new outcome(s).", n)
 
-    if args.accuracy or True:   # always show accuracy
-        print_accuracy()
+    print_accuracy()
+
+    # ── Telegram alert ────────────────────────────────────────────────────────
+    if tg_ok():
+        try:
+            accuracy = get_accuracy_summary()
+            send_outcomes_status(n, accuracy)
+            logger.info("Telegram outcomes alert sent.")
+        except Exception as exc:
+            logger.warning("Telegram outcomes alert failed: %s", exc)
+            try:
+                send_error("record_outcomes.py", str(exc))
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
