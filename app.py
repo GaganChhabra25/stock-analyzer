@@ -458,9 +458,23 @@ def _get_insights() -> dict:
                     p.expiry_date,
                     p.direction,
                     p.probability,
+                    p.confidence,
+                    p.agreement_pct,
+                    p.rescore_dir,
+                    p.rescore_prob,
+                    p.rescored_at,
                     p.cmp,
                     p.run_date,
                     p.target_price,
+                    p.tech_signal,
+                    p.vix_signal,
+                    p.fii_signal,
+                    p.pcr_value,
+                    p.max_pain,
+                    p.atm_iv,
+                    p.hist_wr,
+                    p.put_oi_wall,
+                    p.call_oi_wall,
                     o.actual_direction,
                     o.actual_close,
                     o.actual_pct,
@@ -496,8 +510,10 @@ def _get_insights() -> dict:
 @app.route("/insights")
 @login_required
 def insights():
+    from datetime import date as _date
     data = _get_insights()
-    return render_template("insights.html", user=session["user"], data=data)
+    return render_template("insights.html", user=session["user"], data=data,
+                           today=_date.today())
 
 
 # ── Nifty Options Intelligence ───────────────────────────────────────────────

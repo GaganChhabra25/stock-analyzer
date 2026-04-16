@@ -46,7 +46,9 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead { background: #21262d; }
 th { padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
 td { padding: 10px 14px; border-top: 1px solid #21262d; white-space: nowrap; }
-tr:hover td { background: rgba(255,255,255,0.02); }
+tr.pred-row { cursor: pointer; transition: background 0.1s; }
+tr.pred-row:hover td { background: rgba(255,255,255,0.03); }
+tr.pred-row.expanded td { background: rgba(31,111,235,0.05); }
 
 /* Direction badge */
 .dir { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
@@ -54,17 +56,62 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .dir-down { background: rgba(248,81,73,0.15);  color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
 
 /* Result badge */
-.badge-ok  { background: rgba(63,185,80,0.15);  color: #3fb950;  border: 1px solid rgba(63,185,80,0.3);  padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
-.badge-err { background: rgba(248,81,73,0.15);  color: #f85149;  border: 1px solid rgba(248,81,73,0.3);  padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.badge-ok   { background: rgba(63,185,80,0.15);  color: #3fb950;  border: 1px solid rgba(63,185,80,0.3);  padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.badge-err  { background: rgba(248,81,73,0.15);  color: #f85149;  border: 1px solid rgba(248,81,73,0.3);  padding: 2px 9px; border-radius: 99px; font-size: 11px; font-weight: 700; }
 .badge-pend { background: rgba(139,148,158,0.1); color: #8b949e; border: 1px solid #30363d; padding: 2px 9px; border-radius: 99px; font-size: 11px; }
 
 /* Prob bar */
 .prob-wrap { display: flex; align-items: center; gap: 8px; }
-.prob-bar { flex: 1; min-width: 60px; height: 5px; background: #21262d; border-radius: 3px; overflow: hidden; }
+.prob-bar { flex: 1; min-width: 60px; height: 5px; background: #21262d; border-radius: 3px; overflow: hidden; position: relative; cursor: help; }
 .prob-fill { height: 100%; border-radius: 3px; }
 .prob-up   { background: #3fb950; }
 .prob-down { background: #f85149; }
 .prob-num  { font-size: 12px; font-weight: 700; color: #f0f6fc; min-width: 34px; }
+.prob-agree { font-size: 10px; color: #8b949e; margin-top: 2px; }
+
+/* Confidence badges */
+.conf { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.3px; }
+.conf-high { background: rgba(63,185,80,0.12); color: #3fb950; border: 1px solid rgba(63,185,80,0.25); }
+.conf-med  { background: rgba(227,179,65,0.12); color: #e3b341; border: 1px solid rgba(227,179,65,0.25); }
+.conf-low  { background: rgba(139,148,158,0.1); color: #8b949e; border: 1px solid #30363d; }
+
+/* Expiry date badges */
+.expiry-wrap { display: flex; flex-direction: column; gap: 3px; }
+.exp-today   { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; background: rgba(227,179,65,0.2); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); letter-spacing: 0.3px; }
+.exp-expired { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; background: rgba(139,148,158,0.1); color: #484f58; border: 1px solid #30363d; }
+
+/* Re-score indicator (2 PM flip) */
+.rescore-wrap { margin-top: 4px; }
+.rescore-flip { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.rescore-same { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: #484f58; padding: 2px 6px; }
+
+/* Expand/collapse indicator */
+.expand-icon { color: #484f58; font-size: 10px; transition: transform 0.2s; display: inline-block; }
+.expanded .expand-icon { transform: rotate(90deg); }
+
+/* Signal breakdown row */
+tr.detail-row { display: none; }
+tr.detail-row td { background: #0d1117; padding: 0; border-top: none; }
+.detail-inner { padding: 12px 20px 16px; border-bottom: 1px solid #21262d; }
+.detail-label { font-size: 10px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+.sig-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.sig-card { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 8px 12px; min-width: 130px; }
+.sig-name { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 5px; }
+.sig-bar-track { height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; margin-bottom: 4px; position: relative; }
+.sig-bar-mid   { position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: #30363d; }
+.sig-bar-fill  { height: 100%; border-radius: 2px; }
+.sig-bull-fill { background: #3fb950; }
+.sig-bear-fill { background: #f85149; }
+.sig-neut-fill { background: #8b949e; }
+.sig-val { font-size: 11px; font-weight: 700; }
+.sig-bull-txt { color: #3fb950; }
+.sig-bear-txt { color: #f85149; }
+.sig-neut-txt { color: #8b949e; }
+.sig-raw-card { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 8px 12px; min-width: 110px; }
+.sig-raw-name { font-size: 10px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+.sig-raw-val  { font-size: 12px; font-weight: 700; color: #f0f6fc; }
+.sig-raw-sub  { font-size: 10px; color: #484f58; margin-top: 2px; }
+.detail-rescore { margin-top: 10px; padding: 8px 10px; background: rgba(227,179,65,0.07); border: 1px solid rgba(227,179,65,0.2); border-radius: 6px; font-size: 11px; color: #e3b341; }
 
 /* Acc */
 .acc-good { background: #3fb950; } .acc-ok { background: #e3b341; } .acc-weak { background: #f85149; }
@@ -75,6 +122,8 @@ tr:hover td { background: rgba(255,255,255,0.02); }
 .empty-icon { font-size: 36px; margin-bottom: 10px; }
 .empty-msg { font-size: 13px; }
 .empty-sub { font-size: 11px; margin-top: 5px; }
+
+.hint { font-size: 10px; color: #484f58; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -144,21 +193,24 @@ tr:hover td { background: rgba(255,255,255,0.02); }
     </div>
   </div>
 
-  <!-- Predictions + Outcomes combined -->
+  <!-- Predictions table -->
   <div class="section">
     <div class="section-title">
       Predictions
       <span class="badge">{{ data.predictions | length }} entries · last 60 days + upcoming</span>
     </div>
+    <div class="hint" style="margin-bottom:10px;">Click any row to see signal breakdown</div>
     {% if data.predictions %}
     <div class="tbl-wrap">
       <table>
         <thead>
           <tr>
+            <th></th>
             <th>Instrument</th>
             <th>Type</th>
             <th>Expiry</th>
             <th>Direction</th>
+            <th>Confidence</th>
             <th>Probability</th>
             <th>CMP at Run</th>
             <th>Target</th>
@@ -170,37 +222,120 @@ tr:hover td { background: rgba(255,255,255,0.02); }
         </thead>
         <tbody>
           {% for p in data.predictions %}
-          <tr>
+          {% set rid = loop.index %}
+
+          {# ── Expiry status ── #}
+          {% set exp_str = p.expiry_date | string %}
+          {% set today_str = today | string %}
+          {% set is_today   = exp_str == today_str %}
+          {% set is_expired = exp_str < today_str %}
+
+          {# ── Re-score flipped? ── #}
+          {% set rescore_flipped = p.rescore_dir and p.rescore_dir != p.direction %}
+          {% set rescore_confirmed = p.rescore_dir and p.rescore_dir == p.direction %}
+
+          {# ── Signal bar helper values ── #}
+          {% set tech_v  = p.tech_signal  | float(0) %}
+          {% set vix_v   = p.vix_signal   | float(0) %}
+          {% set fii_v   = p.fii_signal   | float(0) %}
+
+          <tr class="pred-row" id="row-{{ rid }}" onclick="toggleDetail({{ rid }})">
+            <!-- Expand icon -->
+            <td style="width:24px; padding-right:0; color:#484f58; font-size:11px;">
+              <span class="expand-icon" id="icon-{{ rid }}">▶</span>
+            </td>
+
+            <!-- Instrument -->
             <td style="font-weight:700; color:#f0f6fc;">{{ p.instrument }}</td>
+
+            <!-- Type -->
             <td style="color:#8b949e; font-size:11px;">{{ p.prediction_type }}</td>
-            <td style="color:#8b949e;">{{ p.expiry_date }}</td>
+
+            <!-- Expiry + badge -->
+            <td>
+              <div class="expiry-wrap">
+                <span style="color:#8b949e;">{{ p.expiry_date }}</span>
+                {% if is_today %}
+                  <span class="exp-today">TODAY</span>
+                {% elif is_expired and not p.actual_close %}
+                  <span class="exp-expired">EXPIRED</span>
+                {% endif %}
+              </div>
+            </td>
+
+            <!-- Direction + 2PM rescore -->
             <td>
               {% if p.direction == 'UP' %}
                 <span class="dir dir-up">▲ UP</span>
               {% else %}
                 <span class="dir dir-down">▼ DOWN</span>
               {% endif %}
+              {% if rescore_flipped %}
+                <div class="rescore-wrap">
+                  <span class="rescore-flip">
+                    ↺ 2PM:
+                    {% if p.rescore_dir == 'UP' %}▲{% else %}▼{% endif %}
+                    {{ p.rescore_dir }}
+                  </span>
+                </div>
+              {% elif rescore_confirmed %}
+                <div class="rescore-wrap">
+                  <span class="rescore-same">↺ 2PM confirmed</span>
+                </div>
+              {% endif %}
             </td>
+
+            <!-- Confidence -->
+            <td>
+              {% if p.confidence == 'HIGH' %}
+                <span class="conf conf-high">HIGH</span>
+              {% elif p.confidence == 'MEDIUM' %}
+                <span class="conf conf-med">MED</span>
+              {% elif p.confidence == 'LOW' %}
+                <span class="conf conf-low">LOW</span>
+              {% else %}
+                <span style="color:#484f58;">—</span>
+              {% endif %}
+            </td>
+
+            <!-- Probability + agreement -->
             <td>
               <div class="prob-wrap">
-                <div class="prob-bar">
+                <div class="prob-bar" title="{% if p.agreement_pct %}{{ p.agreement_pct }}% signals aligned{% endif %}">
                   <div class="prob-fill {% if p.direction == 'DOWN' %}prob-down{% else %}prob-up{% endif %}"
                        style="width:{{ p.probability }}%"></div>
                 </div>
-                <span class="prob-num">{{ p.probability }}%</span>
+                <div>
+                  <div class="prob-num">{{ p.probability }}%</div>
+                  {% if p.agreement_pct %}
+                    <div class="prob-agree">{{ p.agreement_pct | int }}% aligned</div>
+                  {% endif %}
+                </div>
               </div>
             </td>
+
+            <!-- CMP -->
             <td>{{ "₹{:,.0f}".format(p.cmp) if p.cmp else '—' }}</td>
+
+            <!-- Target -->
             <td style="color:#8b949e;">{{ "₹{:,.0f}".format(p.target_price) if p.target_price else '—' }}</td>
+
+            <!-- Run date -->
             <td style="color:#484f58; font-size:11px;">{{ p.run_date }}</td>
+
+            <!-- Actual close -->
             <td style="font-weight:600; color:#f0f6fc;">
               {{ "₹{:,.0f}".format(p.actual_close) if p.actual_close else '—' }}
             </td>
+
+            <!-- Move % -->
             <td class="{% if p.actual_pct and p.actual_pct|float > 0 %}acc-good-txt{% elif p.actual_pct and p.actual_pct|float < 0 %}acc-weak-txt{% endif %}">
               {% if p.actual_pct is not none and p.actual_pct != '' %}
                 {{ "%+.2f%%"|format(p.actual_pct|float) }}
               {% else %}—{% endif %}
             </td>
+
+            <!-- Result -->
             <td>
               {% if p.actual_close %}
                 {% if p.was_correct %}
@@ -213,6 +348,135 @@ tr:hover td { background: rgba(255,255,255,0.02); }
               {% endif %}
             </td>
           </tr>
+
+          <!-- ── Signal breakdown row (hidden, toggled on click) ── -->
+          <tr class="detail-row" id="detail-{{ rid }}">
+            <td colspan="13">
+              <div class="detail-inner">
+                <div class="detail-label">Signal Breakdown</div>
+                <div class="sig-grid">
+
+                  {# ── Directional signal bars (tech, vix, fii) ── #}
+                  {% for sig_name, sig_val in [
+                      ('Tech', p.tech_signal),
+                      ('VIX',  p.vix_signal),
+                      ('FII',  p.fii_signal)
+                  ] %}
+                  {% if sig_val is not none %}
+                  {% set v = sig_val | float %}
+                  {% set bar_pct = ((v + 1) / 2 * 100) | round | int %}
+                  {% set is_bull = v > 0.05 %}
+                  {% set is_bear = v < -0.05 %}
+                  <div class="sig-card">
+                    <div class="sig-name">{{ sig_name }}</div>
+                    <div class="sig-bar-track">
+                      <div class="sig-bar-mid"></div>
+                      {% if is_bull %}
+                        <div class="sig-bar-fill sig-bull-fill"
+                             style="margin-left:50%; width:{{ ((v / 2) * 100) | round | int }}%;"></div>
+                      {% elif is_bear %}
+                        <div class="sig-bar-fill sig-bear-fill"
+                             style="margin-left:{{ (50 + v / 2 * 100) | round | int }}%; width:{{ ((-v / 2) * 100) | round | int }}%;"></div>
+                      {% else %}
+                        <div class="sig-bar-fill sig-neut-fill" style="margin-left:49%; width:2%;"></div>
+                      {% endif %}
+                    </div>
+                    <div class="sig-val {% if is_bull %}sig-bull-txt{% elif is_bear %}sig-bear-txt{% else %}sig-neut-txt{% endif %}">
+                      {{ "%+.2f" | format(v) }}
+                      &nbsp;·&nbsp;
+                      {% if is_bull %}Bullish{% elif is_bear %}Bearish{% else %}Neutral{% endif %}
+                    </div>
+                  </div>
+                  {% endif %}
+                  {% endfor %}
+
+                  {# ── PCR ── #}
+                  {% if p.pcr_value is not none %}
+                  <div class="sig-raw-card">
+                    <div class="sig-raw-name">PCR</div>
+                    <div class="sig-raw-val">{{ "%.2f" | format(p.pcr_value | float) }}</div>
+                    <div class="sig-raw-sub">
+                      {% set pcr = p.pcr_value | float %}
+                      {% if pcr > 1.2 %}High puts · Bullish{% elif pcr > 1.0 %}Neutral–Bullish{% elif pcr > 0.8 %}Neutral{% else %}Low puts · Bearish{% endif %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {# ── Max Pain ── #}
+                  {% if p.max_pain is not none %}
+                  <div class="sig-raw-card">
+                    <div class="sig-raw-name">Max Pain</div>
+                    <div class="sig-raw-val">{{ "₹{:,.0f}".format(p.max_pain | float) }}</div>
+                    <div class="sig-raw-sub">
+                      {% if p.cmp %}
+                        {% set diff = (p.max_pain | float) - (p.cmp | float) %}
+                        {% if diff > 100 %}Pull ▲{% elif diff < -100 %}Pull ▼{% else %}Near CMP{% endif %}
+                      {% endif %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {# ── ATM IV ── #}
+                  {% if p.atm_iv is not none %}
+                  <div class="sig-raw-card">
+                    <div class="sig-raw-name">ATM IV</div>
+                    <div class="sig-raw-val">{{ "%.1f" | format(p.atm_iv | float) }}%</div>
+                    <div class="sig-raw-sub">
+                      {% set iv = p.atm_iv | float %}
+                      {% if iv > 20 %}Elevated{% elif iv > 14 %}Moderate{% else %}Low{% endif %}
+                    </div>
+                  </div>
+                  {% endif %}
+
+                  {# ── OI Walls ── #}
+                  {% if p.put_oi_wall is not none %}
+                  <div class="sig-raw-card">
+                    <div class="sig-raw-name">PE Wall (Support)</div>
+                    <div class="sig-raw-val" style="color:#3fb950;">{{ "₹{:,.0f}".format(p.put_oi_wall | float) }}</div>
+                    <div class="sig-raw-sub">Max PE OI strike</div>
+                  </div>
+                  {% endif %}
+                  {% if p.call_oi_wall is not none %}
+                  <div class="sig-raw-card">
+                    <div class="sig-raw-name">CE Wall (Resistance)</div>
+                    <div class="sig-raw-val" style="color:#f85149;">{{ "₹{:,.0f}".format(p.call_oi_wall | float) }}</div>
+                    <div class="sig-raw-sub">Max CE OI strike</div>
+                  </div>
+                  {% endif %}
+
+                  {# ── Hist WR ── #}
+                  {% if p.hist_wr is not none %}
+                  <div class="sig-raw-card">
+                    <div class="sig-raw-name">Hist Win Rate</div>
+                    <div class="sig-raw-val {% if p.hist_wr | float >= 55 %}sig-bull-txt{% elif p.hist_wr | float <= 45 %}sig-bear-txt{% else %}sig-neut-txt{% endif %}">
+                      {{ "%.0f" | format(p.hist_wr | float) }}%
+                    </div>
+                    <div class="sig-raw-sub">Same week · historical</div>
+                  </div>
+                  {% endif %}
+
+                </div>
+
+                {# ── 2 PM re-score detail ── #}
+                {% if p.rescore_dir %}
+                <div class="detail-rescore">
+                  {% if rescore_flipped %}
+                    ↺ <strong>2 PM Re-score flipped direction:</strong>
+                    {{ p.direction }} {{ "%.1f" | format(p.probability | float) }}%
+                    → <strong>{{ p.rescore_dir }} {{ "%.1f" | format(p.rescore_prob | float) }}%</strong>
+                    &nbsp;·&nbsp; Rescored at {{ p.rescored_at }}
+                  {% else %}
+                    ↺ 2 PM Re-score confirmed: {{ p.rescore_dir }}
+                    {{ "%.1f" | format(p.rescore_prob | float) }}%
+                    &nbsp;·&nbsp; No direction change
+                  {% endif %}
+                </div>
+                {% endif %}
+
+              </div>
+            </td>
+          </tr>
+
           {% endfor %}
         </tbody>
       </table>
@@ -285,5 +549,18 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   {% endif %}
 </div><!-- /main -->
 </div><!-- /page-layout -->
+
+<script>
+function toggleDetail(rid) {
+  const row     = document.getElementById('row-' + rid);
+  const detail  = document.getElementById('detail-' + rid);
+  const icon    = document.getElementById('icon-' + rid);
+  const isOpen  = detail.style.display === 'table-row';
+
+  detail.style.display = isOpen ? 'none' : 'table-row';
+  row.classList.toggle('expanded', !isOpen);
+  icon.textContent = isOpen ? '▶' : '▼';
+}
+</script>
 </body>
 </html>
