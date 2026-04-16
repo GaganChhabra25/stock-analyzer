@@ -167,17 +167,50 @@ class ZerodhaAdapter(BrokerBase):
         transaction_type: str,
         qty: int,
     ) -> PlacedOrder:
+        """Place a LIMIT order at LTP ± 1% slippage buffer.
+
+        Zerodha does not allow plain MARKET orders for F&O options
+        ("Market order without protection not allowed").  Using a LIMIT
+        order priced aggressively (1% away from LTP) gives near-instant
+        fills while satisfying the exchange protection requirement.
+        """
         from kiteconnect import KiteConnect
+
+        # Fetch current LTP to set an aggressive limit price
         try:
-            order_id = self._kite.place_order(
+            ltp = self.get_ltp(trading_symbol, exchange)
+        except BrokerError:
+            ltp = 0.0
+
+        if ltp and ltp > 0:
+            # SELL → limit slightly below LTP (still fills at market);
+            # BUY  → limit slightly above LTP
+            slippage = 0.01   # 1 %
+            if transaction_type.upper() == "SELL":
+                limit_price = round(ltp * (1 - slippage), 1)
+            else:
+                limit_price = round(ltp * (1 + slippage), 1)
+            limit_price = max(limit_price, 0.05)  # Zerodha min tick
+            order_type  = KiteConnect.ORDER_TYPE_LIMIT
+        else:
+            # LTP unavailable — fall back to SL-M which bypasses the
+            # "market without protection" restriction
+            limit_price = None
+            order_type  = KiteConnect.ORDER_TYPE_SLM
+
+        try:
+            kwargs = dict(
                 variety=KiteConnect.VARIETY_REGULAR,
                 exchange=exchange,
                 tradingsymbol=trading_symbol,
                 transaction_type=transaction_type,
                 quantity=qty,
                 product=KiteConnect.PRODUCT_MIS,
-                order_type=KiteConnect.ORDER_TYPE_MARKET,
+                order_type=order_type,
             )
+            if limit_price is not None:
+                kwargs["price"] = limit_price
+            order_id = self._kite.place_order(**kwargs)
             return PlacedOrder(
                 order_id=str(order_id),
                 trading_symbol=trading_symbol,
@@ -186,6 +219,7 @@ class ZerodhaAdapter(BrokerBase):
                 status="PENDING",
             )
         except Exception as exc:
+            _raise_if_ip_error(exc)
             raise OrderError(
                 f"place_order({transaction_type} {qty} {trading_symbol}): {exc}"
             ) from exc
