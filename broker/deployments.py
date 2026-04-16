@@ -220,6 +220,45 @@ def fail_deployment(dep_id: int, error: str) -> bool:
         return False
 
 
+def reset_stuck_entering() -> None:
+    """On startup, reset any ENTERING rows back to PENDING (crashed mid-entry)."""
+    if not _ensure_schema():
+        return
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE deployments SET status='PENDING' WHERE status='ENTERING'"
+                )
+                n = cur.rowcount
+            conn.commit()
+        if n:
+            logger.warning("Reset %d stuck ENTERING deployment(s) to PENDING", n)
+    except Exception as exc:
+        logger.error("reset_stuck_entering: %s", exc)
+
+
+def claim_deployment(dep_id: int) -> bool:
+    """Atomically transition PENDING → ENTERING.
+    Only ONE worker can win — others get False and must skip entry.
+    """
+    if not _ensure_schema():
+        return False
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE deployments SET status='ENTERING' WHERE id=%s AND status='PENDING'",
+                    (dep_id,),
+                )
+                claimed = cur.rowcount > 0
+            conn.commit()
+        return claimed
+    except Exception as exc:
+        logger.error("claim_deployment %d: %s", dep_id, exc)
+        return False
+
+
 def cancel_deployment(dep_id: int) -> bool:
     """Cancel a PENDING deployment (cannot cancel ACTIVE)."""
     if not _ensure_schema():

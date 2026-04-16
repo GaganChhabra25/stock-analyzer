@@ -237,6 +237,14 @@ class DeploymentScheduler:
 
     def _enter_deployment(self, state: _DepState):
         """Place entry orders and transition to ACTIVE."""
+        # Atomic DB claim — only ONE of the N gunicorn workers wins.
+        # The others see rowcount=0 and skip silently.
+        if not dep_db.claim_deployment(state.dep_id):
+            logger.info("Dep %d already claimed by another worker — skipping", state.dep_id)
+            with self._lock:
+                self._state.pop(state.dep_id, None)
+            return
+
         try:
             broker = get_broker(state.broker_name, state.user_id)
             instr_cfg = INSTR_REGISTRY.get(state.instrument)
@@ -311,6 +319,8 @@ class DeploymentScheduler:
 
     def _reload_from_db(self):
         """On startup, reload any PENDING or ACTIVE deployments from DB."""
+        # Reset any stuck ENTERING rows (crash during prior entry attempt)
+        dep_db.reset_stuck_entering()
         rows = dep_db.get_pending_and_active()
         for row in rows:
             dep_id = row["id"]
