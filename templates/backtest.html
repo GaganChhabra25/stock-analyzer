@@ -582,15 +582,21 @@ async function onInstrumentChange() {
   document.getElementById("dateSection").style.display = "block";
   document.getElementById("runSection").style.display  = "block";
 
-  // Fetch all available dates — no DTE restriction on the calendar
+  // Fetch available dates filtered by strategy's dte_max so calendar
+  // only shows dates that this strategy can actually backtest.
   try {
-    const url = "/api/backtest-dates?instrument=" + sym;
+    const dtMax = (strat.dte_max != null && strat.dte_max < 999) ? strat.dte_max : null;
+    let url = "/api/backtest-dates?instrument=" + sym;
+    if (dtMax !== null) url += "&dte_max=" + dtMax;
     const r    = await fetch(url);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     S.availDates = data.dates || [];
-    document.getElementById("iDbDays").textContent  = data.count + " trading days";
-    document.getElementById("dateHint").textContent = "Any date with DB data is selectable";
+    const dteLabel = dtMax !== null ? " (DTE ≤ " + dtMax + ")" : "";
+    document.getElementById("iDbDays").textContent  = data.count + " trading days" + dteLabel;
+    document.getElementById("dateHint").textContent = dtMax !== null
+      ? "Only expiry-week dates selectable (DTE ≤ " + dtMax + ")"
+      : "Any date with DB data is selectable";
     document.getElementById("iDateMin").textContent = data.min_date || "—";
     document.getElementById("iDateMax").textContent = data.max_date || "—";
     if (data.min_date && data.max_date) {

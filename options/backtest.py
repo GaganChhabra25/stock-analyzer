@@ -439,10 +439,11 @@ def _get_trade_dates(cur, instrument: str, lookback_days: int,
     if date_from and date_to:
         cur.execute(
             f"""
-            SELECT DISTINCT ts::date AS d, MIN(expiry) AS exp
+            SELECT ts::date AS d, MIN(expiry) AS exp
             FROM option_chain
             WHERE instrument = %s
               AND ts::date BETWEEN %s AND %s
+              AND expiry >= ts::date
               {dte_filter}
             GROUP BY ts::date
             ORDER BY d DESC
@@ -452,10 +453,11 @@ def _get_trade_dates(cur, instrument: str, lookback_days: int,
     else:
         cur.execute(
             f"""
-            SELECT DISTINCT ts::date AS d, MIN(expiry) AS exp
+            SELECT ts::date AS d, MIN(expiry) AS exp
             FROM option_chain
             WHERE instrument = %s
               AND ts::date >= CURRENT_DATE - (%s || ' days')::INTERVAL
+              AND expiry >= ts::date
               {dte_filter}
             GROUP BY ts::date
             ORDER BY d DESC
@@ -465,20 +467,39 @@ def _get_trade_dates(cur, instrument: str, lookback_days: int,
     return [(r[0], r[1]) for r in cur.fetchall()]
 
 
-def _prev_day_ranges(cur, instrument: str, lookback_days: int) -> dict:
-    """Return {date: range_pts} for prev-day-range filter."""
-    cur.execute(
-        """
-        SELECT ts::date AS d,
-               MAX(underlying_ltp) - MIN(underlying_ltp) AS rng
-        FROM option_chain
-        WHERE instrument = %s
-          AND ts::date >= CURRENT_DATE - (%s || ' days')::INTERVAL
-          AND underlying_ltp IS NOT NULL
-        GROUP BY ts::date
-        """,
-        (instrument, lookback_days + 10),
-    )
+def _prev_day_ranges(cur, instrument: str, lookback_days: int,
+                     date_from: Optional[str] = None) -> dict:
+    """Return {date: range_pts} for prev-day-range filter.
+
+    When date_from is provided the window starts one day before it so
+    every trade date in the range has its previous-day range available.
+    """
+    if date_from:
+        cur.execute(
+            """
+            SELECT ts::date AS d,
+                   MAX(underlying_ltp) - MIN(underlying_ltp) AS rng
+            FROM option_chain
+            WHERE instrument = %s
+              AND ts::date >= %s::date - INTERVAL '1 day'
+              AND underlying_ltp IS NOT NULL
+            GROUP BY ts::date
+            """,
+            (instrument, date_from),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT ts::date AS d,
+                   MAX(underlying_ltp) - MIN(underlying_ltp) AS rng
+            FROM option_chain
+            WHERE instrument = %s
+              AND ts::date >= CURRENT_DATE - (%s || ' days')::INTERVAL
+              AND underlying_ltp IS NOT NULL
+            GROUP BY ts::date
+            """,
+            (instrument, lookback_days + 10),
+        )
     return {r[0]: float(r[1]) for r in cur.fetchall()}
 
 
@@ -525,7 +546,7 @@ def backtest_oi_strangle(
             with conn.cursor() as cur:
                 trade_days  = _get_trade_dates(cur, instr, lookback_days,
                                                date_from, date_to, dte_max=5)
-                prev_ranges = _prev_day_ranges(cur, instr, lookback_days) if skip_high_vol else {}
+                prev_ranges = _prev_day_ranges(cur, instr, lookback_days, date_from) if skip_high_vol else {}
 
                 for trade_date, expiry in trade_days:
                     dte = (expiry - trade_date).days
