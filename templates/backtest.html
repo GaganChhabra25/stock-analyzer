@@ -582,25 +582,15 @@ async function onInstrumentChange() {
   document.getElementById("dateSection").style.display = "block";
   document.getElementById("runSection").style.display  = "block";
 
-  // Fetch available dates — pass dte_max so calendar only shows qualifying dates
+  // Fetch all available dates — no DTE restriction on the calendar
   try {
-    const strat = STRAT_MAP[S.strategy] || {};
-    let url = "/api/backtest-dates?instrument=" + sym;
-    if (strat.dte_max !== undefined && strat.dte_max < 999) {
-      url += "&dte_max=" + strat.dte_max;
-    }
+    const url = "/api/backtest-dates?instrument=" + sym;
     const r    = await fetch(url);
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     S.availDates = data.dates || [];
-    const hasDteFilter = strat.dte_max !== undefined && strat.dte_max < 999;
-    const label = hasDteFilter
-      ? data.count + " qualifying days (DTE ≤ " + strat.dte_max + ")"
-      : data.count + " trading days";
-    document.getElementById("iDbDays").textContent  = label;
-    document.getElementById("dateHint").textContent = hasDteFilter
-      ? "Only expiry-week dates shown (DTE ≤ " + strat.dte_max + ")"
-      : "Only DB dates are selectable";
+    document.getElementById("iDbDays").textContent  = data.count + " trading days";
+    document.getElementById("dateHint").textContent = "Any date with DB data is selectable";
     document.getElementById("iDateMin").textContent = data.min_date || "—";
     document.getElementById("iDateMax").textContent = data.max_date || "—";
     if (data.min_date && data.max_date) {
