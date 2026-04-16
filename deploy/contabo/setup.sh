@@ -290,13 +290,15 @@ info "[10/10] Installing cron jobs..."
 # ── Cron time reference (Contabo = Europe/Berlin = IST - 3.5h in summer CEST) ──
 # IST 09:45 = CEST 06:15 = UTC 04:15  ← predictions (market open 30 min data ready)
 # IST 14:00 = CEST 10:30 = UTC 08:30  ← intraday re-score (2 PM signals update)
-# IST 17:00 = CEST 13:30 = UTC 11:30  ← FII data (NSE publishes EOD stats by 5 PM)
+# IST 17:00 = CEST 13:30 = UTC 11:30  ← FII cash data (NSE publishes EOD by 5 PM)
 # IST 18:30 = CEST 15:00 = UTC 13:00  ← outcomes (market closed, prices settled)
+# IST 19:00 = CEST 15:30 = UTC 13:30  ← FII F&O participant OI (published ~6-7 PM IST)
 
 SCREENER_CRON="15 4 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/reset_predictions.py >> $APP_DIR/logs/predictions.log 2>&1"
 RESCORE_CRON="30 10 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/intraday_rescore.py >> $APP_DIR/logs/rescore.log 2>&1"
 FII_CRON="30 11 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/collect_fii_data.py >> $APP_DIR/logs/fii.log 2>&1"
 OUTCOMES_CRON="0 13 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/record_outcomes.py >> $APP_DIR/logs/outcomes.log 2>&1"
+FII_FO_CRON="30 15 * * 1-5 cd $APP_DIR && $VENV/bin/python scripts/collect_fii_fo_data.py >> $APP_DIR/logs/fii_fo.log 2>&1"
 
 # Options collector — activated once Kite Connect is configured
 OPTIONS_CRON="# */1 9-15 * * 1-5 cd $APP_DIR && $VENV/bin/python options/collector.py >> $APP_DIR/logs/options.log 2>&1"
@@ -308,11 +310,13 @@ OPTIONS_CRON="# */1 9-15 * * 1-5 cd $APP_DIR && $VENV/bin/python options/collect
         | grep -v "intraday_rescore.py" \
         | grep -v "collect_fii_data.py" \
         | grep -v "record_outcomes.py" \
+        | grep -v "collect_fii_fo_data.py" \
         | grep -v "options/collector.py"
     echo "$SCREENER_CRON"
     echo "$RESCORE_CRON"
     echo "$FII_CRON"
     echo "$OUTCOMES_CRON"
+    echo "$FII_FO_CRON"
     echo "$OPTIONS_CRON"
 ) | crontab -u "$APP_USER" -
 

@@ -1424,19 +1424,24 @@ def _db_oi_velocity_signal(expiry: "date", cmp: float) -> float:
 
 def _db_fii_derivative_signal() -> float:
     """
-    FII net futures position from fii_derivative_stats table.
+    FII positioning signal — two-tier approach:
 
-    FII are the largest institutional participants in Nifty F&O.
-    Their net futures position (long - short contracts) tells us:
-      Positive net futures → FII expect Nifty to RISE → bullish
-      Negative net futures → FII expect Nifty to FALL → bearish
+    Tier 1 (PRIMARY, weight 70%): F&O net index futures contracts
+      Collected from NSE fao_participant_oi CSV (direct bet on Nifty).
+      fo_fii_net_fut = long contracts − short contracts
+      Typical total Nifty futures OI ≈ 1,50,000 contracts.
+      Net ±30,000 contracts is significant; ±60,000 is very strong.
 
-    Signal uses:
-      - Latest day's net position for level signal
-      - 5-day change in net position for trend signal (momentum of FII positioning)
-      - Level 60% + Trend 40%
+    Tier 2 (FALLBACK, weight 30%): Cash market FII net buy/sell (Crore)
+      fii_net_fut = net cash market value (Cr).
+      Used when F&O contracts data not yet available for the day.
 
-    Returns -1..+1. Returns 0.0 if DB has fewer than 2 rows.
+    Options skew bonus (±0.15):
+      FII put/call ratio in index options → institutional fear/greed gauge.
+      PC ratio > 1.5 (more puts than calls) = fear = bearish for index.
+      PC ratio < 0.7 = complacency/bullish bets = potential upside.
+
+    Returns -1..+1.
     """
     from screener.db import _get_conn, is_available as _ok
     if not _ok():
@@ -1445,9 +1450,12 @@ def _db_fii_derivative_signal() -> float:
         with _get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT trade_date, fii_net_fut, fii_net_opt
+                    SELECT trade_date,
+                           fo_fii_net_fut,
+                           fo_fii_pc_ratio,
+                           fii_net_fut,
+                           fii_net_opt
                     FROM fii_derivative_stats
-                    WHERE fii_net_fut IS NOT NULL
                     ORDER BY trade_date DESC
                     LIMIT 10
                 """)
@@ -1456,31 +1464,71 @@ def _db_fii_derivative_signal() -> float:
         if not rows:
             return 0.0
 
-        # fii_net_fut = FII net cash market value (Crore); positive = net buyer = bullish
-        # fii_net_opt = DII net cash market value (Crore); DII is counter-cyclical so
-        #               DII selling (negative) often confirms FII buying → bullish
-        latest_fii_net = float(rows[0][1] or 0)
-        latest_dii_net = float(rows[0][2] or 0) if rows[0][2] is not None else 0.0
+        # ── Tier 1: F&O net contracts (direct institutional bet) ──────────
+        fo_rows = [(r[0], r[1], r[2]) for r in rows if r[1] is not None]
+        fo_signal = 0.0
+        has_fo    = len(fo_rows) >= 1
 
-        # Level signal: typical daily range ±3,000 Cr; >5,000 = very strong
-        level_sig = max(-1.0, min(1.0, latest_fii_net / 3_000.0))
+        if has_fo:
+            latest_net = int(fo_rows[0][1])
+            # Normalise: ±60,000 contracts = full signal (±1.0)
+            level_fo = max(-1.0, min(1.0, latest_net / 60_000.0))
 
-        # Trend: 5-day cumulative FII flow
-        trend_sig = 0.0
-        if len(rows) >= 3:
-            cumulative_5d = sum(float(r[1] or 0) for r in rows[:5])
-            trend_sig = max(-1.0, min(1.0, cumulative_5d / 8_000.0))
+            # 5-day momentum: change in net position
+            trend_fo = 0.0
+            if len(fo_rows) >= 3:
+                oldest_net = int(fo_rows[min(4, len(fo_rows)-1)][1])
+                delta = latest_net - oldest_net
+                trend_fo = max(-1.0, min(1.0, delta / 40_000.0))
 
-        # DII is usually counter-FII; when DII sells AND FII buys = strong conviction
-        # DII net negative + FII net positive = institutions aligned bullish
-        dii_confirmation = 0.0
-        if latest_fii_net > 0 and latest_dii_net < 0:
-            dii_confirmation = +0.30   # both aligned bullish
-        elif latest_fii_net < 0 and latest_dii_net > 0:
-            dii_confirmation = -0.30   # both aligned bearish
+            fo_signal = level_fo * 0.65 + trend_fo * 0.35
 
-        # Combined: today's FII flow 50% + 5-day trend 35% + DII confirmation 15%
-        combined = level_sig * 0.50 + trend_sig * 0.35 + dii_confirmation * 0.15
+            # Options skew bonus from FII P/C ratio
+            pc = fo_rows[0][2]
+            if pc is not None:
+                pc = float(pc)
+                if   pc > 1.5: fo_signal += -0.15   # heavy puts = fear = bearish
+                elif pc > 1.2: fo_signal += -0.08
+                elif pc < 0.7: fo_signal += +0.15   # heavy calls = bullish bets
+                elif pc < 1.0: fo_signal += +0.08
+                fo_signal = max(-1.0, min(1.0, fo_signal))
+
+            logger.debug(
+                "_db_fii_derivative_signal: F&O net=%d level=%.3f trend=%.3f pc=%s → %.3f",
+                latest_net, level_fo, trend_fo, pc, fo_signal,
+            )
+
+        # ── Tier 2: cash market flow (indirect, always available by 5 PM) ─
+        cash_rows = [(r[0], r[3], r[4]) for r in rows if r[3] is not None]
+        cash_signal = 0.0
+        has_cash    = len(cash_rows) >= 1
+
+        if has_cash:
+            latest_fii_cr  = float(cash_rows[0][1] or 0)
+            latest_dii_cr  = float(cash_rows[0][2] or 0)
+            level_cash     = max(-1.0, min(1.0, latest_fii_cr / 3_000.0))
+            trend_cash     = 0.0
+            if len(cash_rows) >= 3:
+                cum5 = sum(float(r[1] or 0) for r in cash_rows[:5])
+                trend_cash = max(-1.0, min(1.0, cum5 / 8_000.0))
+            dii_conf = 0.0
+            if latest_fii_cr > 0 and latest_dii_cr < 0:
+                dii_conf = +0.25
+            elif latest_fii_cr < 0 and latest_dii_cr > 0:
+                dii_conf = -0.25
+            cash_signal = (level_cash * 0.50 + trend_cash * 0.35
+                           + dii_conf * 0.15)
+
+        # ── Combine ───────────────────────────────────────────────────────
+        if has_fo and has_cash:
+            combined = fo_signal * 0.70 + cash_signal * 0.30
+        elif has_fo:
+            combined = fo_signal
+        elif has_cash:
+            combined = cash_signal
+        else:
+            return 0.0
+
         return round(max(-1.0, min(1.0, combined)), 3)
 
     except Exception as exc:

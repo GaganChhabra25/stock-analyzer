@@ -190,6 +190,19 @@ def init_schema() -> bool:
                     ADD COLUMN IF NOT EXISTS rescored_at     TIMESTAMPTZ;
             """)
 
+            # Add FII F&O participant columns (net index futures contracts)
+            cur.execute("""
+                ALTER TABLE fii_derivative_stats
+                    ADD COLUMN IF NOT EXISTS fo_fii_fut_long   BIGINT,
+                    ADD COLUMN IF NOT EXISTS fo_fii_fut_short  BIGINT,
+                    ADD COLUMN IF NOT EXISTS fo_fii_net_fut    BIGINT,
+                    ADD COLUMN IF NOT EXISTS fo_fii_call_long  BIGINT,
+                    ADD COLUMN IF NOT EXISTS fo_fii_call_short BIGINT,
+                    ADD COLUMN IF NOT EXISTS fo_fii_put_long   BIGINT,
+                    ADD COLUMN IF NOT EXISTS fo_fii_put_short  BIGINT,
+                    ADD COLUMN IF NOT EXISTS fo_fii_pc_ratio   NUMERIC(8,3);
+            """)
+
             # ── Analytical views ──────────────────────────────────────────────
             cur.execute("""
                 CREATE OR REPLACE VIEW v_model_accuracy AS

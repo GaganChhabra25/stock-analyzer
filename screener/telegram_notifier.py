@@ -263,6 +263,73 @@ def send_fii_status(fii_rows: list, stored: int) -> bool:
     return _send("\n".join(lines))
 
 
+def send_fii_fo_status(fo_rows: list, stored: int) -> bool:
+    """
+    Send FII F&O participant OI alert (7 PM IST).
+
+    fo_rows: list of (trade_date, fo_fii_net_fut, fo_fii_call_long,
+                       fo_fii_put_long, fo_fii_pc_ratio) from DB
+    stored:  number of dates stored this run
+    """
+    today_str = date.today().strftime("%d %b %Y")
+
+    if stored == 0 and not fo_rows:
+        text = (
+            f"⚠️ <b>FII F&O Data — {today_str}</b>\n\n"
+            f"NSE participant OI not available yet. Market holiday or not published."
+        )
+        return _send(text)
+
+    lines = [f"<b>📊 FII F&O Positioning — {today_str}</b>\n"]
+    lines.append("<i>Net index futures contracts (direct Nifty bet)</i>\n")
+
+    def _contracts(v) -> str:
+        try:
+            n = int(v)
+            sign = "+" if n >= 0 else ""
+            return f"{sign}{n:,}"
+        except Exception:
+            return "—"
+
+    def _sentiment(v) -> str:
+        try:
+            n = int(v)
+            if   n >  50_000: return "🟢🟢 Very Bullish"
+            elif n >  20_000: return "🟢 Bullish"
+            elif n >       0: return "🟢 Mild Bullish"
+            elif n > -20_000: return "🔴 Mild Bearish"
+            elif n > -50_000: return "🔴 Bearish"
+            else:             return "🔴🔴 Very Bearish"
+        except Exception:
+            return "—"
+
+    for row in fo_rows[:5]:
+        d, net, cl, pl, pc = row
+        pc_str = f"P/C {float(pc):.2f}" if pc else ""
+        lines.append(
+            f"  <b>{d}</b>  Net Fut: {_contracts(net)} ctr  "
+            f"{_sentiment(net)}"
+        )
+        if cl or pl:
+            lines.append(
+                f"           Calls: {_contracts(cl)}  Puts: {_contracts(pl)}"
+                f"  {pc_str}"
+            )
+
+    # 3-day net direction
+    if len(fo_rows) >= 2:
+        nets = [int(r[1]) for r in fo_rows[:3] if r[1] is not None]
+        if nets:
+            avg = sum(nets) / len(nets)
+            lines.append(
+                f"\n  3-day avg net: <b>{_contracts(avg)} ctr</b>"
+                f"  {_sentiment(avg)}"
+            )
+
+    lines.append(f"\n<i>Stored {stored} date(s) · {today_str}</i>")
+    return _send("\n".join(lines))
+
+
 def send_rescore_summary(updates: list) -> bool:
     """
     Send 2 PM intraday re-score summary alert.
