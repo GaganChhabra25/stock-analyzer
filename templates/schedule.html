@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Schedule — Cron Jobs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; }
+
+/* ── Header ── */
+.header { background: linear-gradient(135deg, #1a1a3e 0%, #0d2a1a 100%); padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #21262d; }
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-logo { font-size: 22px; }
+.header-title { font-size: 17px; font-weight: 700; color: #fff; }
+.header-sub { font-size: 11px; color: rgba(255,255,255,0.55); margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.nav-btn { padding: 6px 14px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; color: #c9d1d9; font-size: 12px; cursor: pointer; text-decoration: none; transition: all 0.15s; }
+.nav-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+
+/* ── Layout ── */
+.sidebar { width: 190px; flex-shrink: 0; background: #161b22; border-right: 1px solid #21262d; padding: 16px 0; }
+.sidebar-item { display: flex; align-items: center; gap: 10px; padding: 10px 18px; color: #8b949e; font-size: 12px; font-weight: 500; text-decoration: none; border-left: 2px solid transparent; transition: all 0.15s; }
+.sidebar-item:hover { color: #f0f6fc; background: #1c2128; }
+.sidebar-item.active { color: #f0f6fc; background: #1c2128; border-left-color: #1f6feb; }
+.sidebar-icon { font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; }
+.sidebar-divider { height: 1px; background: #21262d; margin: 8px 0; }
+.page { display: flex; min-height: calc(100vh - 60px); }
+.content { flex: 1; padding: 28px 32px; overflow-y: auto; }
+
+/* ── Top bar ── */
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.page-title { font-size: 20px; font-weight: 700; color: #f0f6fc; }
+.page-sub { font-size: 12px; color: #8b949e; margin-top: 3px; }
+.refresh-btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; background: #21262d; border: 1px solid #30363d; border-radius: 7px; color: #c9d1d9; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+.refresh-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+.refresh-btn.spinning .icon { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Stats row ── */
+.stats-row { display: flex; gap: 14px; margin-bottom: 28px; flex-wrap: wrap; }
+.stat-card { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 14px 20px; min-width: 130px; }
+.stat-val { font-size: 22px; font-weight: 700; color: #f0f6fc; }
+.stat-lbl { font-size: 11px; color: #8b949e; margin-top: 3px; }
+.stat-ok   .stat-val { color: #3fb950; }
+.stat-err  .stat-val { color: #f85149; }
+.stat-warn .stat-val { color: #e3b341; }
+
+/* ── Category section ── */
+.cat-section { margin-bottom: 28px; }
+.cat-header { font-size: 10px; font-weight: 700; color: #484f58; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #21262d; }
+
+/* ── Job cards ── */
+.job-grid { display: flex; flex-direction: column; gap: 8px; }
+.job-card { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 14px 18px; display: flex; align-items: center; gap: 16px; transition: border-color 0.15s; }
+.job-card:hover { border-color: #30363d; }
+.job-card.status-ok    { border-left: 3px solid #3fb950; }
+.job-card.status-error { border-left: 3px solid #f85149; }
+.job-card.status-stale { border-left: 3px solid #e3b341; }
+.job-card.status-unknown, .job-card.status-no_data { border-left: 3px solid #484f58; }
+
+/* Status dot */
+.status-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.dot-ok      { background: #3fb950; box-shadow: 0 0 6px rgba(63,185,80,0.5); }
+.dot-error   { background: #f85149; box-shadow: 0 0 6px rgba(248,81,73,0.5); }
+.dot-stale   { background: #e3b341; }
+.dot-unknown, .dot-no_data { background: #484f58; }
+
+/* Job info */
+.job-info { flex: 1; min-width: 0; }
+.job-name { font-size: 13px; font-weight: 600; color: #f0f6fc; }
+.job-desc { font-size: 11px; color: #8b949e; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Time badge */
+.time-block { flex-shrink: 0; text-align: right; }
+.time-badge { display: inline-flex; align-items: center; gap: 5px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: #58a6ff; white-space: nowrap; }
+.time-badge .clock { font-size: 13px; }
+.days-lbl { font-size: 10px; color: #8b949e; margin-top: 4px; text-align: right; }
+
+/* Last run */
+.last-run-block { flex-shrink: 0; min-width: 130px; text-align: right; }
+.last-run-ts { font-size: 11px; color: #c9d1d9; }
+.last-run-ago { font-size: 10px; color: #8b949e; margin-top: 2px; }
+.last-run-none { font-size: 11px; color: #484f58; font-style: italic; }
+
+/* Status badge */
+.status-badge { flex-shrink: 0; padding: 3px 10px; border-radius: 99px; font-size: 10px; font-weight: 700; }
+.badge-ok      { background: rgba(63,185,80,0.15);  color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+.badge-error   { background: rgba(248,81,73,0.15);  color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+.badge-stale   { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+.badge-unknown, .badge-no_data { background: rgba(72,79,88,0.2); color: #8b949e; border: 1px solid #30363d; }
+
+/* Log link */
+.log-link { flex-shrink: 0; font-size: 10px; color: #484f58; text-decoration: none; padding: 4px 8px; border: 1px solid #21262d; border-radius: 5px; transition: all 0.15s; }
+.log-link:hover { color: #58a6ff; border-color: #58a6ff; }
+
+/* Loading skeleton */
+.skeleton { background: linear-gradient(90deg, #161b22 25%, #1c2128 50%, #161b22 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; height: 12px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Frequency badge */
+.freq-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 99px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-left: 6px; }
+.freq-min  { background: rgba(139,93,255,0.15); color: #bd8fff; border: 1px solid rgba(139,93,255,0.3); }
+.freq-once { background: rgba(31,111,235,0.1);  color: #58a6ff; border: 1px solid rgba(31,111,235,0.2); }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="header">
+  <div class="header-left">
+    <span class="header-logo">📅</span>
+    <div>
+      <div class="header-title">Stock Analyzer</div>
+      <div class="header-sub">Scheduled Jobs Monitor</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <span style="font-size:12px;color:#8b949e;">{{ user.name }}</span>
+    <a href="/logout" class="nav-btn">Sign Out</a>
+  </div>
+</div>
+
+<!-- ── Body ── -->
+<div class="page">
+  <nav class="sidebar">
+    <a href="/"          class="sidebar-item"><span class="sidebar-icon">📊</span> Dashboard</a>
+    <a href="/backtest"  class="sidebar-item"><span class="sidebar-icon">📉</span> Backtest</a>
+    <div class="sidebar-divider"></div>
+    <a href="/nifty"     class="sidebar-item"><span class="sidebar-icon">🎯</span> Options Intel</a>
+    <a href="/weekly"    class="sidebar-item"><span class="sidebar-icon">📅</span> Weekly Range</a>
+    <a href="/insights"  class="sidebar-item"><span class="sidebar-icon">🔬</span> DB Insights</a>
+    <div class="sidebar-divider"></div>
+    <a href="/strategies" class="sidebar-item"><span class="sidebar-icon">🚀</span> Strategies</a>
+    <a href="/schedule"  class="sidebar-item active"><span class="sidebar-icon">⏰</span> Schedule</a>
+    <a href="/users"     class="sidebar-item"><span class="sidebar-icon">👥</span> Users</a>
+  </nav>
+
+  <div class="content">
+    <div class="topbar">
+      <div>
+        <div class="page-title">Cron Schedule</div>
+        <div class="page-sub" id="lastRefresh">Loading…</div>
+      </div>
+      <button class="refresh-btn" onclick="loadStatus()">
+        <span class="icon" id="refreshIcon">↻</span> Refresh
+      </button>
+    </div>
+
+    <!-- Stats row -->
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card"><div class="skeleton" style="width:40px;height:22px;margin-bottom:6px"></div><div class="stat-lbl">Total Jobs</div></div>
+      <div class="stat-card stat-ok"><div class="skeleton" style="width:30px;height:22px;margin-bottom:6px"></div><div class="stat-lbl">Running OK</div></div>
+      <div class="stat-card stat-err"><div class="skeleton" style="width:30px;height:22px;margin-bottom:6px"></div><div class="stat-lbl">Errors</div></div>
+      <div class="stat-card stat-warn"><div class="skeleton" style="width:30px;height:22px;margin-bottom:6px"></div><div class="stat-lbl">Stale / No Data</div></div>
+    </div>
+
+    <!-- Job sections rendered here -->
+    <div id="jobSections"></div>
+  </div>
+</div>
+
+<script>
+const STATUS_LABEL = { ok: "OK", error: "ERROR", stale: "STALE", unknown: "NO DATA", no_data: "NO DATA" };
+const STATUS_BADGE = { ok: "badge-ok", error: "badge-error", stale: "badge-stale", unknown: "badge-unknown", no_data: "badge-no_data" };
+const DOT_CLASS    = { ok: "dot-ok", error: "dot-error", stale: "dot-stale", unknown: "dot-unknown", no_data: "dot-no_data" };
+
+// Is a time range job (runs every minute/15min)?
+function isFrequent(ist_time) {
+  return ist_time.includes("–") || ist_time.includes("-");
+}
+
+function timeAgo(ts) {
+  if (!ts) return "";
+  const now  = new Date();
+  const then = new Date(ts.replace(" ", "T") + ":00");
+  const mins = Math.round((now - then) / 60000);
+  if (mins < 2)   return "just now";
+  if (mins < 60)  return mins + "m ago";
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24)   return hrs + "h " + (mins % 60) + "m ago";
+  return Math.floor(hrs / 24) + "d ago";
+}
+
+function renderCard(job) {
+  const freq    = isFrequent(job.ist_time);
+  const dotCls  = DOT_CLASS[job.status]    || "dot-unknown";
+  const cardCls = "status-" + job.status;
+  const badgeCls = STATUS_BADGE[job.status] || "badge-unknown";
+  const label   = STATUS_LABEL[job.status]  || "—";
+  const freqTag = freq
+    ? `<span class="freq-badge freq-min">Recurring</span>`
+    : `<span class="freq-badge freq-once">Daily</span>`;
+
+  const lastRunHtml = job.last_run
+    ? `<div class="last-run-ts">${job.last_run}</div>
+       <div class="last-run-ago">${timeAgo(job.last_run)}</div>`
+    : `<div class="last-run-none">Never / no log</div>`;
+
+  return `
+  <div class="job-card ${cardCls}">
+    <div class="status-dot ${dotCls}"></div>
+    <div class="job-info">
+      <div class="job-name">${job.name}${freqTag}</div>
+      <div class="job-desc">${job.desc}</div>
+    </div>
+    <div class="time-block">
+      <div class="time-badge"><span class="clock">⏰</span>${job.ist_time} IST</div>
+      <div class="days-lbl">${job.days}</div>
+    </div>
+    <div class="last-run-block">${lastRunHtml}</div>
+    <span class="status-badge ${badgeCls}">${label}</span>
+    <a class="log-link" href="/logs/${job.log_file}" target="_blank" title="View log">log ↗</a>
+  </div>`;
+}
+
+function renderSections(jobs) {
+  const sections = {};
+  jobs.forEach(j => {
+    if (!sections[j.category]) sections[j.category] = [];
+    sections[j.category].push(j);
+  });
+
+  const CAT_ORDER = ["Pre-market", "Market open", "Market hours", "Post-market", "Evening", "Night"];
+  let html = "";
+  CAT_ORDER.forEach(cat => {
+    if (!sections[cat]) return;
+    html += `
+    <div class="cat-section">
+      <div class="cat-header">${cat}</div>
+      <div class="job-grid">
+        ${sections[cat].map(renderCard).join("")}
+      </div>
+    </div>`;
+  });
+  return html;
+}
+
+function renderStats(jobs) {
+  const total  = jobs.length;
+  const ok     = jobs.filter(j => j.status === "ok").length;
+  const errors = jobs.filter(j => j.status === "error").length;
+  const warn   = jobs.filter(j => ["stale","unknown","no_data"].includes(j.status)).length;
+  document.getElementById("statsRow").innerHTML = `
+    <div class="stat-card"><div class="stat-val">${total}</div><div class="stat-lbl">Total Jobs</div></div>
+    <div class="stat-card stat-ok"><div class="stat-val">${ok}</div><div class="stat-lbl">Running OK</div></div>
+    <div class="stat-card stat-err"><div class="stat-val">${errors}</div><div class="stat-lbl">Errors</div></div>
+    <div class="stat-card stat-warn"><div class="stat-val">${warn}</div><div class="stat-lbl">Stale / No Data</div></div>`;
+}
+
+async function loadStatus() {
+  const btn  = document.querySelector(".refresh-btn");
+  const icon = document.getElementById("refreshIcon");
+  btn.classList.add("spinning");
+  try {
+    const r    = await fetch("/api/schedule-status");
+    const jobs = await r.json();
+    renderStats(jobs);
+    document.getElementById("jobSections").innerHTML = renderSections(jobs);
+    const now = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    document.getElementById("lastRefresh").textContent = "Last refreshed at " + now;
+  } catch(e) {
+    document.getElementById("lastRefresh").textContent = "Failed to load — " + e.message;
+  } finally {
+    btn.classList.remove("spinning");
+  }
+}
+
+// Load on page open, then auto-refresh every 60s
+loadStatus();
+setInterval(loadStatus, 60000);
+</script>
+</body>
+</html>

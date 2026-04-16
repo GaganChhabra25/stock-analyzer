@@ -339,6 +339,26 @@ _SCREENER_SYNC_SCRIPT = """
 """
 
 
+@app.route("/logs/<name>")
+@login_required
+def serve_log(name):
+    """Serve last 500 lines of a named log file as plain text."""
+    import subprocess, re
+    allowed_ext = re.compile(r'^[a-z_]+\.log$')
+    if not allowed_ext.match(name):
+        abort(404)
+    log_path = "/home/stockapp/stock-analyzer/logs/" + name
+    try:
+        result = subprocess.run(
+            ["tail", "-n", "500", log_path],
+            capture_output=True, text=True, timeout=5
+        )
+        content = result.stdout or "(empty log)"
+    except Exception:
+        content = "(could not read log)"
+    return content, 200, {"Content-Type": "text/plain; charset=utf-8"}
+
+
 @app.route("/reports/<name>")
 @login_required
 def serve_report(name):
@@ -1322,6 +1342,153 @@ def api_delete_user(email):
     from options.user_manager import delete_user
     ok, msg = delete_user(email)
     return jsonify({"ok": ok, "message": msg}), (200 if ok else 404)
+
+
+# ── Schedule monitor ───────────────────────────────────────────────────────────
+
+@app.route("/schedule")
+@login_required
+def schedule_page():
+    """Cron schedule monitor — all jobs, timings, last-run status."""
+    return render_template("schedule.html", user=session["user"])
+
+
+@app.route("/api/schedule-status")
+@login_required
+def api_schedule_status():
+    """Return last-run info for every cron job by reading log tails."""
+    import os, subprocess
+    from datetime import datetime, timezone
+
+    LOG_DIR = "/home/stockapp/stock-analyzer/logs"
+
+    # ── Job definitions (matches deploy/contabo/crontab) ──────────────────────
+    JOBS = [
+        # category, key, display_name, description, ist_time, days, log_file, check_keywords
+        ("Pre-market", "reset_predictions",  "Reset Predictions",
+         "Wipes stale prediction rows from DB before market open",
+         "07:45", "Mon–Fri", "predictions.log", ["reset", "prediction"]),
+
+        ("Pre-market", "global_prices",      "Global Prices",
+         "Fetches WTI, Brent, NatGas, USD/INR closing prices",
+         "08:30", "Mon–Sat", "mcx.log", ["global", "WTI", "price"]),
+
+        ("Pre-market", "kite_auto_login",    "Kite Auto-Login",
+         "Refreshes Zerodha access token for the day",
+         "08:30", "Mon–Fri", "kite.log", ["token saved", "Access token"]),
+
+        ("Pre-market", "save_instruments",   "Save NFO Instruments",
+         "Downloads today's NFO instrument list from Kite Connect",
+         "08:45", "Mon–Fri", "kite.log", ["instruments", "Saved"]),
+
+        ("Market open", "mcx_ohlc_daily",    "MCX OHLC Daily",
+         "Fetches previous day's daily candle for CRUDEOIL & NATURALGAS",
+         "09:00", "Mon–Sat", "mcx.log", ["OHLC", "daily"]),
+
+        ("Market open", "screener",          "Screener + Predictions",
+         "Runs stock screener, computes Nifty range predictions, sends Telegram alert",
+         "09:00", "Mon–Sat", "screener.log", ["Telegram", "prediction", "Report saved"]),
+
+        ("Market hours", "collector",        "Option Chain Collector",
+         "Collects per-minute NFO option chain + MCX futures data (every minute)",
+         "09:00–23:30", "Mon–Fri", "options.log", ["Inserted"]),
+
+        ("Market hours", "watchdog",         "Collector Watchdog",
+         "Checks data pipeline health every 10 min, auto-fixes stale instruments",
+         "09:00–23:30", "Mon–Fri", "kite.log", ["Watchdog", "healthy"]),
+
+        ("Market hours", "mcx_ohlc_15min",   "MCX OHLC 15-min",
+         "Fetches 15-minute OHLC candles for MCX instruments",
+         "09:00–23:30", "Mon–Fri", "mcx.log", ["15min", "15minute"]),
+
+        ("Post-market", "intraday_rescore",  "Intraday Rescore",
+         "Re-scores morning predictions with 2 PM market data",
+         "14:00", "Mon–Fri", "rescore.log", ["rescore", "score"]),
+
+        ("Post-market", "collect_fii",       "FII Equity Data",
+         "Downloads FII/DII equity buy-sell data from NSE",
+         "15:00", "Mon–Fri", "fii.log", ["FII", "stored"]),
+
+        ("Post-market", "nfo_eod",           "NFO EOD Summary",
+         "Stops NFO collection, runs DB summary for the day",
+         "15:35", "Mon–Fri", "kite.log", ["NFO", "Collection-stopped"]),
+
+        ("Post-market", "record_outcomes",   "Record Outcomes",
+         "Records actual Nifty close vs morning predictions for accuracy tracking",
+         "16:30", "Mon–Fri", "outcomes.log", ["outcome", "record"]),
+
+        ("Evening", "collect_fii_fo",        "FII F&O Participant OI",
+         "Downloads FII/DII F&O participant-wise open interest (NSE publishes ~6-7 PM)",
+         "19:00", "Mon–Fri", "fii_fo.log", ["FII F&O", "Stored", "Telegram"]),
+
+        ("Night", "mcx_eod",                 "MCX EOD Summary",
+         "Stops MCX collection, runs DB summary for the evening session",
+         "23:35", "Mon–Fri", "kite.log", ["MCX", "Collection-stopped"]),
+    ]
+
+    def _log_status(log_file, check_keywords):
+        """Read last 20 lines of log file, return last_run_ts + status."""
+        path = os.path.join(LOG_DIR, log_file)
+        try:
+            result = subprocess.run(
+                ["tail", "-n", "30", path],
+                capture_output=True, text=True, timeout=5
+            )
+            lines = result.stdout.strip().splitlines()
+            if not lines:
+                return None, "no_data"
+
+            # Find last timestamp line
+            last_ts = None
+            last_line = ""
+            for line in reversed(lines):
+                # Common log formats: "2026-04-16 12:05:05  INFO ..." or plain text
+                import re
+                m = re.match(r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})", line)
+                if m and last_ts is None:
+                    try:
+                        last_ts = datetime.strptime(m.group(1).replace("T", " "), "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        pass
+                if line.strip():
+                    last_line = line if not last_line else last_line
+
+            # Determine status
+            tail_text = "\n".join(lines[-10:]).lower()
+            if any(k.lower() in tail_text for k in ["error", "exception", "traceback", "failed"]):
+                status = "error"
+            elif any(k.lower() in "\n".join(lines).lower() for k in check_keywords):
+                status = "ok"
+            else:
+                status = "unknown"
+
+            # Check staleness — if last run > 2 days ago treat as stale
+            if last_ts:
+                now = datetime.now()
+                age_h = (now - last_ts).total_seconds() / 3600
+                if age_h > 48:
+                    status = "stale"
+
+            return last_ts.strftime("%Y-%m-%d %H:%M") if last_ts else None, status
+        except Exception as e:
+            return None, "error"
+
+    result = []
+    for cat, key, name, desc, ist_time, days, log_file, keywords in JOBS:
+        last_run, status = _log_status(log_file, keywords)
+        result.append({
+            "category":  cat,
+            "key":       key,
+            "name":      name,
+            "desc":      desc,
+            "ist_time":  ist_time,
+            "days":      days,
+            "log_file":  log_file,
+            "last_run":  last_run,
+            "status":    status,
+        })
+
+    return jsonify(result)
 
 
 # ── Start deployment scheduler on boot ────────────────────────────────────────
