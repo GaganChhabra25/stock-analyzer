@@ -24,11 +24,26 @@ LOG=/home/stockapp/stock-analyzer/logs
 # ── Save instruments (NFO): 08:45 IST = CEST 05:15 ───────────────────────────
 15 5 * * 1-5 cd $APP && $PY options/save_instruments.py >> $LOG/kite.log 2>&1
 
+# ── Reset predictions (wipe stale DB rows): 07:45 IST = CEST 04:15 ──────────
+15 4 * * 1-5 cd $APP && $PY scripts/reset_predictions.py >> $LOG/predictions.log 2>&1
+
 # ── MCX OHLC daily: previous day's candle  09:00 IST = CEST 05:30 ────────────
 30 5 * * 1-6 cd $APP && $PY options/mcx_ohlc.py >> $LOG/mcx.log 2>&1
 
 # ── Screener: 09:00 IST Mon-Sat = CEST 05:30 ─────────────────────────────────
 30 5 * * 1-6 cd $APP && $PY run_screener.py --no-open >> $LOG/screener.log 2>&1
+
+# ── Intraday rescore (2 PM prediction update): 14:00 IST = CEST 10:30 ────────
+30 10 * * 1-5 cd $APP && $PY scripts/intraday_rescore.py >> $LOG/rescore.log 2>&1
+
+# ── FII equity/derivative data: 15:00 IST = CEST 11:30 ───────────────────────
+30 11 * * 1-5 cd $APP && $PY scripts/collect_fii_data.py >> $LOG/fii.log 2>&1
+
+# ── Record prediction outcomes (EOD): 16:30 IST = CEST 13:00 ────────────────
+0 13 * * 1-5 cd $APP && $PY scripts/record_outcomes.py >> $LOG/outcomes.log 2>&1
+
+# ── FII F&O participant OI (published ~6-7 PM IST): 19:00 IST = CEST 15:30 ──
+30 15 * * 1-5 cd $APP && $PY scripts/collect_fii_fo_data.py >> $LOG/fii_fo.log 2>&1
 
 # ── Options collector: every minute 09:00–23:30 IST = CEST 05:30–20:00 ───────
 # NFOCollector  activates 09:14–15:31 IST (checks own is_open())
