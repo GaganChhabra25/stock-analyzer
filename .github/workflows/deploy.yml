@@ -32,22 +32,30 @@ jobs:
             set -e
             DEPLOY_DIR=/home/stockapp/stock-analyzer
             VENV=\$DEPLOY_DIR/venv
+
             # Fix DNS if needed
             grep -q "8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
             # Pull latest code
             if [ ! -d \$DEPLOY_DIR/.git ]; then
               sudo -u stockapp git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git \$DEPLOY_DIR
             else
-              # Fix ownership in case root ran git previously (causes permission errors)
               chown -R stockapp:stockapp \$DEPLOY_DIR/.git
               sudo -u stockapp git -C \$DEPLOY_DIR fetch https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git master
               sudo -u stockapp git -C \$DEPLOY_DIR reset --hard FETCH_HEAD
             fi
-            # Install dependencies
+
+            # ── Web app ──────────────────────────────────────────────────────
             sudo -u stockapp \$VENV/bin/pip install -r \$DEPLOY_DIR/requirements.txt -q
-            # Restart app
             systemctl restart stock-analyzer
-            # Update crontab from version-controlled file
+            # Update system crontab (stays active until cutover.sh is run)
             crontab -u stockapp \$DEPLOY_DIR/deploy/contabo/crontab
-            echo "Deployed + crontab updated at \$(date)"
+
+            # ── Cron worker Docker image (build only, not started yet) ───────
+            # System cron keeps running. Run deploy/contabo/cutover.sh manually
+            # to migrate DB + start Docker cron + remove system crontab.
+            cd \$DEPLOY_DIR
+            docker compose build cron-worker
+
+            echo "Deployed at \$(date) — system cron active, Docker image ready"
           ENDSSH

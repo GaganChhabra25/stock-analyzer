@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.git/
+.github/
+logs/
+reports/
+data/zerodha_holdings.csv
+data/mf_holdings.csv
+*.log
+.cursor/
+.cursorrules

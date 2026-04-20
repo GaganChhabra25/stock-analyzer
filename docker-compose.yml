@@ -1,0 +1,49 @@
+version: '3.9'
+
+# =============================================================================
+# Stock Analyzer — Cron Worker + PostgreSQL
+#
+# First-time setup:  see deploy/contabo/MIGRATE.md
+# Start:             docker compose up -d
+# Logs:              docker compose logs -f cron-worker
+# DB shell:          docker compose exec postgres psql -U stockanalyzer stock_analyzer
+# =============================================================================
+
+services:
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stock_analyzer
+      POSTGRES_USER: ${POSTGRES_USER:-stockanalyzer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Exposed on 5433 to avoid conflict with existing host postgres during migration.
+      # After full migration, change to 5432:5432 if desired.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stockanalyzer} -d stock_analyzer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  cron-worker:
+    build:
+      context: .
+      dockerfile: docker/cron-worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override localhost → postgres container hostname
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockanalyzer}:${POSTGRES_PASSWORD}@postgres:5432/stock_analyzer
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

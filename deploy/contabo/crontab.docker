@@ -1,0 +1,66 @@
+# =============================================================================
+# Stock Analyzer — Crontab for Docker cron-worker container
+# Server timezone: Europe/Berlin (CEST = UTC+2 in summer, CET = UTC+1 in winter)
+#
+# IST = UTC+5:30  →  CEST = IST − 3:30
+#
+# Key conversions (CEST / summer):
+#   IST 09:00 = CEST 05:30  |  IST 09:15 = CEST 05:45
+#   IST 15:30 = CEST 12:00  |  IST 15:35 = CEST 12:05
+#   IST 23:30 = CEST 20:00  |  IST 23:35 = CEST 20:05
+# =============================================================================
+
+APP=/app
+PY=python
+LOG=/app/logs
+
+# ── Global prices: WTI / Brent / NatGas / USDINR  08:30 IST = CEST 05:00 ─────
+# Runs Mon-Sat to catch Friday's US close on Saturday morning
+0 5 * * 1-6 cd $APP && $PY options/global_prices.py >> $LOG/mcx.log 2>&1
+
+# ── Kite auto-login: 08:30 IST = CEST 05:00 ──────────────────────────────────
+0 5 * * 1-5 cd $APP && $PY options/kite_auto_login.py >> $LOG/kite.log 2>&1
+
+# ── Save instruments (NFO): 08:45 IST = CEST 05:15 ───────────────────────────
+15 5 * * 1-5 cd $APP && $PY options/save_instruments.py >> $LOG/kite.log 2>&1
+
+# ── Reset predictions (wipe stale DB rows): 07:45 IST = CEST 04:15 ──────────
+15 4 * * 1-5 cd $APP && $PY scripts/reset_predictions.py >> $LOG/predictions.log 2>&1
+
+# ── MCX OHLC daily: previous day's candle  09:00 IST = CEST 05:30 ────────────
+30 5 * * 1-6 cd $APP && $PY options/mcx_ohlc.py >> $LOG/mcx.log 2>&1
+
+# ── Screener: 09:00 IST Mon-Sat = CEST 05:30 ─────────────────────────────────
+30 5 * * 1-6 cd $APP && $PY run_screener.py --no-open >> $LOG/screener.log 2>&1
+
+# ── Intraday rescore (2 PM prediction update): 14:00 IST = CEST 10:30 ────────
+30 10 * * 1-5 cd $APP && $PY scripts/intraday_rescore.py >> $LOG/rescore.log 2>&1
+
+# ── FII equity/derivative data: 15:00 IST = CEST 11:30 ───────────────────────
+30 11 * * 1-5 cd $APP && $PY scripts/collect_fii_data.py >> $LOG/fii.log 2>&1
+
+# ── Record prediction outcomes (EOD): 16:30 IST = CEST 13:00 ────────────────
+0 13 * * 1-5 cd $APP && $PY scripts/record_outcomes.py >> $LOG/outcomes.log 2>&1
+
+# ── FII F&O participant OI (published ~6-7 PM IST): 19:00 IST = CEST 15:30 ──
+30 15 * * 1-5 cd $APP && $PY scripts/collect_fii_fo_data.py >> $LOG/fii_fo.log 2>&1
+
+# ── Options collector: every minute 09:00–23:30 IST = CEST 05:30–20:00 ───────
+# NFOCollector  activates 09:14–15:31 IST (checks own is_open())
+# MCXCollector  activates 09:00–23:30 IST (checks own is_open())
+*/1 5-20 * * 1-5 cd $APP && $PY options/collector.py >> $LOG/options.log 2>&1
+
+# ── Watchdog: every 10 min during all market hours = CEST 05:30–20:00 ────────
+# Covers NFO (05:30–12:05) + MCX (05:30–20:05) IST windows
+*/10 5-20 * * 1-5 cd $APP && $PY options/watchdog.py >> $LOG/kite.log 2>&1
+
+# ── NFO EOD: collection stopped + DB summary: 15:35 IST = CEST 12:05 ─────────
+5 12 * * 1-5 cd $APP && $PY options/collector.py --eod NFO >> $LOG/kite.log 2>&1
+5 12 * * 1-5 cd $APP && $PY options/db_summary.py --exchange NFO >> $LOG/kite.log 2>&1
+
+# ── MCX EOD: collection stopped + DB summary: 23:35 IST = CEST 20:05 ─────────
+5 20 * * 1-5 cd $APP && $PY options/collector.py --eod MCX >> $LOG/kite.log 2>&1
+5 20 * * 1-5 cd $APP && $PY options/db_summary.py --exchange MCX >> $LOG/kite.log 2>&1
+
+# ── MCX OHLC 15-min: every 15 min during MCX hours  CEST 05:30–20:00 ─────────
+*/15 5-20 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --15min >> $LOG/mcx.log 2>&1
