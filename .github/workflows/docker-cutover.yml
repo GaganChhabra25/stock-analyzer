@@ -1,0 +1,74 @@
+name: Docker Cutover
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to run'
+        required: true
+        type: choice
+        options:
+          - validate
+          - cutover
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secrets
+        run: |
+          if [ -z "${{ secrets.SERVER_HOST }}" ]; then echo "ERROR: SERVER_HOST not set" && exit 1; fi
+          if [ -z "${{ secrets.SERVER_USER }}" ]; then echo "ERROR: SERVER_USER not set" && exit 1; fi
+          if [ -z "${{ secrets.SERVER_SSH_KEY }}" ]; then echo "ERROR: SERVER_SSH_KEY not set" && exit 1; fi
+          echo "Secrets OK — running: ${{ github.event.inputs.action }}"
+
+      - name: Run on server
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          HOST: ${{ secrets.SERVER_HOST }}
+          USER: ${{ secrets.SERVER_USER }}
+          ACTION: ${{ github.event.inputs.action }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" bash -s << ENDSSH
+            set -e
+            DEPLOY_DIR=/home/stockapp/stock-analyzer
+
+            if [ "$ACTION" = "validate" ]; then
+              # ── Step 0: ensure POSTGRES_USER/PASSWORD in .env ──────────────
+              if ! grep -q "POSTGRES_PASSWORD" \$DEPLOY_DIR/.env; then
+                echo "ERROR: POSTGRES_PASSWORD missing in .env — add it first"
+                exit 1
+              fi
+
+              # ── Step 1: pg_dump from host postgres ─────────────────────────
+              echo "=== Dumping host DB ==="
+              BACKUP=\$DEPLOY_DIR/stock_analyzer_validate_backup.sql
+              sudo -u stockapp pg_dump -U stockanalyzer stock_analyzer > "\$BACKUP"
+              echo "Backup: \$BACKUP"
+
+              # ── Step 2: start Docker postgres + restore ────────────────────
+              echo "=== Starting Docker postgres ==="
+              cd \$DEPLOY_DIR
+              docker compose up -d postgres
+              echo "Waiting for postgres..."
+              until docker compose exec postgres pg_isready -U stockanalyzer -d stock_analyzer -q 2>/dev/null; do sleep 2; done
+              echo "Postgres ready"
+
+              echo "=== Restoring data ==="
+              docker compose exec -T postgres psql -U stockanalyzer stock_analyzer < "\$BACKUP"
+              echo "Restore done"
+
+              # ── Step 3: run validate.sh ────────────────────────────────────
+              echo "=== Running validate.sh ==="
+              bash \$DEPLOY_DIR/deploy/contabo/validate.sh
+
+            elif [ "$ACTION" = "cutover" ]; then
+              echo "=== Running cutover.sh ==="
+              bash \$DEPLOY_DIR/deploy/contabo/cutover.sh
+            fi
+          ENDSSH
