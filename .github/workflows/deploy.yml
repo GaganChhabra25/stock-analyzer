@@ -36,6 +36,14 @@ jobs:
             # Fix DNS if needed
             grep -q "8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
+            # Install Docker if not present
+            if ! command -v docker &>/dev/null; then
+              curl -fsSL https://get.docker.com | sh
+              usermod -aG docker stockapp
+              systemctl enable docker
+              systemctl start docker
+            fi
+
             # Pull latest code
             if [ ! -d \$DEPLOY_DIR/.git ]; then
               sudo -u stockapp git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git \$DEPLOY_DIR
