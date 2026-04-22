@@ -41,7 +41,7 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 IST     = ZoneInfo("Asia/Kolkata")
-VENV_PY = str(Path(__file__).parent.parent / "venv/bin/python3")
+VENV_PY = sys.executable  # works in both Docker (/app/venv/...) and host (venv/bin/python3)
 APP_DIR = str(Path(__file__).parent.parent)
 
 # Each entry: (label, instrument_to_check, collector_class)
