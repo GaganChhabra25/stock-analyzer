@@ -56,14 +56,17 @@ jobs:
             # ── Web app ──────────────────────────────────────────────────────
             sudo -u stockapp \$VENV/bin/pip install -r \$DEPLOY_DIR/requirements.txt -q
             systemctl restart stock-analyzer
-            # Update system crontab (stays active until cutover.sh is run)
-            crontab -u stockapp \$DEPLOY_DIR/deploy/contabo/crontab
 
-            # ── Cron worker Docker image (build only, not started yet) ───────
-            # System cron keeps running. Run deploy/contabo/cutover.sh manually
-            # to migrate DB + start Docker cron + remove system crontab.
+            # ── Cron worker (Docker) ─────────────────────────────────────────
+            # If Docker cron-worker is running (post-cutover), rebuild + restart it.
+            # Never reinstate host crontab — Docker is the source of truth.
             cd \$DEPLOY_DIR
-            docker compose build cron-worker
+            if docker compose ps cron-worker | grep -q "Up"; then
+              docker compose up -d --build cron-worker
+              echo "Docker cron-worker rebuilt and restarted"
+            else
+              echo "Docker cron-worker not running — skipping (run cutover.sh to migrate)"
+            fi
 
-            echo "Deployed at \$(date) — system cron active, Docker image ready"
+            echo "Deployed at \$(date)"
           ENDSSH
