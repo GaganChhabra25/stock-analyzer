@@ -65,3 +65,19 @@ LOG=/app/logs
 # ── MCX OHLC: CRUDEOIL 1-min (every minute) + NATURALGAS 15-min  CEST 05:30–20:00
 */1  5-20 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --1min  --symbol CRUDEOIL   >> $LOG/mcx.log 2>&1
 */15 5-20 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --15min --symbol NATURALGAS >> $LOG/mcx.log 2>&1
+
+# ── NSE indices + sector + USDINR daily bars: 09:05 IST = CEST 05:35 ────────
+35 5 * * 1-5 cd $APP && $PY options/nse_ohlc.py --daily >> $LOG/nse_ohlc.log 2>&1
+
+# ── NSE indices + sector + USDINR per-minute: 09:15–15:30 IST = CEST 05:45–12:00
+*/1 5-12 * * 1-5 cd $APP && $PY options/nse_ohlc.py --minute >> $LOG/nse_ohlc.log 2>&1
+
+# ── US markets daily (S&P500/Nasdaq/DXY/VIX/10Y): 08:35 IST = CEST 05:05 ───
+# Mon-Sat to catch Friday US close on Saturday morning
+5 5 * * 1-6 cd $APP && $PY options/us_market.py >> $LOG/us_market.log 2>&1
+
+# ── US markets intraday (5-min): US hours 19:00–01:30 IST = CEST 15:30–22:00 ─
+*/5 15-22 * * 1-5 cd $APP && $PY options/us_market.py --intraday >> $LOG/us_market.log 2>&1
+
+# ── Derived metrics (Max Pain, GEX, IV Skew): 15:40 IST = CEST 12:10 ────────
+10 12 * * 1-5 cd $APP && $PY options/derived.py >> $LOG/derived.log 2>&1

@@ -1405,6 +1405,26 @@ def api_schedule_status():
          "Fetches 15-minute OHLC candles for NATURALGAS",
          "09:00–23:30", "Mon–Fri", "mcx.log", ["15min", "NATURALGAS"]),
 
+        ("Market hours", "nse_ohlc_minute",  "NSE Indices 1-min",
+         "Per-minute OHLC for Nifty50, BankNifty, FinNifty, 10 sector indices, USDINR",
+         "09:15–15:30", "Mon–Fri", "nse_ohlc.log", ["NSE-OHLC", "Minute run"]),
+
+        ("Pre-market",  "nse_ohlc_daily",   "NSE Indices Daily Backfill",
+         "Daily OHLC backfill (60 days) for all NSE broad + sector indices",
+         "09:05", "Mon–Fri", "nse_ohlc.log", ["NSE-OHLC", "Daily run"]),
+
+        ("US hours",    "us_market_intraday","US Markets 5-min",
+         "5-min OHLC for S&P500/Nasdaq/Dow futures, DXY, US VIX, US 10Y yield",
+         "19:00–01:30", "Mon–Fri", "us_market.log", ["US-MARKET", "Intraday run"]),
+
+        ("Pre-market",  "us_market_daily",  "US Markets Daily",
+         "Daily OHLC for US futures and macro indicators via yfinance",
+         "08:35", "Mon–Sat", "us_market.log", ["US-MARKET", "Daily run"]),
+
+        ("Post-market", "derived_metrics",  "Derived Metrics (MaxPain/GEX/Skew)",
+         "EOD Max Pain, Gamma Exposure, IV Skew for NIFTY and BANKNIFTY",
+         "15:40", "Mon–Fri", "derived.log", ["DERIVED", "MaxPain", "GEX"]),
+
         ("Post-market", "intraday_rescore",  "Intraday Rescore",
          "Re-scores morning predictions with 2 PM market data",
          "14:00", "Mon–Fri", "rescore.log", ["rescore", "score"]),
