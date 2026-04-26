@@ -88,14 +88,14 @@ COMMENT ON TABLE market_snapshot IS
 
 
 -- ── MCX futures OHLC candles ──────────────────────────────────────────────────
--- Stores daily + 15-min OHLC for NATURALGAS and CRUDEOIL futures.
+-- Stores daily + 15-min + 1-min OHLC for NATURALGAS and CRUDEOIL futures.
 -- Source: Kite Connect historical API (near-month futures contract).
 -- Used for: ATR, S/R levels, trend, intraday setup for option selling.
 CREATE TABLE IF NOT EXISTS mcx_ohlc (
     id          BIGSERIAL       PRIMARY KEY,
     ts          TIMESTAMPTZ     NOT NULL,           -- candle open time (IST-aware)
     instrument  VARCHAR(20)     NOT NULL,           -- NATURALGAS | CRUDEOIL
-    interval    VARCHAR(10)     NOT NULL,           -- 'day' | '15minute'
+    interval    VARCHAR(10)     NOT NULL,           -- 'day' | '15minute' | 'minute'
     open        NUMERIC(12,2),
     high        NUMERIC(12,2),
     low         NUMERIC(12,2),
@@ -109,7 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_lookup
     ON mcx_ohlc (instrument, interval, ts DESC);
 
 COMMENT ON TABLE mcx_ohlc IS
-    'MCX futures OHLC (daily + 15-min). Used for ATR, trend, S/R for MCX option selling.';
+    'MCX futures OHLC (daily + 15-min + 1-min). CRUDEOIL collected per-minute; NATURALGAS at 15-min.';
 
 
 -- ── Global commodity reference prices ─────────────────────────────────────────

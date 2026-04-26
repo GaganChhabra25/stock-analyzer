@@ -1397,9 +1397,13 @@ def api_schedule_status():
          "Checks data pipeline health every 10 min, auto-fixes stale instruments",
          "09:00–23:30", "Mon–Fri", "kite.log", ["Watchdog", "healthy"]),
 
-        ("Market hours", "mcx_ohlc_15min",   "MCX OHLC 15-min",
-         "Fetches 15-minute OHLC candles for MCX instruments",
-         "09:00–23:30", "Mon–Fri", "mcx.log", ["15min", "15minute"]),
+        ("Market hours", "mcx_ohlc_1min",    "CRUDEOIL OHLC 1-min",
+         "Fetches per-minute OHLC candles for CRUDEOIL (every minute via cron)",
+         "09:00–23:30", "Mon–Fri", "mcx.log", ["1min", "CRUDEOIL"]),
+
+        ("Market hours", "mcx_ohlc_15min",   "NATURALGAS OHLC 15-min",
+         "Fetches 15-minute OHLC candles for NATURALGAS",
+         "09:00–23:30", "Mon–Fri", "mcx.log", ["15min", "NATURALGAS"]),
 
         ("Post-market", "intraday_rescore",  "Intraday Rescore",
          "Re-scores morning predictions with 2 PM market data",

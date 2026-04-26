@@ -10,9 +10,13 @@ historical API and upserts into mcx_ohlc table.
   Intraday mode (--15min): fetches today + yesterday's 15-min candles.
               Run every 15 min during MCX hours for live S/R levels.
 
+  Per-minute mode (--1min): fetches today's 1-min candles.
+              Run every minute during MCX hours (typically CRUDEOIL only).
+
 Usage:
-  python options/mcx_ohlc.py           # daily candles
-  python options/mcx_ohlc.py --15min   # 15-min intraday candles
+  python options/mcx_ohlc.py                         # daily candles (all symbols)
+  python options/mcx_ohlc.py --15min                 # 15-min intraday (all symbols)
+  python options/mcx_ohlc.py --1min --symbol CRUDEOIL  # per-minute (crude only)
 """
 
 import argparse
@@ -120,34 +124,50 @@ def fetch_and_store(kite, symbol: str, interval: str,
     return len(rows)
 
 
-def run_daily(kite) -> None:
+def run_daily(kite, symbols: list) -> None:
     """Backfill / daily update: last 60 days of daily candles."""
     to_date   = date.today()
     from_date = to_date - timedelta(days=BACKFILL_DAYS)
-    total = sum(fetch_and_store(kite, sym, "day", from_date, to_date) for sym in SYMBOLS)
+    total = sum(fetch_and_store(kite, sym, "day", from_date, to_date) for sym in symbols)
     logger.info("[OHLC] Daily run complete — %d candles.", total)
 
 
-def run_15min(kite) -> None:
+def run_15min(kite, symbols: list) -> None:
     """Fetch today + yesterday 15-min candles (for intraday S/R)."""
     to_date   = date.today()
     from_date = to_date - timedelta(days=1)
-    total = sum(fetch_and_store(kite, sym, "15minute", from_date, to_date) for sym in SYMBOLS)
-    logger.info("[OHLC] 15-min run complete — %d candles.", total)
+    total = sum(fetch_and_store(kite, sym, "15minute", from_date, to_date) for sym in symbols)
+    logger.info("[OHLC] 15min run complete — %d candles.", total)
+
+
+def run_1min(kite, symbols: list) -> None:
+    """Fetch today's 1-min OHLC candles (per-minute price tracking)."""
+    today = date.today()
+    total = sum(fetch_and_store(kite, sym, "minute", today, today) for sym in symbols)
+    logger.info("[OHLC] 1min run complete — %d candles.", total)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MCX OHLC collector")
-    parser.add_argument("--15min", dest="intraday", action="store_true",
-                        help="Fetch 15-min intraday candles instead of daily")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--15min", dest="intraday_15", action="store_true",
+                      help="Fetch 15-min intraday candles instead of daily")
+    mode.add_argument("--1min", dest="intraday_1", action="store_true",
+                      help="Fetch per-minute intraday candles (runs every minute via cron)")
+    parser.add_argument("--symbol", dest="symbol", default=None,
+                        help="Run only for this symbol, e.g. CRUDEOIL (default: all)")
     args = parser.parse_args()
+
+    symbols = [args.symbol.upper()] if args.symbol else SYMBOLS
 
     kite = get_kite()
     if not kite:
         logger.error("[OHLC] Kite not authorised. Visit /kite/login.")
         sys.exit(1)
 
-    if args.intraday:
-        run_15min(kite)
+    if args.intraday_1:
+        run_1min(kite, symbols)
+    elif args.intraday_15:
+        run_15min(kite, symbols)
     else:
-        run_daily(kite)
+        run_daily(kite, symbols)
