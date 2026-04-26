@@ -219,14 +219,30 @@ def run_minute(kite) -> None:
     logger.info("[NSE-OHLC] Minute run complete — %d candles.", total)
 
 
+def _minute_data_exists() -> bool:
+    """True if nse_ohlc already has any minute-interval rows."""
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM nse_ohlc WHERE interval = 'minute' LIMIT 1")
+            return cur.fetchone() is not None
+
+
 def run_daily(kite) -> None:
-    """Backfill last 60 days of daily candles for all symbols."""
+    """
+    Backfill last 60 days of daily candles for all symbols.
+    On first ever run (no minute data in DB), automatically triggers the
+    60-day minute backfill so no manual step is needed.
+    """
     to_date   = date.today()
     from_date = to_date - timedelta(days=BACKFILL_DAYS)
 
     token_map = build_token_map(kite)
     total = fetch_and_store(kite, token_map, from_date, to_date, "day")
     logger.info("[NSE-OHLC] Daily run complete — %d candles.", total)
+
+    if not _minute_data_exists():
+        logger.info("[NSE-OHLC] No minute data found — auto-triggering 60-day backfill.")
+        run_backfill(kite)
 
 
 def run_backfill(kite) -> None:
