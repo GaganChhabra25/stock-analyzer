@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+from options.tg import send, db_size, table_rows, now_ist
 from screener.db import _get_conn
 from logging_config import configure_logging
 
@@ -297,6 +298,30 @@ def run() -> None:
 
         conn.commit()
     logger.info("[DERIVED] EOD metrics saved for %s.", today)
+
+    # Build Telegram summary
+    lines = [f"\U0001f4ca EOD Summary  {now_ist()}"]
+    with _get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT instrument, max_pain, gex_total, iv_skew_25d, atm_iv
+                FROM derived_daily WHERE date = CURRENT_DATE
+                ORDER BY instrument
+            """)
+            for inst, mp, gex, skew, atm in cur.fetchall():
+                gex_str  = f"{float(gex):+.1f}Cr" if gex  is not None else "N/A"
+                skew_str = f"{float(skew):+.2f}"  if skew is not None else "N/A"
+                iv_str   = f"{float(atm):.1f}%"   if atm  is not None else "N/A"
+                lines.append(
+                    f"{inst}: MaxPain {mp} | GEX {gex_str} | Skew {skew_str} | IV {iv_str}"
+                )
+
+    lines += [
+        f"option_chain: {table_rows('option_chain'):,} rows",
+        f"nse_ohlc    : {table_rows('nse_ohlc'):,} rows",
+        f"DB size     : {db_size()}",
+    ]
+    send("\n".join(lines))
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+from options.tg import once, db_size, table_rows, now_ist
 from screener.db import _get_conn
 from logging_config import configure_logging
 
@@ -135,6 +136,21 @@ def run_intraday() -> None:
             logger.error("[US-MARKET] Intraday fetch failed for %s: %s", symbol, exc)
 
     logger.info("[US-MARKET] Intraday run complete — %d candles.", total)
+
+    once("us_start",
+         f"\U0001f7e2 US Market Started\n"
+         f"{now_ist()}\n"
+         f"Collecting: SP500 / Nasdaq / Dow / DXY / VIX / 10Y")
+
+    # After US close (~01:30 AM IST = 22:00 CEST) — send end message once
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.hour >= 20:   # CEST 22:00+ = IST 01:30 AM+
+        once("us_end",
+             f"\U0001f534 US Market Done\n"
+             f"{now_ist()}\n"
+             f"Today: {total:,} rows\n"
+             f"us_market total: {table_rows('us_market'):,} rows\n"
+             f"DB: {db_size()}")
 
 
 def run_daily() -> None:

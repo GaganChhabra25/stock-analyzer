@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from options.kite_auth import get_kite
+from options.tg import once, db_size, table_rows, now_ist
 from screener.db import _get_conn
 from logging_config import configure_logging
 
@@ -207,6 +208,15 @@ def build_token_map(kite) -> dict:
 def run_minute(kite) -> None:
     """Fetch last 5 min of 1-minute candles for all symbols."""
     if not _is_market_open():
+        # After market close — send end message once
+        now = datetime.now(IST)
+        if now.hour == 15 and now.minute >= 30:
+            once("nse_end",
+                 f"\U0001f534 NSE Collection Ended\n"
+                 f"{now_ist()}\n"
+                 f"nse_ohlc today: {_today_rows():,} rows\n"
+                 f"nse_ohlc total: {table_rows('nse_ohlc'):,} rows\n"
+                 f"DB: {db_size()}")
         logger.debug("[NSE-OHLC] Market closed — skipping minute run.")
         return
 
@@ -227,6 +237,19 @@ def _minute_data_exists() -> bool:
             return cur.fetchone() is not None
 
 
+def _today_rows() -> int:
+    """Count nse_ohlc rows inserted today."""
+    try:
+        with _get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM nse_ohlc WHERE ts::date = CURRENT_DATE"
+                )
+                return cur.fetchone()[0] or 0
+    except Exception:
+        return 0
+
+
 def run_daily(kite) -> None:
     """
     Backfill last 60 days of daily candles for all symbols.
@@ -240,9 +263,21 @@ def run_daily(kite) -> None:
     total = fetch_and_store(kite, token_map, from_date, to_date, "day")
     logger.info("[NSE-OHLC] Daily run complete — %d candles.", total)
 
-    if not _minute_data_exists():
+    backfill_running = not _minute_data_exists()
+    once("nse_start",
+         f"\U0001f7e2 NSE Collection Started\n"
+         f"{now_ist()}\n"
+         f"Daily: {total:,} rows\n"
+         + ("Backfill: running (60 days)..." if backfill_running else ""))
+
+    if backfill_running:
         logger.info("[NSE-OHLC] No minute data found — auto-triggering 60-day backfill.")
         run_backfill(kite)
+        once("nse_backfill_done",
+             f"✅ NSE Backfill Done\n"
+             f"{now_ist()}\n"
+             f"nse_ohlc total: {table_rows('nse_ohlc'):,} rows\n"
+             f"DB: {db_size()}")
 
 
 def run_backfill(kite) -> None:
