@@ -45,5 +45,23 @@ services:
       postgres:
         condition: service_healthy
 
+  # CRUDEOIL 1-second WebSocket daemon — persistent process, not cron-based
+  crudeoil-ws:
+    build:
+      context: .
+      dockerfile: docker/cron-worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockanalyzer}:${POSTGRES_PASSWORD}@postgres:5432/stock_analyzer
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    command: ["python", "-u", "options/crudeoil_ws.py"]
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
