@@ -62,8 +62,8 @@ LOG=/app/logs
 5 20 * * 1-5 cd $APP && $PY options/collector.py --eod MCX >> $LOG/kite.log 2>&1
 5 20 * * 1-5 cd $APP && $PY options/db_summary.py --exchange MCX >> $LOG/kite.log 2>&1
 
-# ── MCX OHLC: CRUDEOIL 1-min (every minute) + NATURALGAS 15-min  CEST 05:30–20:00
-*/1  5-20 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --1min  --symbol CRUDEOIL   >> $LOG/mcx.log 2>&1
+# ── MCX OHLC: NATURALGAS 15-min  CEST 05:30–20:00
+# CRUDEOIL 1-min removed — replaced by crudeoil-ws WebSocket daemon (1-second)
 */15 5-20 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --15min --symbol NATURALGAS >> $LOG/mcx.log 2>&1
 
 # ── NSE indices + sector + USDINR daily bars: 09:05 IST = CEST 05:35 ────────
