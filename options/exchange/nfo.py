@@ -15,7 +15,6 @@ from options.exchange.base import ExchangeCollector
 from options.instruments import (
     load_instruments,
     get_nearest_expiry,
-    get_monthly_expiry,
     get_option_tokens,
     atm_strike,
 )
@@ -50,10 +49,9 @@ class NFOCollector(ExchangeCollector):
             return None
 
     def get_expiries(self, df: pd.DataFrame, symbol: str) -> list:
-        """Return [weekly_expiry, monthly_expiry], deduplicated."""
-        weekly  = get_nearest_expiry(df, symbol)
-        monthly = get_monthly_expiry(df, symbol)
-        return list(dict.fromkeys(e for e in [weekly, monthly] if e))
+        """Return only the nearest/current weekly expiry."""
+        nearest = get_nearest_expiry(df, symbol)
+        return [nearest] if nearest else []
 
     def get_option_tokens(
         self, df: pd.DataFrame, symbol: str, expiry: date, atm: int, n_strikes: int
