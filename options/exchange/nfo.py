@@ -1,5 +1,5 @@
 """
-NFO exchange collector — NIFTY and BANKNIFTY options.
+NFO exchange collector — NIFTY options.
 
 Delegates all instrument helpers to the existing options/instruments.py
 module so that backfill.py and app.py imports remain unaffected.
@@ -24,13 +24,12 @@ logger = logging.getLogger(__name__)
 
 _SPOT_SYMBOLS = {
     "NIFTY":     "NSE:NIFTY 50",
-    "BANKNIFTY": "NSE:NIFTY BANK",
 }
 
 
 class NFOCollector(ExchangeCollector):
     exchange     = "NFO"
-    symbols      = ["NIFTY", "BANKNIFTY"]
+    symbols      = ["NIFTY"]
     n_strikes    = 20           # ATM ± 20 — covers 1.5σ sell setups
     market_open  = time(9, 14)
     market_close = time(15, 31)

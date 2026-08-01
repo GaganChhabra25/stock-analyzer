@@ -4,7 +4,7 @@ Pipeline Watchdog — self-healing monitor for all options data collection.
 Runs every 10 minutes during all market hours via cron.
 
 Market windows monitored:
-  NFO (NIFTY/BANKNIFTY) : 09:14 – 15:35 IST  (NSE holidays respected)
+  NFO (NIFTY)           : 09:14 – 15:35 IST  (NSE holidays respected)
   MCX (NatGas/Crude)     : 09:00 – 23:35 IST  (MCX holidays + evening-only days respected)
 
 Uses the same is_open() from each ExchangeCollector — single source of truth.

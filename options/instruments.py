@@ -1,7 +1,7 @@
 """
 NFO instrument cache for Kite Connect.
 
-Loads all NIFTY / BANKNIFTY option instruments once per day and
+Loads all NIFTY option instruments once per day and
 caches to a local JSON file to avoid repeated API calls.
 """
 
@@ -20,12 +20,12 @@ CACHE_DIR  = Path(__file__).parent.parent / "data" / "kite_cache"
 CACHE_FILE = CACHE_DIR / "nfo_instruments.json"
 
 # Strike step sizes
-STRIKE_STEP = {"NIFTY": 50, "BANKNIFTY": 100}
+STRIKE_STEP = {"NIFTY": 50}
 
 
 def load_instruments(kite) -> pd.DataFrame:
     """
-    Return DataFrame of NFO instruments for NIFTY and BANKNIFTY.
+    Return DataFrame of NFO instruments for NIFTY.
     Uses cached file if it exists and was created today.
     """
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -45,9 +45,9 @@ def load_instruments(kite) -> pd.DataFrame:
     instruments = kite.instruments("NFO")
     df = pd.DataFrame(instruments)
 
-    # Keep only NIFTY and BANKNIFTY options
+    # Keep only NIFTY options
     df = df[
-        df["tradingsymbol"].str.startswith(("NIFTY", "BANKNIFTY")) &
+        df["tradingsymbol"].str.startswith("NIFTY") &
         (df["instrument_type"].isin(["CE", "PE"]))
     ].copy()
 

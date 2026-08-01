@@ -7,7 +7,7 @@ Computes and stores into derived_daily table.
 Run at 15:40 IST (after market close) via cron:
   10 12 * * 1-5   options/derived.py          (CEST 12:10 = IST 15:40)
 
-Metrics computed per instrument (NIFTY, BANKNIFTY) per day:
+Metrics computed for NIFTY per day:
 
   Max Pain
     Strike where total dollar loss for option buyers is maximised.
@@ -46,8 +46,8 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 IST        = ZoneInfo("Asia/Kolkata")
-INSTRUMENTS = ["NIFTY", "BANKNIFTY"]
-LOT_SIZES   = {"NIFTY": 25, "BANKNIFTY": 15}
+INSTRUMENTS = ["NIFTY"]
+LOT_SIZES   = {"NIFTY": 25}
 
 
 # ── Max Pain ──────────────────────────────────────────────────────────────────

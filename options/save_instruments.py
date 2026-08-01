@@ -42,10 +42,10 @@ def save_instruments():
     logger.info("Fetching NFO instrument list...")
     instruments = kite.instruments("NFO")
 
-    # Keep only NIFTY and BANKNIFTY options
+    # Keep only NIFTY options
     filtered = [
         i for i in instruments
-        if i.get("tradingsymbol", "").startswith(("NIFTY", "BANKNIFTY"))
+        if i.get("tradingsymbol", "").startswith("NIFTY")
         and i.get("instrument_type") in ("CE", "PE")
     ]
 

@@ -2,7 +2,7 @@
 Telegram notifications for options data collection events.
 
 Each exchange has its own TelegramNotifier instance so that
-NATURALGAS/CRUDEOIL messages are independent of NIFTY/BANKNIFTY.
+NATURALGAS/CRUDEOIL messages are independent of NIFTY.
 
 Sentinel files (data/started_<EXCHANGE>_<date>.flag etc.) ensure
 each message is sent exactly once per day regardless of how many
@@ -147,7 +147,7 @@ class TelegramNotifier:
     def _exchange_instruments(self) -> list:
         """Map exchange name to the instrument names stored in option_chain."""
         mapping = {
-            "NFO": ["NIFTY", "BANKNIFTY"],
+            "NFO": ["NIFTY"],
             "MCX": ["NATURALGAS", "CRUDEOIL"],
         }
         return mapping.get(self.exchange, [])

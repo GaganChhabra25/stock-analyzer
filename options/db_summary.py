@@ -23,14 +23,13 @@ from screener.db import _get_conn
 # Expected trading minutes per day per instrument (for missed-minute calc)
 _EXPECTED_MINUTES = {
     "NIFTY":       375,   # 9:15 AM – 3:30 PM IST
-    "BANKNIFTY":   375,
     "NATURALGAS":  870,   # 9:00 AM – 11:30 PM IST  (14.5 hrs × 60)
     "CRUDEOIL":    870,
 }
 
 # Which instruments belong to which exchange label
 _EXCHANGE_INSTRUMENTS = {
-    "NFO": ["NIFTY", "BANKNIFTY"],
+    "NFO": ["NIFTY"],
     "MCX": ["NATURALGAS", "CRUDEOIL"],
 }
 

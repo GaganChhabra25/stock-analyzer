@@ -2,7 +2,7 @@
 NSE indices + sector indices + USDINR per-minute OHLC collector.
 
 Symbols collected:
-  Broad indices : NIFTY50, BANKNIFTY, FINNIFTY, MIDCPNIFTY, INDIAVIX
+  Broad indices : NIFTY50, FINNIFTY, MIDCPNIFTY, INDIAVIX
   Sector indices: NIFTYIT, NIFTYAUTO, NIFTYPHARMA, NIFTYMETAL,
                   NIFTYFMCG, NIFTYENERGY, NIFTYPSUBANK, NIFTYPRIVBANK,
                   NIFTYMEDIA, NIFTYREALTY
@@ -47,7 +47,6 @@ BACKFILL_DAYS = 60
 # ── Fixed instrument tokens (stable across time) ───────────────────────────────
 BROAD_TOKENS = {
     "NIFTY50":    256265,
-    "BANKNIFTY":  260105,
     "FINNIFTY":   257801,
     "INDIAVIX":   264969,
     "MIDCPNIFTY": 288009,
