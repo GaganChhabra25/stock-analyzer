@@ -1,7 +1,9 @@
 import unittest
 
+import pandas as pd
+
 from options.nifty_retention import RETENTION_DAYS, TARGETS
-from options.nifty_ws import N_STRIKES, select_option_contracts
+from options.nifty_ws import N_STRIKES, nifty_contract_mask, select_option_contracts
 
 
 class NiftyIngestionTests(unittest.TestCase):
@@ -21,6 +23,15 @@ class NiftyIngestionTests(unittest.TestCase):
         self.assertEqual(len(selected), 42)
         self.assertEqual(min(row["strike"] for row in selected.values()), 24500)
         self.assertEqual(max(row["strike"] for row in selected.values()), 25500)
+
+    def test_blank_kite_name_still_matches_only_nifty_derivatives(self):
+        frame = pd.DataFrame({
+            "name": ["", "", "NIFTY", ""],
+            "tradingsymbol": [
+                "NIFTY26804CE", "NIFTY26AUGFUT", "NIFTY26804PE", "NIFTYIT26AUGFUT"
+            ],
+        })
+        self.assertEqual(nifty_contract_mask(frame).tolist(), [True, True, True, False])
 
     def test_retention_is_nifty_scoped_and_never_mentions_mcx(self):
         self.assertEqual(RETENTION_DAYS, 30)

@@ -96,13 +96,20 @@ def select_option_contracts(
     }
 
 
+def nifty_contract_mask(frame: pd.DataFrame) -> pd.Series:
+    """Match NIFTY derivatives even when Kite leaves the name column blank."""
+    names = frame["name"].fillna("") if "name" in frame else pd.Series("", index=frame.index)
+    symbols = frame["tradingsymbol"].fillna("")
+    return names.eq(SYMBOL) | symbols.str.match(r"^NIFTY\d", na=False)
+
+
 def _resolve_universe(kite) -> None:
     global _spot_token, _vix_token, _future_meta, _option_universe
 
     today = datetime.now(IST).date()
     nfo = pd.DataFrame(kite.instruments("NFO"))
     nfo["expiry"] = pd.to_datetime(nfo["expiry"]).dt.date
-    nifty = nfo[nfo["name"].fillna("").eq(SYMBOL)].copy()
+    nifty = nfo[nifty_contract_mask(nfo)].copy()
 
     option_rows = nifty[
         nifty["instrument_type"].isin(["CE", "PE"])
