@@ -1,11 +1,12 @@
 """
-Options chain per-minute collector — orchestrator.
+MCX options chain per-minute collector — orchestrator.
 
 Triggered by cron every minute during combined market hours:
   */1 5-20 * * 1-5   (CEST timezone on Contabo server)
 
-Each ExchangeCollector checks its own market hours via is_open(),
-so NFO and MCX activate/deactivate independently within the same cron.
+NIFTY is collected by the persistent options/nifty_ws.py WebSocket service.
+This cron process is intentionally MCX-only so the NIFTY WebSocket and REST
+collector never write duplicate snapshots.
 
 Adding a new exchange: create options/exchange/<name>.py and append
 its collector instance to COLLECTORS below.  Nothing else changes.
@@ -25,7 +26,6 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from options.kite_auth import get_kite
-from options.exchange.nfo import NFOCollector
 from options.exchange.mcx import MCXCollector
 from logging_config import configure_logging
 
@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 # ── Register exchanges here — only line to change when adding a new one ───────
 COLLECTORS = [
-    NFOCollector(),
     MCXCollector(),
 ]
 

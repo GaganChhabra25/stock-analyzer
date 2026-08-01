@@ -1389,9 +1389,13 @@ def api_schedule_status():
          "Runs stock screener, computes Nifty range predictions, sends Telegram alert",
          "09:00", "Mon–Sat", "screener.log", ["Telegram", "prediction", "Report saved"]),
 
-        ("Market hours", "collector",        "Option Chain Collector",
-         "Collects per-minute NFO option chain + MCX futures data (every minute)",
+        ("Market hours", "collector",        "MCX Option Collector",
+         "Collects MCX option-chain snapshots every minute",
          "09:00–23:30", "Mon–Fri", "options.log", ["Inserted"]),
+
+        ("Market hours", "nifty_ws",         "NIFTY 1-second Stream",
+         "Streams current weekly ATM +/-10 options plus near-month futures",
+         "09:14-15:31", "Mon-Fri", "nifty_ws.log", ["NIFTY-WS", "ATM="]),
 
         ("Market hours", "watchdog",         "Collector Watchdog",
          "Checks data pipeline health every 10 min, auto-fixes stale instruments",
@@ -1422,8 +1426,12 @@ def api_schedule_status():
          "08:35", "Mon–Sat", "us_market.log", ["US-MARKET", "Daily run"]),
 
         ("Post-market", "derived_metrics",  "Derived Metrics (MaxPain/GEX/Skew)",
-         "EOD Max Pain, Gamma Exposure, IV Skew for NIFTY and BANKNIFTY",
+         "EOD Max Pain, Gamma Exposure and IV Skew for NIFTY",
          "15:40", "Mon–Fri", "derived.log", ["DERIVED", "MaxPain", "GEX"]),
+
+        ("Post-market", "nifty_retention", "NIFTY 30-day Retention",
+         "Deletes only NIFTY market, futures and feature data older than 30 days",
+         "17:00/18:00", "Daily", "nifty_retention.log", ["NIFTY-RETENTION", "Complete"]),
 
         ("Post-market", "intraday_rescore",  "Intraday Rescore",
          "Re-scores morning predictions with 2 PM market data",

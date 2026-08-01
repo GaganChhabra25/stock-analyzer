@@ -46,8 +46,8 @@ LOG=/home/stockapp/stock-analyzer/logs
 30 15 * * 1-5 cd $APP && $PY scripts/collect_fii_fo_data.py >> $LOG/fii_fo.log 2>&1
 
 # ── Options collector: every minute 09:00–23:30 IST = CEST 05:30–20:00 ───────
-# NFOCollector  activates 09:14–15:31 IST (checks own is_open())
-# MCXCollector  activates 09:00–23:30 IST (checks own is_open())
+# NIFTY is handled independently by the persistent nifty-ws service.
+# MCXCollector activates 09:00–23:30 IST (checks its own is_open()).
 */1 5-20 * * 1-5 cd $APP && $PY options/collector.py >> $LOG/options.log 2>&1
 
 # ── Watchdog: every 10 min during all market hours = CEST 05:30–20:00 ────────
@@ -81,3 +81,6 @@ LOG=/home/stockapp/stock-analyzer/logs
 
 # ── Derived metrics (Max Pain, GEX, IV Skew): 15:40 IST = CEST 12:10 ────────
 10 12 * * 1-5 cd $APP && $PY options/derived.py >> $LOG/derived.log 2>&1
+
+# NIFTY rolling retention, always post-market across CET/CEST.
+30 13 * * * cd $APP && $PY options/nifty_retention.py >> $LOG/nifty_retention.log 2>&1

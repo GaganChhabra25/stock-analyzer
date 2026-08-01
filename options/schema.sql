@@ -62,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_oc_ts
     ON option_chain (ts DESC);
 
 COMMENT ON TABLE option_chain IS
-    'Per-minute option chain. Shared across all users (market data). ~52 rows/min. ~5M rows/year.';
+    'NIFTY per-second and MCX per-minute option snapshots. Shared market data.';
 
 
 -- ── Per-minute market snapshots (shared market data) ──────────────────────────
@@ -84,7 +84,45 @@ CREATE INDEX IF NOT EXISTS idx_ms_lookup
     ON market_snapshot (instrument, ts DESC);
 
 COMMENT ON TABLE market_snapshot IS
-    'Derived market-level metrics per minute. Shared across all users. Used for range prediction model.';
+    'Derived market-level metrics per collection snapshot. Used for analysis and range prediction.';
+
+
+-- ── NIFTY near-month futures snapshots ─────────────────────────────────────
+-- One full-depth snapshot per second from the dedicated NIFTY WebSocket.
+CREATE TABLE IF NOT EXISTS nifty_futures (
+    ts                  TIMESTAMPTZ     PRIMARY KEY,
+    tradingsymbol       VARCHAR(40)     NOT NULL,
+    instrument_token    BIGINT          NOT NULL,
+    expiry              DATE            NOT NULL,
+    exchange_ts         TIMESTAMPTZ,
+    received_at         TIMESTAMPTZ     NOT NULL,
+    last_price          NUMERIC(12,2),
+    last_quantity       BIGINT,
+    average_price       NUMERIC(12,2),
+    volume              BIGINT,
+    total_buy_quantity  BIGINT,
+    total_sell_quantity BIGINT,
+    open                NUMERIC(12,2),
+    high                NUMERIC(12,2),
+    low                 NUMERIC(12,2),
+    previous_close      NUMERIC(12,2),
+    oi                  BIGINT,
+    oi_day_high         BIGINT,
+    oi_day_low          BIGINT,
+    bid_prices          NUMERIC(12,2)[] NOT NULL DEFAULT '{}',
+    bid_quantities      BIGINT[]        NOT NULL DEFAULT '{}',
+    bid_orders          INTEGER[]       NOT NULL DEFAULT '{}',
+    ask_prices          NUMERIC(12,2)[] NOT NULL DEFAULT '{}',
+    ask_quantities      BIGINT[]        NOT NULL DEFAULT '{}',
+    ask_orders          INTEGER[]       NOT NULL DEFAULT '{}',
+    available_at        TIMESTAMPTZ     NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX IF NOT EXISTS idx_nifty_futures_expiry_ts
+    ON nifty_futures (expiry, ts DESC);
+
+COMMENT ON TABLE nifty_futures IS
+    'Near-month NIFTY futures price, OI, volume and five-level depth per second.';
 
 
 -- ── MCX futures OHLC candles ──────────────────────────────────────────────────

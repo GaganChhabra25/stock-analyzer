@@ -63,5 +63,24 @@ services:
       postgres:
         condition: service_healthy
 
+  # NIFTY weekly options (ATM ±10) + near-month futures, one DB snapshot/second.
+  # Isolated from MCX so restarts or failures cannot interrupt CRUDEOIL/NG.
+  nifty-ws:
+    build:
+      context: .
+      dockerfile: docker/cron-worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockanalyzer}:${POSTGRES_PASSWORD}@postgres:5432/stock_analyzer
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    command: ["python", "-u", "options/nifty_ws.py"]
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
