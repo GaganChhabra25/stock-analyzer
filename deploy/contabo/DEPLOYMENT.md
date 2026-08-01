@@ -6,7 +6,7 @@ instead of silently overwriting the change.
 
 Every normal push computes affected processes and deploys only those targets:
 
-- `options/nifty_ws.py` -> web + `nifty-ws`
+- NIFTY live/backfill code -> web + `nifty-ws`
 - `options/crudeoil_ws.py` -> web + `crudeoil-ws`
 - collector/retention/cron code -> web + `cron-worker`
 - shared Docker/runtime dependencies -> web + all three Docker services
@@ -20,3 +20,19 @@ previous Git commit and previous container images.
 `workflow_dispatch` intentionally deploys all processes. Use it only for an
 explicit full production refresh. Database volumes are never recreated by the
 deployment script.
+
+## NIFTY minute feature backfill
+
+Run only outside NSE hours. The job reads retained `NIFTY` snapshots, selects
+the nearest expiry at ATM +/-10, and idempotently writes one causal row per
+minute to both NIFTY feature tables. It marks historical rows with
+`source_interval_seconds=60`; the live WebSocket marks per-second rows with `1`.
+Future target/label columns remain untouched.
+
+```bash
+docker compose run --rm --no-deps nifty-ws python options/nifty_feature_backfill.py --dry-run
+docker compose run --rm --no-deps nifty-ws python options/nifty_feature_backfill.py
+```
+
+The job shares the NIFTY retention advisory lock, so retention and backfill
+cannot mutate the NIFTY tables concurrently. It never references MCX tables.

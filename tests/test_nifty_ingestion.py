@@ -5,6 +5,12 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from options.nifty_retention import RETENTION_DAYS, TARGETS
+from options.nifty_feature_backfill import (
+    SOURCE_INTERVAL_SECONDS,
+    _build_day_payloads,
+    _market_from_option_rows,
+    _minute_close,
+)
 from options.nifty_ws import (
     N_STRIKES,
     _feature_history,
@@ -99,6 +105,56 @@ class NiftyIngestionTests(unittest.TestCase):
         self.assertNotIn("target_direction", nifty)
         self.assertNotIn("target_30min", nifty)
         self.assertNotIn("target_expiry_price", expiry_features)
+        self.assertEqual(nifty["source_interval_seconds"], 1)
+        self.assertEqual(expiry_features["source_interval_seconds"], 1)
+
+    def test_minute_backfill_reuses_causal_features_and_marks_granularity(self):
+        source_ts = datetime(2026, 7, 31, 9, 15, 4, tzinfo=ZoneInfo("Asia/Kolkata"))
+        expiry = date(2026, 8, 6)
+        rows = []
+        for strike in range(24500, 25501, 50):
+            for option_type in ("CE", "PE"):
+                oi = 1000
+                rows.append((
+                    source_ts, 25000.0, 13.0, 25000,
+                    expiry, strike, option_type, 100.0, 99.5, 100.5,
+                    oi, 5, 100, 14.0,
+                    0.5 if option_type == "CE" else -0.5,
+                    0.001, -5.0, 8.0, 25000.0,
+                ))
+
+        nifty, expiry_rows = _build_day_payloads(rows)
+
+        self.assertEqual(len(nifty), 1)
+        self.assertEqual(len(expiry_rows), 1)
+        self.assertEqual(nifty[0]["ts"], datetime(2026, 7, 31, 9, 16, tzinfo=ZoneInfo("Asia/Kolkata")))
+        self.assertEqual(nifty[0]["source_interval_seconds"], SOURCE_INTERVAL_SECONDS)
+        self.assertEqual(expiry_rows[0]["source_interval_seconds"], SOURCE_INTERVAL_SECONDS)
+        self.assertNotIn("target_direction", nifty[0])
+        self.assertNotIn("target_expiry_price", expiry_rows[0])
+
+    def test_minute_backfill_market_is_current_expiry_selected_range_only(self):
+        ts = datetime(2026, 7, 31, 9, 16, tzinfo=ZoneInfo("Asia/Kolkata"))
+        expiry = date(2026, 8, 6)
+        rows = [
+            (ts, "NIFTY", expiry, 25000, "CE", 100, 99, 101, 1000, 0, 10, 14, .5, .001, -5, 8, 25000),
+            (ts, "NIFTY", expiry, 25000, "PE", 120, 119, 121, 1500, 0, 10, 15, -.5, .001, -5, 8, 25000),
+            (ts, "NIFTY", expiry, 25100, "CE", 60, 59, 61, 5000, 0, 10, 13, .4, .001, -5, 8, 25000),
+            (ts, "NIFTY", expiry, 24900, "PE", 70, 69, 71, 6000, 0, 10, 16, -.4, .001, -5, 8, 25000),
+        ]
+
+        market = _market_from_option_rows(25000, 13.2, 25000, rows)
+
+        self.assertEqual(market["straddle"], 220)
+        self.assertEqual(market["call_wall"], 25100)
+        self.assertEqual(market["put_wall"], 24900)
+        self.assertAlmostEqual(market["pcr"], 7500 / 6000)
+
+    def test_minute_close_is_regular_and_never_precedes_source(self):
+        source = datetime(2026, 7, 31, 9, 15, 58, 999999, tzinfo=ZoneInfo("Asia/Kolkata"))
+        feature_ts = _minute_close(source)
+        self.assertEqual(feature_ts, datetime(2026, 7, 31, 9, 16, tzinfo=ZoneInfo("Asia/Kolkata")))
+        self.assertGreaterEqual(feature_ts, source)
 
 
 if __name__ == "__main__":

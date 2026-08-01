@@ -124,10 +124,12 @@ CREATE INDEX IF NOT EXISTS idx_nifty_futures_expiry_ts
 COMMENT ON TABLE nifty_futures IS
     'Near-month NIFTY futures price, OI, volume and five-level depth per second.';
 
--- Per-second causal NIFTY features from the same current-week option snapshot.
--- Live ingestion deliberately leaves all target/label columns NULL.
+-- Causal NIFTY features from the same current-week option snapshot.
+-- Historical backfill uses one-minute rows; live ingestion uses one-second rows.
+-- Both paths deliberately leave all future target/label columns NULL.
 CREATE TABLE IF NOT EXISTS nifty_features (
     ts TIMESTAMPTZ PRIMARY KEY, trade_date DATE NOT NULL,
+    source_interval_seconds SMALLINT NOT NULL DEFAULT 1,
     underlying_ltp DOUBLE PRECISION, dte INTEGER,
     return_1min DOUBLE PRECISION, return_5min DOUBLE PRECISION,
     return_15min DOUBLE PRECISION, rolling_vol_5 DOUBLE PRECISION,
@@ -169,6 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_nifty_features_trade_date_ts
 
 CREATE TABLE IF NOT EXISTS nifty_expiry_features (
     ts TIMESTAMPTZ NOT NULL, expiry_date DATE NOT NULL, trade_date DATE NOT NULL,
+    source_interval_seconds SMALLINT NOT NULL DEFAULT 1,
     underlying_ltp DOUBLE PRECISION, dte INTEGER, atm_strike DOUBLE PRECISION,
     total_ce_oi DOUBLE PRECISION, total_pe_oi DOUBLE PRECISION,
     oi_imbalance DOUBLE PRECISION, pcr_oi DOUBLE PRECISION,
@@ -200,9 +203,14 @@ CREATE INDEX IF NOT EXISTS idx_nifty_expiry_features_expiry_ts
     ON nifty_expiry_features (expiry_date, ts DESC);
 
 COMMENT ON TABLE nifty_features IS
-    'Per-second causal NIFTY features generated from current-week ATM +/-10 option snapshots.';
+    'Causal NIFTY features: per-minute historical backfill and per-second live current-week ATM +/-10 snapshots.';
 COMMENT ON TABLE nifty_expiry_features IS
-    'Per-second current-expiry NIFTY OI, IV, max-pain and normalized GEX features.';
+    'Current-expiry NIFTY OI, IV, max-pain and normalized GEX features with explicit source interval.';
+
+ALTER TABLE nifty_features
+    ADD COLUMN IF NOT EXISTS source_interval_seconds SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE nifty_expiry_features
+    ADD COLUMN IF NOT EXISTS source_interval_seconds SMALLINT NOT NULL DEFAULT 1;
 
 
 -- ── MCX futures OHLC candles ──────────────────────────────────────────────────

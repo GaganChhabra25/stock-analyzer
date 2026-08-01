@@ -5,9 +5,18 @@ from deploy.contabo.deploy_targets import DOCKER_SERVICES, deployment_plan
 
 class DeploymentTargetTests(unittest.TestCase):
     def test_nifty_change_does_not_touch_crude_or_cron(self):
-        plan = deployment_plan(["options/nifty_ws.py"])
+        plan = deployment_plan([
+            "options/nifty_ws.py",
+            "options/nifty_feature_backfill.py",
+            "options/schema.sql",
+        ])
         self.assertTrue(plan.deploy_web)
         self.assertEqual(plan.services, ("nifty-ws",))
+
+    def test_schema_documentation_change_is_source_only(self):
+        plan = deployment_plan(["options/schema.sql"])
+        self.assertFalse(plan.deploy_web)
+        self.assertEqual(plan.services, ())
 
     def test_crude_change_does_not_touch_nifty_or_cron(self):
         plan = deployment_plan(["options/crudeoil_ws.py"])

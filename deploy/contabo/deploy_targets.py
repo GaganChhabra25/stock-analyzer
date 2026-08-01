@@ -32,8 +32,12 @@ CRON_PATHS = {
     "options/nifty_retention.py",
     "options/nse_ohlc.py",
     "options/save_instruments.py",
-    "options/schema.sql",
     "options/watchdog.py",
+}
+
+NIFTY_PATHS = {
+    "options/nifty_feature_backfill.py",
+    "options/nifty_ws.py",
 }
 
 
@@ -65,7 +69,7 @@ def deployment_plan(paths: list[str], deploy_all: bool = False) -> DeploymentPla
 
     if "options/crudeoil_ws.py" in normalized:
         services.add("crudeoil-ws")
-    if "options/nifty_ws.py" in normalized:
+    if normalized & NIFTY_PATHS:
         services.add("nifty-ws")
     if normalized & CRON_PATHS or any(path.startswith("options/exchange/") for path in normalized):
         services.add("cron-worker")

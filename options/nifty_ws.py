@@ -60,6 +60,7 @@ _session_active = False
 FEATURE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS nifty_features (
     ts TIMESTAMPTZ PRIMARY KEY, trade_date DATE NOT NULL,
+    source_interval_seconds SMALLINT NOT NULL DEFAULT 1,
     underlying_ltp DOUBLE PRECISION, dte INTEGER,
     return_1min DOUBLE PRECISION, return_5min DOUBLE PRECISION,
     return_15min DOUBLE PRECISION, rolling_vol_5 DOUBLE PRECISION,
@@ -100,6 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_nifty_features_trade_date_ts
 
 CREATE TABLE IF NOT EXISTS nifty_expiry_features (
     ts TIMESTAMPTZ NOT NULL, expiry_date DATE NOT NULL, trade_date DATE NOT NULL,
+    source_interval_seconds SMALLINT NOT NULL DEFAULT 1,
     underlying_ltp DOUBLE PRECISION, dte INTEGER, atm_strike DOUBLE PRECISION,
     total_ce_oi DOUBLE PRECISION, total_pe_oi DOUBLE PRECISION,
     oi_imbalance DOUBLE PRECISION, pcr_oi DOUBLE PRECISION,
@@ -128,6 +130,11 @@ CREATE TABLE IF NOT EXISTS nifty_expiry_features (
 );
 CREATE INDEX IF NOT EXISTS idx_nifty_expiry_features_expiry_ts
     ON nifty_expiry_features (expiry_date, ts DESC);
+
+ALTER TABLE nifty_features
+    ADD COLUMN IF NOT EXISTS source_interval_seconds SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE nifty_expiry_features
+    ADD COLUMN IF NOT EXISTS source_interval_seconds SMALLINT NOT NULL DEFAULT 1;
 """
 
 
@@ -492,7 +499,8 @@ def build_feature_payloads(ts: datetime, option_rows: list[tuple], market: dict)
     }
 
     common = {
-        "ts": ts, "trade_date": ts.date(), "underlying_ltp": spot, "dte": dte,
+        "ts": ts, "trade_date": ts.date(), "source_interval_seconds": 1,
+        "underlying_ltp": spot, "dte": dte,
         "atm_strike": atm, "total_ce_oi": total_ce_oi, "total_pe_oi": total_pe_oi,
         "oi_imbalance": imbalance, "iv_skew": (
             (atm_pe["iv"] - atm_ce["iv"])
