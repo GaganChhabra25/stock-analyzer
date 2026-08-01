@@ -2,7 +2,15 @@ name: Deploy to Server
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: stock-analyzer-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
@@ -14,59 +22,77 @@ jobs:
           if [ -z "${{ secrets.SERVER_USER }}" ]; then echo "ERROR: SERVER_USER secret is not set" && exit 1; fi
           if [ -z "${{ secrets.SERVER_SSH_KEY }}" ]; then echo "ERROR: SERVER_SSH_KEY secret is not set" && exit 1; fi
           if [ -z "${{ secrets.GH_PAT }}" ]; then echo "ERROR: GH_PAT secret is not set" && exit 1; fi
-          echo "All secrets are present"
 
-      - name: Deploy via SSH
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine affected production processes
+        id: plan
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || \
+             [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            python deploy/contabo/deploy_targets.py --all >> "$GITHUB_OUTPUT"
+          else
+            mapfile -t changed < <(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
+            python deploy/contabo/deploy_targets.py "${changed[@]}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy exact commit via SSH
         env:
           SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
           GH_PAT: ${{ secrets.GH_PAT }}
+          TARGET_SHA: ${{ github.sha }}
+          DEPLOY_WEB: ${{ steps.plan.outputs.web }}
+          DEPLOY_SERVICES: ${{ steps.plan.outputs.services }}
+        shell: bash
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" bash -s << ENDSSH
-            set -e
-            DEPLOY_DIR=/home/stockapp/stock-analyzer
-            VENV=\$DEPLOY_DIR/venv
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
+            bash -s -- "$TARGET_SHA" "$DEPLOY_WEB" "$DEPLOY_SERVICES" "$GH_PAT" <<'ENDSSH'
+          set -Eeuo pipefail
+          TARGET_SHA="$1"
+          DEPLOY_WEB="$2"
+          DEPLOY_SERVICES="$3"
+          GH_PAT="$4"
+          DEPLOY_DIR=/home/stockapp/stock-analyzer
+          VENV="$DEPLOY_DIR/venv"
 
-            # Fix DNS if needed
-            grep -q "8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+          command -v docker >/dev/null
+          [ -d "$DEPLOY_DIR/.git" ] || {
+            echo "ERROR: production repository is missing; bootstrap it explicitly" >&2
+            exit 1
+          }
 
-            # Install Docker if not present
-            if ! command -v docker &>/dev/null; then
-              curl -fsSL https://get.docker.com | sh
-              usermod -aG docker stockapp
-              systemctl enable docker
-              systemctl start docker
-            fi
+          # Never silently destroy a manual production hotfix. Line-ending-only
+          # drift is ignored, but any meaningful tracked change blocks deploy.
+          if ! git -C "$DEPLOY_DIR" diff --quiet --ignore-space-at-eol || \
+             ! git -C "$DEPLOY_DIR" diff --cached --quiet; then
+            echo "ERROR: meaningful uncommitted production changes detected" >&2
+            git -C "$DEPLOY_DIR" status --short >&2
+            exit 1
+          fi
 
-            # Pull latest code
-            if [ ! -d \$DEPLOY_DIR/.git ]; then
-              sudo -u stockapp git clone https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git \$DEPLOY_DIR
-            else
-              chown -R stockapp:stockapp \$DEPLOY_DIR/.git
-              sudo -u stockapp git -C \$DEPLOY_DIR fetch https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git master
-              sudo -u stockapp git -C \$DEPLOY_DIR reset --hard FETCH_HEAD
-            fi
+          PREVIOUS_SHA="$(git -C "$DEPLOY_DIR" rev-parse HEAD)"
+          chown -R stockapp:stockapp "$DEPLOY_DIR/.git"
+          sudo -u stockapp git -C "$DEPLOY_DIR" fetch \
+            "https://x-access-token:${GH_PAT}@github.com/GaganChhabra25/stock-analyzer.git" master
+          FETCHED_SHA="$(git -C "$DEPLOY_DIR" rev-parse FETCH_HEAD)"
+          [ "$FETCHED_SHA" = "$TARGET_SHA" ] || {
+            echo "ERROR: fetched $FETCHED_SHA but workflow requested $TARGET_SHA" >&2
+            exit 1
+          }
+          sudo -u stockapp git -C "$DEPLOY_DIR" reset --hard "$TARGET_SHA"
 
-            # ── Web app ──────────────────────────────────────────────────────
-            sudo -u stockapp \$VENV/bin/pip install -r \$DEPLOY_DIR/requirements.txt -q
-            systemctl restart stock-analyzer
-
-            # ── Cron worker (Docker) ─────────────────────────────────────────
-            # If Docker cron-worker is running (post-cutover), rebuild + restart it.
-            # Never reinstate host crontab — Docker is the source of truth.
-            cd \$DEPLOY_DIR
-            if docker compose ps cron-worker | grep -q "Up"; then
-              docker compose up -d --build cron-worker
-              echo "Docker cron-worker rebuilt and restarted"
-            else
-              echo "Docker cron-worker not running — skipping (run cutover.sh to migrate)"
-            fi
-
-            echo "Deployed at \$(date)"
+          read -r -a SERVICE_ARGS <<< "$DEPLOY_SERVICES"
+          DEPLOY_DIR="$DEPLOY_DIR" VENV="$VENV" \
+            bash "$DEPLOY_DIR/deploy/contabo/deploy_release.sh" \
+              "$PREVIOUS_SHA" "$TARGET_SHA" "$DEPLOY_WEB" "${SERVICE_ARGS[@]}"
           ENDSSH

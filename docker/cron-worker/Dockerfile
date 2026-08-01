@@ -1,5 +1,8 @@
 FROM python:3.9-slim
 
+ARG APP_GIT_SHA=unknown
+LABEL org.opencontainers.image.revision=$APP_GIT_SHA
+
 ENV SUPERCRONIC_VERSION=0.2.29
 ENV TZ=Europe/Berlin
 
