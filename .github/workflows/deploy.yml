@@ -54,6 +54,7 @@ jobs:
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          if [ -z "$DEPLOY_SERVICES" ]; then DEPLOY_SERVICES=none; fi
 
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
             bash -s -- "$TARGET_SHA" "$DEPLOY_WEB" "$DEPLOY_SERVICES" "$GH_PAT" <<'ENDSSH'
@@ -91,7 +92,10 @@ jobs:
           }
           sudo -u stockapp git -C "$DEPLOY_DIR" reset --hard "$TARGET_SHA"
 
-          read -r -a SERVICE_ARGS <<< "$DEPLOY_SERVICES"
+          SERVICE_ARGS=()
+          if [ "$DEPLOY_SERVICES" != "none" ]; then
+            read -r -a SERVICE_ARGS <<< "$DEPLOY_SERVICES"
+          fi
           DEPLOY_DIR="$DEPLOY_DIR" VENV="$VENV" \
             bash "$DEPLOY_DIR/deploy/contabo/deploy_release.sh" \
               "$PREVIOUS_SHA" "$TARGET_SHA" "$DEPLOY_WEB" "${SERVICE_ARGS[@]}"
