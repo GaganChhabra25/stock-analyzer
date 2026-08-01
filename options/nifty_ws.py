@@ -8,10 +8,13 @@ MCX ingestion and runs in its own Docker container.
 from __future__ import annotations
 
 import logging
+import math
 import os
+import statistics
 import sys
 import threading
 import time as _time
+from collections import deque
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -46,11 +49,86 @@ _option_meta: dict[int, dict] = {}
 _option_universe: dict[tuple[int, str], dict] = {}
 _active_option_tokens: set[int] = set()
 _last_oi: dict[tuple[date, int, str], int] = {}
+_feature_history: deque[dict] = deque(maxlen=2_000)
+_previous_feature_totals: dict[str, float] = {}
 _spot_token = 0
 _vix_token = 0
 _future_meta: dict = {}
 _active_atm: int | None = None
 _session_active = False
+
+FEATURE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS nifty_features (
+    ts TIMESTAMPTZ PRIMARY KEY, trade_date DATE NOT NULL,
+    underlying_ltp DOUBLE PRECISION, dte INTEGER,
+    return_1min DOUBLE PRECISION, return_5min DOUBLE PRECISION,
+    return_15min DOUBLE PRECISION, rolling_vol_5 DOUBLE PRECISION,
+    rolling_vol_15 DOUBLE PRECISION, time_bucket_enc SMALLINT,
+    atm_strike DOUBLE PRECISION, atm_ce_ltp DOUBLE PRECISION, atm_pe_ltp DOUBLE PRECISION,
+    atm_ce_iv DOUBLE PRECISION, atm_pe_iv DOUBLE PRECISION,
+    atm_ce_oi DOUBLE PRECISION, atm_pe_oi DOUBLE PRECISION,
+    atm_ce_delta DOUBLE PRECISION, atm_pe_delta DOUBLE PRECISION,
+    atm_ce_gamma DOUBLE PRECISION, atm_pe_gamma DOUBLE PRECISION,
+    atm_ce_vega DOUBLE PRECISION, atm_pe_vega DOUBLE PRECISION,
+    atm_ce_theta DOUBLE PRECISION, atm_pe_theta DOUBLE PRECISION,
+    iv_skew DOUBLE PRECISION, straddle_price DOUBLE PRECISION, pcr DOUBLE PRECISION,
+    oi_imbalance DOUBLE PRECISION, ce_oi_buildup SMALLINT, pe_oi_buildup SMALLINT,
+    ce_oi_wt_strike DOUBLE PRECISION, pe_oi_wt_strike DOUBLE PRECISION,
+    total_ce_oi DOUBLE PRECISION, total_pe_oi DOUBLE PRECISION,
+    ce_oi_change DOUBLE PRECISION, pe_oi_change DOUBLE PRECISION,
+    ce_delta_sum DOUBLE PRECISION, pe_delta_sum DOUBLE PRECISION,
+    gamma_sum DOUBLE PRECISION, vega_sum DOUBLE PRECISION, theta_sum DOUBLE PRECISION,
+    delta_imbalance DOUBLE PRECISION, gamma_spike SMALLINT,
+    vega_change DOUBLE PRECISION, theta_decay DOUBLE PRECISION,
+    dist_from_atm DOUBLE PRECISION, pe_max_oi_strike DOUBLE PRECISION,
+    ce_max_oi_strike DOUBLE PRECISION, dist_from_support DOUBLE PRECISION,
+    dist_from_resistance DOUBLE PRECISION,
+    target_direction SMALLINT, target_move DOUBLE PRECISION,
+    target_30min DOUBLE PRECISION, eod_close DOUBLE PRECISION,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    ms_vix DOUBLE PRECISION, ms_pcr_oi DOUBLE PRECISION,
+    ms_atm_straddle DOUBLE PRECISION, ms_expected_move DOUBLE PRECISION,
+    ms_call_oi_wall DOUBLE PRECISION, ms_put_oi_wall DOUBLE PRECISION,
+    ms_dist_call_wall DOUBLE PRECISION, ms_dist_put_wall DOUBLE PRECISION,
+    prev_usdinr DOUBLE PRECISION, prev_wti DOUBLE PRECISION,
+    prev_brent DOUBLE PRECISION, prev_natgas DOUBLE PRECISION,
+    fii_net_fut DOUBLE PRECISION, fii_net_opt DOUBLE PRECISION,
+    fii_pc_ratio DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS idx_nifty_features_trade_date_ts
+    ON nifty_features (trade_date, ts DESC);
+
+CREATE TABLE IF NOT EXISTS nifty_expiry_features (
+    ts TIMESTAMPTZ NOT NULL, expiry_date DATE NOT NULL, trade_date DATE NOT NULL,
+    underlying_ltp DOUBLE PRECISION, dte INTEGER, atm_strike DOUBLE PRECISION,
+    total_ce_oi DOUBLE PRECISION, total_pe_oi DOUBLE PRECISION,
+    oi_imbalance DOUBLE PRECISION, pcr_oi DOUBLE PRECISION,
+    ce_oi_strike_1 DOUBLE PRECISION, ce_oi_strike_2 DOUBLE PRECISION,
+    ce_oi_strike_3 DOUBLE PRECISION, pe_oi_strike_1 DOUBLE PRECISION,
+    pe_oi_strike_2 DOUBLE PRECISION, pe_oi_strike_3 DOUBLE PRECISION,
+    ce_oi_wt_strike DOUBLE PRECISION, pe_oi_wt_strike DOUBLE PRECISION,
+    max_pain_strike DOUBLE PRECISION, dist_from_max_pain DOUBLE PRECISION,
+    atm_ce_iv DOUBLE PRECISION, atm_pe_iv DOUBLE PRECISION,
+    iv_skew DOUBLE PRECISION, atm_iv_change_30min DOUBLE PRECISION,
+    straddle_price DOUBLE PRECISION, implied_move_pct DOUBLE PRECISION,
+    gex_ce DOUBLE PRECISION, gex_pe DOUBLE PRECISION, gex_net DOUBLE PRECISION,
+    delta_imbalance DOUBLE PRECISION,
+    ms_vix DOUBLE PRECISION, ms_pcr_oi DOUBLE PRECISION,
+    ms_atm_straddle DOUBLE PRECISION, ms_expected_move DOUBLE PRECISION,
+    ms_call_oi_wall DOUBLE PRECISION, ms_put_oi_wall DOUBLE PRECISION,
+    ms_dist_call_wall DOUBLE PRECISION, ms_dist_put_wall DOUBLE PRECISION,
+    prev_usdinr DOUBLE PRECISION, prev_wti DOUBLE PRECISION,
+    prev_brent DOUBLE PRECISION, prev_natgas DOUBLE PRECISION,
+    fii_net_fut DOUBLE PRECISION, fii_net_opt DOUBLE PRECISION,
+    fii_pc_ratio DOUBLE PRECISION,
+    target_expiry_price DOUBLE PRECISION, target_range_low DOUBLE PRECISION,
+    target_range_high DOUBLE PRECISION, target_pin SMALLINT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts, expiry_date)
+);
+CREATE INDEX IF NOT EXISTS idx_nifty_expiry_features_expiry_ts
+    ON nifty_expiry_features (expiry_date, ts DESC);
+"""
 
 
 def _nse_open() -> bool:
@@ -280,6 +358,233 @@ def _option_values(ts: datetime, snapshot: dict):
     return rows, call_oi, put_oi
 
 
+def _safe_ratio(numerator, denominator):
+    if numerator is None or denominator in (None, 0):
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _sign(value: float) -> int:
+    return 1 if value > 0 else (-1 if value < 0 else 0)
+
+
+def _history_value(ts: datetime, minutes: int, field: str):
+    cutoff = ts - timedelta(minutes=minutes)
+    for row in reversed(_feature_history):
+        if row["ts"] <= cutoff:
+            return row.get(field)
+    return None
+
+
+def _rolling_vol(ts: datetime, minutes: int):
+    cutoff = ts - timedelta(minutes=minutes)
+    prices = [
+        float(row["spot"])
+        for row in _feature_history
+        if row["ts"] >= cutoff and row.get("spot")
+    ]
+    if len(prices) < 3:
+        return None
+    returns = [math.log(current / previous) for previous, current in zip(prices, prices[1:])]
+    return statistics.pstdev(returns) if len(returns) >= 2 else None
+
+
+def _top_strikes(rows: list[dict], option_type: str, count: int = 3) -> list[float | None]:
+    ranked = sorted(
+        (row for row in rows if row["option_type"] == option_type),
+        key=lambda row: (row["oi"], -abs(row["strike"] - row["spot"])),
+        reverse=True,
+    )
+    strikes: list[float | None] = [float(row["strike"]) for row in ranked[:count]]
+    return strikes + [None] * (count - len(strikes))
+
+
+def _max_pain(rows: list[dict]):
+    strikes = sorted({row["strike"] for row in rows})
+    if not strikes:
+        return None
+    calls = [row for row in rows if row["option_type"] == "CE"]
+    puts = [row for row in rows if row["option_type"] == "PE"]
+    pain = {}
+    for settlement in strikes:
+        call_pain = sum(max(settlement - row["strike"], 0) * row["oi"] for row in calls)
+        put_pain = sum(max(row["strike"] - settlement, 0) * row["oi"] for row in puts)
+        pain[settlement] = call_pain + put_pain
+    return float(min(pain, key=pain.get))
+
+
+def _weighted_strike(rows: list[dict], option_type: str):
+    selected = [row for row in rows if row["option_type"] == option_type]
+    total_oi = sum(row["oi"] for row in selected)
+    if not total_oi:
+        return None
+    return sum(row["strike"] * row["oi"] for row in selected) / total_oi
+
+
+def _option_records(option_rows: list[tuple]) -> list[dict]:
+    return [
+        {
+            "expiry": row[2], "strike": float(row[3]), "option_type": row[4],
+            "ltp": float(row[5]), "bid": row[6], "ask": row[7],
+            "oi": float(row[8] or 0), "oi_change": float(row[9] or 0),
+            "volume": float(row[10] or 0), "iv": float(row[11]) if row[11] is not None else None,
+            "delta": float(row[12] or 0), "gamma": float(row[13] or 0),
+            "theta": float(row[14] or 0), "vega": float(row[15] or 0),
+            "spot": float(row[16]),
+        }
+        for row in option_rows
+    ]
+
+
+def build_feature_payloads(ts: datetime, option_rows: list[tuple], market: dict):
+    """Build causal per-second NIFTY features; future labels are never populated live."""
+    rows = _option_records(option_rows)
+    if not rows:
+        return None, None
+
+    spot = float(market["spot"])
+    atm = float(market["atm"])
+    expiry = min(row["expiry"] for row in rows)
+    dte = max((expiry - ts.date()).days, 0)
+    calls = [row for row in rows if row["option_type"] == "CE"]
+    puts = [row for row in rows if row["option_type"] == "PE"]
+    total_ce_oi = sum(row["oi"] for row in calls)
+    total_pe_oi = sum(row["oi"] for row in puts)
+    total_oi = total_ce_oi + total_pe_oi
+    atm_ce = next((row for row in calls if row["strike"] == atm), None)
+    atm_pe = next((row for row in puts if row["strike"] == atm), None)
+    atm_iv_values = [row["iv"] for row in (atm_ce, atm_pe) if row and row["iv"] is not None]
+    atm_iv = statistics.mean(atm_iv_values) if atm_iv_values else None
+    prior_1m = _history_value(ts, 1, "spot")
+    prior_5m = _history_value(ts, 5, "spot")
+    prior_15m = _history_value(ts, 15, "spot")
+    prior_atm_iv = _history_value(ts, 30, "atm_iv")
+    ce_delta_sum = sum(row["delta"] * row["oi"] for row in calls)
+    pe_delta_sum = sum(row["delta"] * row["oi"] for row in puts)
+    gamma_sum = sum(row["gamma"] * row["oi"] for row in rows)
+    vega_sum = sum(row["vega"] * row["oi"] for row in rows)
+    theta_sum = sum(row["theta"] * row["oi"] for row in rows)
+    ce_oi_change = total_ce_oi - _previous_feature_totals.get("total_ce_oi", total_ce_oi)
+    pe_oi_change = total_pe_oi - _previous_feature_totals.get("total_pe_oi", total_pe_oi)
+    previous_gamma = _previous_feature_totals.get("gamma_sum")
+    previous_vega = _previous_feature_totals.get("vega_sum", vega_sum)
+    previous_theta = _previous_feature_totals.get("theta_sum", theta_sum)
+    ce_weighted = _weighted_strike(rows, "CE")
+    pe_weighted = _weighted_strike(rows, "PE")
+    max_pain = _max_pain(rows)
+    ce_top = _top_strikes(rows, "CE")
+    pe_top = _top_strikes(rows, "PE")
+    pcr = _safe_ratio(total_pe_oi, total_ce_oi)
+    imbalance = _safe_ratio(total_pe_oi - total_ce_oi, total_oi)
+    delta_imbalance = _safe_ratio(ce_delta_sum + pe_delta_sum, total_oi)
+    market_fields = {
+        "ms_vix": market.get("vix"), "ms_pcr_oi": market.get("pcr"),
+        "ms_atm_straddle": market.get("straddle"),
+        "ms_expected_move": market.get("expected_move"),
+        "ms_call_oi_wall": market.get("call_wall"),
+        "ms_put_oi_wall": market.get("put_wall"),
+        "ms_dist_call_wall": (
+            float(market["call_wall"]) - spot if market.get("call_wall") is not None else None
+        ),
+        "ms_dist_put_wall": (
+            spot - float(market["put_wall"]) if market.get("put_wall") is not None else None
+        ),
+    }
+
+    common = {
+        "ts": ts, "trade_date": ts.date(), "underlying_ltp": spot, "dte": dte,
+        "atm_strike": atm, "total_ce_oi": total_ce_oi, "total_pe_oi": total_pe_oi,
+        "oi_imbalance": imbalance, "iv_skew": (
+            (atm_pe["iv"] - atm_ce["iv"])
+            if atm_ce and atm_pe and atm_ce["iv"] is not None and atm_pe["iv"] is not None
+            else None
+        ),
+        "straddle_price": market.get("straddle"), "delta_imbalance": delta_imbalance,
+        **market_fields,
+    }
+    nifty = {
+        **common,
+        "return_1min": (spot / prior_1m - 1) if prior_1m else None,
+        "return_5min": (spot / prior_5m - 1) if prior_5m else None,
+        "return_15min": (spot / prior_15m - 1) if prior_15m else None,
+        "rolling_vol_5": _rolling_vol(ts, 5),
+        "rolling_vol_15": _rolling_vol(ts, 15),
+        "time_bucket_enc": max(0, int((ts.hour * 60 + ts.minute - (9 * 60 + 15)) / 5)),
+        "atm_ce_ltp": atm_ce["ltp"] if atm_ce else None,
+        "atm_pe_ltp": atm_pe["ltp"] if atm_pe else None,
+        "atm_ce_iv": atm_ce["iv"] if atm_ce else None,
+        "atm_pe_iv": atm_pe["iv"] if atm_pe else None,
+        "atm_ce_oi": atm_ce["oi"] if atm_ce else None,
+        "atm_pe_oi": atm_pe["oi"] if atm_pe else None,
+        "atm_ce_delta": atm_ce["delta"] if atm_ce else None,
+        "atm_pe_delta": atm_pe["delta"] if atm_pe else None,
+        "atm_ce_gamma": atm_ce["gamma"] if atm_ce else None,
+        "atm_pe_gamma": atm_pe["gamma"] if atm_pe else None,
+        "atm_ce_vega": atm_ce["vega"] if atm_ce else None,
+        "atm_pe_vega": atm_pe["vega"] if atm_pe else None,
+        "atm_ce_theta": atm_ce["theta"] if atm_ce else None,
+        "atm_pe_theta": atm_pe["theta"] if atm_pe else None,
+        "pcr": pcr, "ce_oi_buildup": _sign(ce_oi_change), "pe_oi_buildup": _sign(pe_oi_change),
+        "ce_oi_wt_strike": ce_weighted, "pe_oi_wt_strike": pe_weighted,
+        "ce_oi_change": ce_oi_change, "pe_oi_change": pe_oi_change,
+        "ce_delta_sum": ce_delta_sum, "pe_delta_sum": pe_delta_sum,
+        "gamma_sum": gamma_sum, "vega_sum": vega_sum, "theta_sum": theta_sum,
+        "gamma_spike": int(
+            previous_gamma is not None
+            and abs(gamma_sum) > max(abs(previous_gamma) * 1.5, 1e-12)
+        ),
+        "vega_change": vega_sum - previous_vega,
+        "theta_decay": theta_sum - previous_theta,
+        "dist_from_atm": spot - atm,
+        "pe_max_oi_strike": market.get("put_wall"),
+        "ce_max_oi_strike": market.get("call_wall"),
+        "dist_from_support": (
+            spot - float(market["put_wall"]) if market.get("put_wall") is not None else None
+        ),
+        "dist_from_resistance": (
+            float(market["call_wall"]) - spot if market.get("call_wall") is not None else None
+        ),
+    }
+    gex_scale = spot * spot * 0.01 / 10_000_000
+    expiry_features = {
+        **common, "expiry_date": expiry, "pcr_oi": pcr,
+        "ce_oi_strike_1": ce_top[0], "ce_oi_strike_2": ce_top[1], "ce_oi_strike_3": ce_top[2],
+        "pe_oi_strike_1": pe_top[0], "pe_oi_strike_2": pe_top[1], "pe_oi_strike_3": pe_top[2],
+        "ce_oi_wt_strike": ce_weighted, "pe_oi_wt_strike": pe_weighted,
+        "max_pain_strike": max_pain,
+        "dist_from_max_pain": spot - max_pain if max_pain is not None else None,
+        "atm_ce_iv": atm_ce["iv"] if atm_ce else None,
+        "atm_pe_iv": atm_pe["iv"] if atm_pe else None,
+        "atm_iv_change_30min": (
+            atm_iv - prior_atm_iv if atm_iv is not None and prior_atm_iv is not None else None
+        ),
+        "implied_move_pct": market.get("expected_move"),
+        "gex_ce": sum(row["gamma"] * row["oi"] for row in calls) * gex_scale,
+        "gex_pe": -sum(row["gamma"] * row["oi"] for row in puts) * gex_scale,
+    }
+    expiry_features["gex_net"] = expiry_features["gex_ce"] + expiry_features["gex_pe"]
+
+    _feature_history.append({"ts": ts, "spot": spot, "atm_iv": atm_iv})
+    _previous_feature_totals.update({
+        "total_ce_oi": total_ce_oi, "total_pe_oi": total_pe_oi,
+        "gamma_sum": gamma_sum, "vega_sum": vega_sum, "theta_sum": theta_sum,
+    })
+    return nifty, expiry_features
+
+
+def _upsert_payload(cur, table: str, payload: dict, conflict_columns: tuple[str, ...]) -> None:
+    columns = tuple(payload)
+    placeholders = ", ".join(["%s"] * len(columns))
+    updates = ", ".join(
+        f"{column} = EXCLUDED.{column}" for column in columns if column not in conflict_columns
+    )
+    cur.execute(
+        f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders}) "
+        f"ON CONFLICT ({', '.join(conflict_columns)}) DO UPDATE SET {updates}",
+        tuple(payload[column] for column in columns),
+    )
+
+
 def _ensure_schema(conn) -> None:
     with conn.cursor() as cur:
         cur.execute("""
@@ -303,6 +608,7 @@ def _ensure_schema(conn) -> None:
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_nifty_futures_expiry_ts ON nifty_futures (expiry, ts DESC)")
+        cur.execute(FEATURE_SCHEMA_SQL)
     conn.commit()
 
 
@@ -324,6 +630,11 @@ def _write_snapshot(conn, ts: datetime, snapshot: dict) -> int:
     expected_move = (straddle / spot * 100) if straddle and spot else None
     call_wall = max(call_oi, key=call_oi.get) if call_oi else None
     put_wall = max(put_oi, key=put_oi.get) if put_oi else None
+    market = {
+        "spot": spot, "vix": float(vix) if vix is not None else None, "atm": atm,
+        "pcr": pcr, "straddle": straddle, "expected_move": expected_move,
+        "call_wall": call_wall, "put_wall": put_wall,
+    }
 
     with conn.cursor() as cur:
         execute_values(cur, """
@@ -383,6 +694,20 @@ def _write_snapshot(conn, ts: datetime, snapshot: dict) -> int:
                 future.get("oi"), future.get("oi_day_high"), future.get("oi_day_low"),
                 bid_p, bid_q, bid_o, ask_p, ask_q, ask_o,
             ))
+
+        cur.execute("SAVEPOINT nifty_feature_write")
+        try:
+            nifty_payload, expiry_payload = build_feature_payloads(ts, option_rows, market)
+            if nifty_payload and expiry_payload:
+                _upsert_payload(cur, "nifty_features", nifty_payload, ("ts",))
+                _upsert_payload(
+                    cur, "nifty_expiry_features", expiry_payload, ("ts", "expiry_date")
+                )
+            cur.execute("RELEASE SAVEPOINT nifty_feature_write")
+        except Exception as exc:
+            cur.execute("ROLLBACK TO SAVEPOINT nifty_feature_write")
+            cur.execute("RELEASE SAVEPOINT nifty_feature_write")
+            logger.error("[NIFTY-WS] Feature write failed; raw snapshot retained: %s", exc)
     conn.commit()
     return len(option_rows)
 
@@ -435,6 +760,8 @@ def _clear_session() -> None:
         _option_meta = {}
         _latest_ticks.clear()
         _last_oi.clear()
+        _feature_history.clear()
+        _previous_feature_totals.clear()
 
 
 def main() -> None:

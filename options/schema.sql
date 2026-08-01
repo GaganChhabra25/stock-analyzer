@@ -124,6 +124,86 @@ CREATE INDEX IF NOT EXISTS idx_nifty_futures_expiry_ts
 COMMENT ON TABLE nifty_futures IS
     'Near-month NIFTY futures price, OI, volume and five-level depth per second.';
 
+-- Per-second causal NIFTY features from the same current-week option snapshot.
+-- Live ingestion deliberately leaves all target/label columns NULL.
+CREATE TABLE IF NOT EXISTS nifty_features (
+    ts TIMESTAMPTZ PRIMARY KEY, trade_date DATE NOT NULL,
+    underlying_ltp DOUBLE PRECISION, dte INTEGER,
+    return_1min DOUBLE PRECISION, return_5min DOUBLE PRECISION,
+    return_15min DOUBLE PRECISION, rolling_vol_5 DOUBLE PRECISION,
+    rolling_vol_15 DOUBLE PRECISION, time_bucket_enc SMALLINT,
+    atm_strike DOUBLE PRECISION, atm_ce_ltp DOUBLE PRECISION, atm_pe_ltp DOUBLE PRECISION,
+    atm_ce_iv DOUBLE PRECISION, atm_pe_iv DOUBLE PRECISION,
+    atm_ce_oi DOUBLE PRECISION, atm_pe_oi DOUBLE PRECISION,
+    atm_ce_delta DOUBLE PRECISION, atm_pe_delta DOUBLE PRECISION,
+    atm_ce_gamma DOUBLE PRECISION, atm_pe_gamma DOUBLE PRECISION,
+    atm_ce_vega DOUBLE PRECISION, atm_pe_vega DOUBLE PRECISION,
+    atm_ce_theta DOUBLE PRECISION, atm_pe_theta DOUBLE PRECISION,
+    iv_skew DOUBLE PRECISION, straddle_price DOUBLE PRECISION, pcr DOUBLE PRECISION,
+    oi_imbalance DOUBLE PRECISION, ce_oi_buildup SMALLINT, pe_oi_buildup SMALLINT,
+    ce_oi_wt_strike DOUBLE PRECISION, pe_oi_wt_strike DOUBLE PRECISION,
+    total_ce_oi DOUBLE PRECISION, total_pe_oi DOUBLE PRECISION,
+    ce_oi_change DOUBLE PRECISION, pe_oi_change DOUBLE PRECISION,
+    ce_delta_sum DOUBLE PRECISION, pe_delta_sum DOUBLE PRECISION,
+    gamma_sum DOUBLE PRECISION, vega_sum DOUBLE PRECISION, theta_sum DOUBLE PRECISION,
+    delta_imbalance DOUBLE PRECISION, gamma_spike SMALLINT,
+    vega_change DOUBLE PRECISION, theta_decay DOUBLE PRECISION,
+    dist_from_atm DOUBLE PRECISION, pe_max_oi_strike DOUBLE PRECISION,
+    ce_max_oi_strike DOUBLE PRECISION, dist_from_support DOUBLE PRECISION,
+    dist_from_resistance DOUBLE PRECISION,
+    target_direction SMALLINT, target_move DOUBLE PRECISION,
+    target_30min DOUBLE PRECISION, eod_close DOUBLE PRECISION,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    ms_vix DOUBLE PRECISION, ms_pcr_oi DOUBLE PRECISION,
+    ms_atm_straddle DOUBLE PRECISION, ms_expected_move DOUBLE PRECISION,
+    ms_call_oi_wall DOUBLE PRECISION, ms_put_oi_wall DOUBLE PRECISION,
+    ms_dist_call_wall DOUBLE PRECISION, ms_dist_put_wall DOUBLE PRECISION,
+    prev_usdinr DOUBLE PRECISION, prev_wti DOUBLE PRECISION,
+    prev_brent DOUBLE PRECISION, prev_natgas DOUBLE PRECISION,
+    fii_net_fut DOUBLE PRECISION, fii_net_opt DOUBLE PRECISION,
+    fii_pc_ratio DOUBLE PRECISION
+);
+
+CREATE INDEX IF NOT EXISTS idx_nifty_features_trade_date_ts
+    ON nifty_features (trade_date, ts DESC);
+
+CREATE TABLE IF NOT EXISTS nifty_expiry_features (
+    ts TIMESTAMPTZ NOT NULL, expiry_date DATE NOT NULL, trade_date DATE NOT NULL,
+    underlying_ltp DOUBLE PRECISION, dte INTEGER, atm_strike DOUBLE PRECISION,
+    total_ce_oi DOUBLE PRECISION, total_pe_oi DOUBLE PRECISION,
+    oi_imbalance DOUBLE PRECISION, pcr_oi DOUBLE PRECISION,
+    ce_oi_strike_1 DOUBLE PRECISION, ce_oi_strike_2 DOUBLE PRECISION,
+    ce_oi_strike_3 DOUBLE PRECISION, pe_oi_strike_1 DOUBLE PRECISION,
+    pe_oi_strike_2 DOUBLE PRECISION, pe_oi_strike_3 DOUBLE PRECISION,
+    ce_oi_wt_strike DOUBLE PRECISION, pe_oi_wt_strike DOUBLE PRECISION,
+    max_pain_strike DOUBLE PRECISION, dist_from_max_pain DOUBLE PRECISION,
+    atm_ce_iv DOUBLE PRECISION, atm_pe_iv DOUBLE PRECISION,
+    iv_skew DOUBLE PRECISION, atm_iv_change_30min DOUBLE PRECISION,
+    straddle_price DOUBLE PRECISION, implied_move_pct DOUBLE PRECISION,
+    gex_ce DOUBLE PRECISION, gex_pe DOUBLE PRECISION, gex_net DOUBLE PRECISION,
+    delta_imbalance DOUBLE PRECISION,
+    ms_vix DOUBLE PRECISION, ms_pcr_oi DOUBLE PRECISION,
+    ms_atm_straddle DOUBLE PRECISION, ms_expected_move DOUBLE PRECISION,
+    ms_call_oi_wall DOUBLE PRECISION, ms_put_oi_wall DOUBLE PRECISION,
+    ms_dist_call_wall DOUBLE PRECISION, ms_dist_put_wall DOUBLE PRECISION,
+    prev_usdinr DOUBLE PRECISION, prev_wti DOUBLE PRECISION,
+    prev_brent DOUBLE PRECISION, prev_natgas DOUBLE PRECISION,
+    fii_net_fut DOUBLE PRECISION, fii_net_opt DOUBLE PRECISION,
+    fii_pc_ratio DOUBLE PRECISION,
+    target_expiry_price DOUBLE PRECISION, target_range_low DOUBLE PRECISION,
+    target_range_high DOUBLE PRECISION, target_pin SMALLINT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (ts, expiry_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_nifty_expiry_features_expiry_ts
+    ON nifty_expiry_features (expiry_date, ts DESC);
+
+COMMENT ON TABLE nifty_features IS
+    'Per-second causal NIFTY features generated from current-week ATM +/-10 option snapshots.';
+COMMENT ON TABLE nifty_expiry_features IS
+    'Per-second current-expiry NIFTY OI, IV, max-pain and normalized GEX features.';
+
 
 -- ── MCX futures OHLC candles ──────────────────────────────────────────────────
 -- Stores daily + 15-min + 1-min OHLC for NATURALGAS and CRUDEOIL futures.
