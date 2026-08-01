@@ -91,26 +91,28 @@ def fetch_and_store(kite, symbol: str, interval: str,
         return 0
 
     rows = [{
-        "ts":         _to_ist(c["date"]),
-        "instrument": symbol,
-        "interval":   interval,
-        "open":       c["open"],
-        "high":       c["high"],
-        "low":        c["low"],
-        "close":      c["close"],
-        "volume":     c.get("volume") or 0,
-        "oi":         c.get("oi") or 0,
+        "ts":           _to_ist(c["date"]),
+        "instrument":   symbol,
+        "interval":     interval,
+        "tradingsymbol": tradingsymbol,
+        "open":         c["open"],
+        "high":         c["high"],
+        "low":          c["low"],
+        "close":        c["close"],
+        "volume":       c.get("volume") or 0,
+        "oi":           c.get("oi") or 0,
     } for c in candles]
 
     with _get_conn() as conn:
         with conn.cursor() as cur:
             cur.executemany("""
                 INSERT INTO mcx_ohlc
-                    (ts, instrument, interval, open, high, low, close, volume, oi)
+                    (ts, instrument, interval, tradingsymbol, open, high, low, close, volume, oi)
                 VALUES
-                    (%(ts)s, %(instrument)s, %(interval)s,
+                    (%(ts)s, %(instrument)s, %(interval)s, %(tradingsymbol)s,
                      %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s, %(oi)s)
                 ON CONFLICT (ts, instrument, interval) DO UPDATE SET
+                    tradingsymbol = EXCLUDED.tradingsymbol,
                     open   = EXCLUDED.open,
                     high   = EXCLUDED.high,
                     low    = EXCLUDED.low,

@@ -16,11 +16,13 @@ Architecture:
 
 import logging
 import os
+import queue
 import sys
 import threading
 import time as _time
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -49,25 +51,26 @@ def _mcx_open() -> bool:
     now   = datetime.now(IST)
     today = now.date().strftime("%Y-%m-%d")
     t     = now.time()
-    if now.weekday() == 6:          # Sunday — MCX closed
+    if now.weekday() >= 5:          # Saturday/Sunday — MCX closed
         return False
     if today in MCX_HOLIDAYS:
         return False
     if today in MCX_EVENING_ONLY_DAYS:
         return time(17, 0) <= t <= time(23, 30)
-    return time(9, 0) <= t <= time(23, 30)
+    # 15-min warmup before 9:00 so WS is connected well before first tick
+    return time(8, 45) <= t <= time(23, 30)
 
 
 def _seconds_until_open() -> int:
-    """Seconds until next MCX open (9:00 AM IST next valid day)."""
+    """Seconds until pre-connect warmup (8:45 AM IST next valid day)."""
     now  = datetime.now(IST)
-    nxt  = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    nxt  = now.replace(hour=8, minute=45, second=0, microsecond=0)
     if now.time() >= time(23, 30):      # past today's close — try tomorrow
         nxt += timedelta(days=1)
     if nxt <= now:
         nxt += timedelta(days=1)
-    # Skip Sunday
-    while nxt.weekday() == 6:
+    # Skip Saturday and Sunday
+    while nxt.weekday() >= 5:
         nxt += timedelta(days=1)
     return max(60, int((nxt - now).total_seconds()))
 
@@ -75,6 +78,7 @@ def _seconds_until_open() -> int:
 # ── Instrument token ───────────────────────────────────────────────────────────
 
 def _get_crudeoil_token(kite) -> int:
+    global _tradingsymbol, _contract_expiry
     df    = load_mcx_instruments(kite)
     today = date.today()
     fut   = df[(df["name"] == SYMBOL) & (df["instrument_type"] == "FUT")]
@@ -82,6 +86,8 @@ def _get_crudeoil_token(kite) -> int:
     if near.empty:
         raise RuntimeError("No CRUDEOIL futures found in MCX instruments")
     row = near.iloc[0]
+    _tradingsymbol = row["tradingsymbol"]
+    _contract_expiry = row["expiry"]
     logger.info("[CRUDE-WS] Token: %d  Contract: %s  Expiry: %s",
                 int(row["instrument_token"]), row["tradingsymbol"], row["expiry"])
     return int(row["instrument_token"])
@@ -98,10 +104,61 @@ _bar: dict = {
     "close": None,
     "vol_cum": 0,    # cumulative volume_traded from Kite (day total)
     "oi":    0,
+    "depth": None,    # latest full market-depth snapshot seen in this second
 }
 _prev_vol_cum: int = 0   # to compute per-second volume delta
 _token_id: int    = 0
+_tradingsymbol: str = ""
+_contract_expiry = None
 _running: bool    = True
+_depth_queue: queue.Queue = queue.Queue(maxsize=5000)
+_depth_drops: int = 0
+
+
+def _normalise_depth(raw_depth: Optional[dict]) -> Optional[dict]:
+    """Return compact arrays for every valid depth level supplied by Kite."""
+    if not raw_depth:
+        return None
+
+    def _side(name: str) -> tuple[list, list, list]:
+        prices: list = []
+        quantities: list = []
+        orders: list = []
+        for level in raw_depth.get(name, []) or []:
+            if not isinstance(level, dict):
+                continue
+            price = level.get("price")
+            if price is None:
+                continue
+            try:
+                if float(price) <= 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            prices.append(price)
+            quantities.append(level.get("quantity") or 0)
+            orders.append(level.get("orders") or 0)
+        return prices, quantities, orders
+
+    bid_prices, bid_quantities, bid_orders = _side("buy")
+    ask_prices, ask_quantities, ask_orders = _side("sell")
+    if not bid_prices and not ask_prices:
+        return None
+    return {
+        "bid_prices": bid_prices,
+        "bid_quantities": bid_quantities,
+        "bid_orders": bid_orders,
+        "ask_prices": ask_prices,
+        "ask_quantities": ask_quantities,
+        "ask_orders": ask_orders,
+    }
+
+
+def _exchange_timestamp(value):
+    """Kite exchange timestamps are naive IST; store them timezone-aware."""
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=IST)
+    return value
 
 
 def _on_ticks(ws, ticks):
@@ -114,40 +171,196 @@ def _on_ticks(ws, ticks):
             continue
         vol = tick.get("volume_traded") or 0
         oi  = tick.get("oi") or 0
+        received_at = datetime.now(IST)
+        depth = _normalise_depth(tick.get("depth"))
 
         with _lock:
             if _bar["open"] is None:
-                _bar["ts"]   = datetime.now(IST).replace(microsecond=0)
+                _bar["ts"]   = received_at.replace(microsecond=0)
                 _bar["open"] = ltp
             _bar["high"]    = max(_bar["high"] or ltp, ltp)
             _bar["low"]     = min(_bar["low"]  or ltp, ltp)
             _bar["close"]   = ltp
             _bar["vol_cum"] = vol
             _bar["oi"]      = oi
+            if depth:
+                _bar["depth"] = {
+                    **depth,
+                    "last_price": ltp,
+                    "exchange_ts": _exchange_timestamp(tick.get("exchange_timestamp")),
+                    "received_at": received_at,
+                }
 
 
 def _reset_bar():
     _bar.update({"ts": None, "open": None, "high": None,
-                 "low": None, "close": None, "oi": 0})
+                 "low": None, "close": None, "oi": 0, "depth": None})
 
 
 # ── DB writer (flush thread) ───────────────────────────────────────────────────
 
-def _write_bar(conn, ts, open_, high, low, close, volume, oi):
+def _write_bar(conn, ts, open_, high, low, close, volume, oi, tradingsymbol=""):
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO mcx_ohlc
-                (ts, instrument, interval, open, high, low, close, volume, oi)
-            VALUES (%s, %s, 'second', %s, %s, %s, %s, %s, %s)
+                (ts, instrument, interval, tradingsymbol, open, high, low, close, volume, oi)
+            VALUES (%s, %s, 'second', %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ts, instrument, interval) DO UPDATE SET
+                tradingsymbol = EXCLUDED.tradingsymbol,
                 open   = EXCLUDED.open,
                 high   = EXCLUDED.high,
                 low    = EXCLUDED.low,
                 close  = EXCLUDED.close,
                 volume = EXCLUDED.volume,
                 oi     = EXCLUDED.oi
-        """, (ts, SYMBOL, open_, high, low, close, volume, oi))
+        """, (ts, SYMBOL, tradingsymbol, open_, high, low, close, volume, oi))
     conn.commit()
+
+
+_DEPTH_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS mcx_futures_depth (
+        ts                  TIMESTAMPTZ NOT NULL,
+        instrument          VARCHAR(20) NOT NULL,
+        tradingsymbol       VARCHAR(40) NOT NULL,
+        instrument_token    BIGINT NOT NULL,
+        expiry              DATE,
+        exchange_ts         TIMESTAMPTZ,
+        received_at         TIMESTAMPTZ NOT NULL,
+        last_price          NUMERIC(12,2),
+        bid_prices          NUMERIC(12,2)[] NOT NULL,
+        bid_quantities      BIGINT[] NOT NULL,
+        bid_orders          INTEGER[] NOT NULL,
+        ask_prices          NUMERIC(12,2)[] NOT NULL,
+        ask_quantities      BIGINT[] NOT NULL,
+        ask_orders          INTEGER[] NOT NULL,
+        available_at        TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (ts, instrument),
+        CHECK (
+            cardinality(bid_prices) = cardinality(bid_quantities)
+            AND cardinality(bid_prices) = cardinality(bid_orders)
+            AND cardinality(ask_prices) = cardinality(ask_quantities)
+            AND cardinality(ask_prices) = cardinality(ask_orders)
+        )
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcx_futures_depth_contract
+        ON mcx_futures_depth (tradingsymbol, ts DESC);
+"""
+
+
+def _ensure_depth_table(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_DEPTH_TABLE_SQL)
+    conn.commit()
+
+
+def _write_depth(conn, snapshot: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO mcx_futures_depth (
+                ts, instrument, tradingsymbol, instrument_token, expiry,
+                exchange_ts, received_at, last_price,
+                bid_prices, bid_quantities, bid_orders,
+                ask_prices, ask_quantities, ask_orders
+            ) VALUES (
+                %(ts)s, %(instrument)s, %(tradingsymbol)s, %(instrument_token)s, %(expiry)s,
+                %(exchange_ts)s, %(received_at)s, %(last_price)s,
+                %(bid_prices)s, %(bid_quantities)s, %(bid_orders)s,
+                %(ask_prices)s, %(ask_quantities)s, %(ask_orders)s
+            )
+            ON CONFLICT (ts, instrument) DO UPDATE SET
+                tradingsymbol    = EXCLUDED.tradingsymbol,
+                instrument_token = EXCLUDED.instrument_token,
+                expiry           = EXCLUDED.expiry,
+                exchange_ts      = EXCLUDED.exchange_ts,
+                received_at      = EXCLUDED.received_at,
+                last_price       = EXCLUDED.last_price,
+                bid_prices       = EXCLUDED.bid_prices,
+                bid_quantities   = EXCLUDED.bid_quantities,
+                bid_orders       = EXCLUDED.bid_orders,
+                ask_prices       = EXCLUDED.ask_prices,
+                ask_quantities   = EXCLUDED.ask_quantities,
+                ask_orders       = EXCLUDED.ask_orders,
+                available_at     = clock_timestamp()
+        """, snapshot)
+    conn.commit()
+
+
+def _enqueue_depth(snapshot: dict) -> None:
+    """Never block OHLC ingestion; discard the oldest depth row under pressure."""
+    global _depth_drops
+    try:
+        _depth_queue.put_nowait(snapshot)
+        return
+    except queue.Full:
+        pass
+
+    try:
+        _depth_queue.get_nowait()
+        _depth_queue.task_done()
+    except queue.Empty:
+        pass
+
+    _depth_drops += 1
+    try:
+        _depth_queue.put_nowait(snapshot)
+    except queue.Full:
+        _depth_drops += 1
+    if _depth_drops == 1 or _depth_drops % 100 == 0:
+        logger.warning(
+            "[CRUDE-DEPTH] Queue pressure: %d oldest snapshots dropped; OHLC unaffected.",
+            _depth_drops,
+        )
+
+
+def _depth_writer_thread() -> None:
+    """Write depth independently so depth failures cannot interrupt OHLC bars."""
+    conn = None
+    schema_ready = False
+
+    while _running:
+        try:
+            snapshot = _depth_queue.get(timeout=1)
+        except queue.Empty:
+            continue
+
+        written = False
+        for attempt in range(2):
+            try:
+                if conn is None or conn.closed:
+                    import psycopg2
+                    conn = psycopg2.connect(
+                        os.environ.get("DATABASE_URL", ""),
+                        connect_timeout=5,
+                        application_name="crude_depth_writer",
+                    )
+                    conn.autocommit = False
+                    schema_ready = False
+                if not schema_ready:
+                    _ensure_depth_table(conn)
+                    schema_ready = True
+                    logger.info("[CRUDE-DEPTH] Table ready; asynchronous writer active.")
+                _write_depth(conn, snapshot)
+                written = True
+                break
+            except Exception as exc:
+                logger.error(
+                    "[CRUDE-DEPTH] Write failed (attempt %d/2); OHLC unaffected: %s",
+                    attempt + 1,
+                    exc,
+                )
+                try:
+                    if conn is not None:
+                        conn.close()
+                except Exception:
+                    pass
+                conn = None
+                schema_ready = False
+                if attempt == 0:
+                    _time.sleep(0.25)
+
+        if not written:
+            logger.error("[CRUDE-DEPTH] Snapshot dropped after two failed writes.")
+        _depth_queue.task_done()
 
 
 def _flush_thread():
@@ -161,9 +374,14 @@ def _flush_thread():
         _time.sleep(0.1)
 
         try:
-            # Lazy-connect (or reconnect after error)
+            # Lazy-connect / reconnect — use direct psycopg2 (NOT _get_conn()
+            # which is a @contextmanager and closes the connection on GC).
             if conn is None or conn.closed:
-                conn = _get_conn().__enter__()
+                import psycopg2
+                db_url = os.environ.get("DATABASE_URL", "")
+                conn = psycopg2.connect(db_url)
+                conn.autocommit = False
+                logger.info("[CRUDE-WS] DB connected.")
 
             now         = datetime.now(IST)
             current_sec = now.replace(microsecond=0)
@@ -183,7 +401,8 @@ def _flush_thread():
 
                     snap = (
                         _bar["ts"], _bar["open"], _bar["high"],
-                        _bar["low"], _bar["close"], vol_delta, _bar["oi"]
+                        _bar["low"], _bar["close"], vol_delta, _bar["oi"],
+                        _bar["depth"],
                     )
                     _reset_bar()
 
@@ -192,8 +411,18 @@ def _flush_thread():
                     # Keep _prev_vol_cum unchanged (no trade this second)
 
             if snap:
-                ts, o, h, l, c, v, oi = snap
-                _write_bar(conn, ts, o, h, l, c, v, oi)
+                ts, o, h, l, c, v, oi, depth = snap
+                # Preserve the existing critical path: commit OHLC first.
+                _write_bar(conn, ts, o, h, l, c, v, oi, _tradingsymbol)
+                if depth:
+                    _enqueue_depth({
+                        "ts": ts,
+                        "instrument": SYMBOL,
+                        "tradingsymbol": _tradingsymbol,
+                        "instrument_token": _token_id,
+                        "expiry": _contract_expiry,
+                        **depth,
+                    })
                 logger.debug("[CRUDE-WS] %s O=%.2f H=%.2f L=%.2f C=%.2f V=%d",
                              ts.strftime("%H:%M:%S"), o, h, l, c, v)
 
@@ -229,9 +458,19 @@ def main():
 
     logger.info("[CRUDE-WS] CRUDEOIL 1-second WebSocket daemon starting.")
 
-    # Start flush thread (runs for lifetime of process)
+    # Independent workers run for the process lifetime. Depth writes never share
+    # the OHLC connection or block the OHLC flush thread.
+    depth_writer = threading.Thread(
+        target=_depth_writer_thread,
+        daemon=True,
+        name="depth-writer",
+    )
+    depth_writer.start()
+
     flusher = threading.Thread(target=_flush_thread, daemon=True, name="bar-flusher")
     flusher.start()
+
+    consecutive_timeouts = 0
 
     while True:
         # ── Sleep when MCX is closed ───────────────────────────────────────────
@@ -265,9 +504,13 @@ def main():
             continue
 
         # ── Build WebSocket ────────────────────────────────────────────────────
-        kws = KiteTicker(API_KEY, access_token, reconnect=True)
+        # reconnect=False: outer loop handles reconnection exclusively.
+        # reconnect=True caused dual concurrent connections → Kite dropped both.
+        kws = KiteTicker(API_KEY, access_token, reconnect=False)
+        _connected_evt = threading.Event()
 
         def on_connect(ws, _resp):
+            _connected_evt.set()
             logger.info("[CRUDE-WS] Connected — subscribing token %d", _token_id)
             ws.subscribe([_token_id])
             ws.set_mode(ws.MODE_FULL, [_token_id])
@@ -294,26 +537,50 @@ def main():
             kws.connect(threaded=True)
             logger.info("[CRUDE-WS] WebSocket thread started.")
 
-            # Monitor: disconnect cleanly at MCX close
-            while True:
-                _time.sleep(10)
-                if not _mcx_open():
-                    logger.info("[CRUDE-WS] MCX closing — disconnecting WebSocket.")
-                    kws.close()
-                    once("crude_ws_end",
-                         f"\U0001f534 CRUDEOIL 1-sec Ended\n"
-                         f"{now_ist()}\n"
-                         f"Bars today : {_today_rows():,}\n"
-                         f"DB         : {db_size()}")
-                    break
-                if not kws.is_connected():
-                    logger.warning("[CRUDE-WS] Disconnected mid-session — will reconnect.")
-                    break
+            # Wait until on_connect fires (up to 60s) — no fixed sleep.
+            if not _connected_evt.wait(timeout=60):
+                consecutive_timeouts += 1
+                logger.warning(
+                    "[CRUDE-WS] Connection timeout (60s) — attempt %d.",
+                    consecutive_timeouts,
+                )
+                if consecutive_timeouts >= 3:
+                    logger.error(
+                        "[CRUDE-WS] 3 consecutive timeouts — restarting process "
+                        "so Docker can recover cleanly."
+                    )
+                    sys.exit(1)
+            else:
+                consecutive_timeouts = 0
+                # Monitor: disconnect cleanly at MCX close.
+                while True:
+                    if not _mcx_open():
+                        logger.info("[CRUDE-WS] MCX closing — disconnecting WebSocket.")
+                        try:
+                            kws.close()
+                        except Exception:
+                            pass
+                        once("crude_ws_end",
+                             f"\U0001f534 CRUDEOIL 1-sec Ended\n"
+                             f"{now_ist()}\n"
+                             f"Bars today : {_today_rows():,}\n"
+                             f"DB         : {db_size()}")
+                        break
+                    if not kws.is_connected():
+                        logger.warning("[CRUDE-WS] Disconnected mid-session — will reconnect.")
+                        break
+                    _time.sleep(10)
 
         except Exception as exc:
             logger.error("[CRUDE-WS] Unexpected error: %s", exc)
 
-        _time.sleep(5)   # brief pause before next connect attempt
+        # Explicitly stop the old KiteTicker before reconnecting
+        try:
+            kws.close()
+        except Exception:
+            pass
+
+        _time.sleep(30)  # 30s cooldown — prevents duplicate sessions on Kite
 
 
 if __name__ == "__main__":

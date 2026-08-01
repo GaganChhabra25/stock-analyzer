@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS mcx_ohlc (
     ts          TIMESTAMPTZ     NOT NULL,           -- candle open time (IST-aware)
     instrument  VARCHAR(20)     NOT NULL,           -- NATURALGAS | CRUDEOIL
     interval    VARCHAR(10)     NOT NULL,           -- 'day' | '15minute' | 'minute'
+    tradingsymbol VARCHAR(40),                       -- exact futures contract used
     open        NUMERIC(12,2),
     high        NUMERIC(12,2),
     low         NUMERIC(12,2),
@@ -228,6 +229,41 @@ CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_lookup
 
 COMMENT ON TABLE mcx_ohlc IS
     'MCX futures OHLC (daily + 15-min + 1-min). CRUDEOIL collected per-minute; NATURALGAS at 15-min.';
+
+ALTER TABLE IF EXISTS mcx_ohlc
+    ADD COLUMN IF NOT EXISTS tradingsymbol VARCHAR(40);
+
+-- Full five-level CRUDEOIL futures depth captured independently of OHLC writes.
+CREATE TABLE IF NOT EXISTS mcx_futures_depth (
+    ts                  TIMESTAMPTZ NOT NULL,
+    instrument          VARCHAR(20) NOT NULL,
+    tradingsymbol       VARCHAR(40) NOT NULL,
+    instrument_token    BIGINT NOT NULL,
+    expiry              DATE,
+    exchange_ts         TIMESTAMPTZ,
+    received_at         TIMESTAMPTZ NOT NULL,
+    last_price          NUMERIC(12,2),
+    bid_prices          NUMERIC(12,2)[] NOT NULL DEFAULT '{}',
+    bid_quantities      BIGINT[] NOT NULL DEFAULT '{}',
+    bid_orders          INTEGER[] NOT NULL DEFAULT '{}',
+    ask_prices          NUMERIC(12,2)[] NOT NULL DEFAULT '{}',
+    ask_quantities      BIGINT[] NOT NULL DEFAULT '{}',
+    ask_orders          INTEGER[] NOT NULL DEFAULT '{}',
+    available_at        TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (ts, instrument),
+    CHECK (
+        cardinality(bid_prices) = cardinality(bid_quantities)
+        AND cardinality(bid_prices) = cardinality(bid_orders)
+        AND cardinality(ask_prices) = cardinality(ask_quantities)
+        AND cardinality(ask_prices) = cardinality(ask_orders)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcx_futures_depth_contract
+    ON mcx_futures_depth (tradingsymbol, ts DESC);
+
+COMMENT ON TABLE mcx_futures_depth IS
+    'Per-second CRUDEOIL futures bid/ask depth; asynchronous writes cannot block OHLC ingestion.';
 
 
 -- ── Global commodity reference prices ─────────────────────────────────────────
