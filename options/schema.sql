@@ -250,13 +250,34 @@ CREATE TABLE IF NOT EXISTS mcx_futures_depth (
     expiry              DATE,
     exchange_ts         TIMESTAMPTZ,
     received_at         TIMESTAMPTZ NOT NULL,
+    last_trade_ts       TIMESTAMPTZ,
     last_price          NUMERIC(12,2),
+    last_quantity       BIGINT,
+    average_traded_price NUMERIC(12,2),
+    volume_traded_day   BIGINT,
+    volume_delta        BIGINT,
+    oi                  BIGINT,
+    oi_day_high         BIGINT,
+    oi_day_low          BIGINT,
+    total_buy_quantity  BIGINT,
+    total_sell_quantity BIGINT,
+    tick_count          INTEGER,
     bid_prices          NUMERIC(12,2)[] NOT NULL DEFAULT '{}',
     bid_quantities      BIGINT[] NOT NULL DEFAULT '{}',
     bid_orders          INTEGER[] NOT NULL DEFAULT '{}',
     ask_prices          NUMERIC(12,2)[] NOT NULL DEFAULT '{}',
     ask_quantities      BIGINT[] NOT NULL DEFAULT '{}',
     ask_orders          INTEGER[] NOT NULL DEFAULT '{}',
+    best_bid_price      NUMERIC(12,2),
+    best_ask_price      NUMERIC(12,2),
+    spread              NUMERIC(12,4),
+    mid_price           NUMERIC(12,4),
+    microprice          NUMERIC(14,6),
+    bid_quantity_total  BIGINT,
+    ask_quantity_total  BIGINT,
+    book_imbalance_l1   DOUBLE PRECISION,
+    book_imbalance_l5   DOUBLE PRECISION,
+    l1_order_flow_imbalance BIGINT,
     available_at        TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (ts, instrument),
     CHECK (
@@ -271,7 +292,51 @@ CREATE INDEX IF NOT EXISTS idx_mcx_futures_depth_contract
     ON mcx_futures_depth (tradingsymbol, ts DESC);
 
 COMMENT ON TABLE mcx_futures_depth IS
-    'Per-second CRUDEOIL futures bid/ask depth; asynchronous writes cannot block OHLC ingestion.';
+    'Per-second CRUDEOIL futures depth and order-flow snapshots; asynchronous writes cannot block OHLC ingestion.';
+
+-- Existing installations: additive, nullable columns preserve old rows and consumers.
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS last_trade_ts TIMESTAMPTZ;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS last_quantity BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS average_traded_price NUMERIC(12,2);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS volume_traded_day BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS volume_delta BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS oi BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS oi_day_high BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS oi_day_low BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS total_buy_quantity BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS total_sell_quantity BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS tick_count INTEGER;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_bid_price NUMERIC(12,2);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_ask_price NUMERIC(12,2);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread NUMERIC(12,4);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS mid_price NUMERIC(12,4);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice NUMERIC(14,6);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_quantity_total BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_quantity_total BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l1 DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l5 DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS l1_order_flow_imbalance BIGINT;
+
+-- Synchronized WTI x USDINR causal reference sampled once per completed second.
+CREATE TABLE IF NOT EXISTS global_reference_second (
+    ts                   TIMESTAMPTZ PRIMARY KEY,
+    wti_price            DOUBLE PRECISION NOT NULL,
+    usdinr_price         DOUBLE PRECISION NOT NULL,
+    theoretical_mcx      DOUBLE PRECISION NOT NULL,
+    wti_source_ts        TIMESTAMPTZ NOT NULL,
+    usdinr_source_ts     TIMESTAMPTZ NOT NULL,
+    wti_received_at      TIMESTAMPTZ NOT NULL,
+    usdinr_received_at   TIMESTAMPTZ NOT NULL,
+    wti_age_ms           INTEGER NOT NULL,
+    usdinr_age_ms        INTEGER NOT NULL,
+    source               VARCHAR(30) NOT NULL,
+    wti_source_symbol    VARCHAR(40) NOT NULL,
+    usdinr_source_symbol VARCHAR(40) NOT NULL,
+    available_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE INDEX IF NOT EXISTS idx_global_reference_second_available
+    ON global_reference_second (available_at DESC);
 
 
 -- ── Global commodity reference prices ─────────────────────────────────────────
@@ -316,7 +381,8 @@ SELECT
     (SELECT COUNT(*) FROM information_schema.tables
      WHERE table_schema = 'public'
        AND table_name IN ('users', 'kite_tokens', 'option_chain', 'market_snapshot',
-                          'mcx_ohlc', 'global_prices', 'app_users')) AS tables_created;
+                          'mcx_ohlc', 'mcx_futures_depth', 'global_reference_second',
+                          'global_prices', 'app_users')) AS tables_created;
 
 
 -- ============================================================

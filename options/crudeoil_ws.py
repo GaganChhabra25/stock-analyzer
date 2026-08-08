@@ -104,12 +104,22 @@ _bar: dict = {
     "close": None,
     "vol_cum": 0,    # cumulative volume_traded from Kite (day total)
     "oi":    0,
+    "last_quantity": 0,
+    "average_traded_price": None,
+    "total_buy_quantity": 0,
+    "total_sell_quantity": 0,
+    "oi_day_high": 0,
+    "oi_day_low": 0,
+    "last_trade_ts": None,
+    "tick_count": 0,
+    "l1_order_flow_imbalance": 0,
     "depth": None,    # latest full market-depth snapshot seen in this second
 }
 _prev_vol_cum: int = 0   # to compute per-second volume delta
 _token_id: int    = 0
 _tradingsymbol: str = ""
 _contract_expiry = None
+_previous_top: Optional[tuple[float, int, float, int]] = None
 _running: bool    = True
 _depth_queue: queue.Queue = queue.Queue(maxsize=5000)
 _depth_drops: int = 0
@@ -154,6 +164,86 @@ def _normalise_depth(raw_depth: Optional[dict]) -> Optional[dict]:
     }
 
 
+def _top_of_book(depth: Optional[dict]) -> Optional[tuple[float, int, float, int]]:
+    """Return best bid price/qty and best ask price/qty when both sides exist."""
+    if not depth or not depth.get("bid_prices") or not depth.get("ask_prices"):
+        return None
+    return (
+        float(depth["bid_prices"][0]),
+        int(depth["bid_quantities"][0]),
+        float(depth["ask_prices"][0]),
+        int(depth["ask_quantities"][0]),
+    )
+
+
+def _l1_ofi(previous, current) -> int:
+    """Signed L1 order-flow imbalance from consecutive top-of-book updates."""
+    if previous is None or current is None:
+        return 0
+
+    prev_bid, prev_bid_qty, prev_ask, prev_ask_qty = previous
+    bid, bid_qty, ask, ask_qty = current
+
+    if bid > prev_bid:
+        bid_flow = bid_qty
+    elif bid == prev_bid:
+        bid_flow = bid_qty - prev_bid_qty
+    else:
+        bid_flow = -prev_bid_qty
+
+    if ask > prev_ask:
+        ask_flow = prev_ask_qty
+    elif ask == prev_ask:
+        ask_flow = prev_ask_qty - ask_qty
+    else:
+        ask_flow = -ask_qty
+
+    return int(bid_flow + ask_flow)
+
+
+def _depth_metrics(depth: Optional[dict]) -> dict:
+    """Calculate compact, reproducible order-book features for one snapshot."""
+    top = _top_of_book(depth)
+    if top is None:
+        return {
+            "best_bid_price": None,
+            "best_ask_price": None,
+            "spread": None,
+            "mid_price": None,
+            "microprice": None,
+            "bid_quantity_total": None,
+            "ask_quantity_total": None,
+            "book_imbalance_l1": None,
+            "book_imbalance_l5": None,
+        }
+
+    bid, bid_qty, ask, ask_qty = top
+    spread = ask - bid
+    total_l1 = bid_qty + ask_qty
+    bid_quantities = [int(x or 0) for x in depth.get("bid_quantities", [])[:5]]
+    ask_quantities = [int(x or 0) for x in depth.get("ask_quantities", [])[:5]]
+    bid_total = sum(bid_quantities)
+    ask_total = sum(ask_quantities)
+
+    weighted_bid = sum(qty / (level + 1) for level, qty in enumerate(bid_quantities))
+    weighted_ask = sum(qty / (level + 1) for level, qty in enumerate(ask_quantities))
+    weighted_total = weighted_bid + weighted_ask
+
+    return {
+        "best_bid_price": bid,
+        "best_ask_price": ask,
+        "spread": spread,
+        "mid_price": (bid + ask) / 2.0,
+        "microprice": ((ask * bid_qty) + (bid * ask_qty)) / total_l1 if total_l1 else None,
+        "bid_quantity_total": bid_total,
+        "ask_quantity_total": ask_total,
+        "book_imbalance_l1": (bid_qty - ask_qty) / total_l1 if total_l1 else None,
+        "book_imbalance_l5": (
+            (weighted_bid - weighted_ask) / weighted_total if weighted_total else None
+        ),
+    }
+
+
 def _exchange_timestamp(value):
     """Kite exchange timestamps are naive IST; store them timezone-aware."""
     if isinstance(value, datetime) and value.tzinfo is None:
@@ -162,7 +252,7 @@ def _exchange_timestamp(value):
 
 
 def _on_ticks(ws, ticks):
-    global _prev_vol_cum
+    global _previous_top
     for tick in ticks:
         if int(tick.get("instrument_token", 0)) != _token_id:
             continue
@@ -175,6 +265,7 @@ def _on_ticks(ws, ticks):
         depth = _normalise_depth(tick.get("depth"))
 
         with _lock:
+            _bar["tick_count"] += 1
             if _bar["open"] is None:
                 _bar["ts"]   = received_at.replace(microsecond=0)
                 _bar["open"] = ltp
@@ -183,7 +274,17 @@ def _on_ticks(ws, ticks):
             _bar["close"]   = ltp
             _bar["vol_cum"] = vol
             _bar["oi"]      = oi
+            _bar["last_quantity"] = tick.get("last_traded_quantity") or 0
+            _bar["average_traded_price"] = tick.get("average_traded_price")
+            _bar["total_buy_quantity"] = tick.get("total_buy_quantity") or 0
+            _bar["total_sell_quantity"] = tick.get("total_sell_quantity") or 0
+            _bar["oi_day_high"] = tick.get("oi_day_high") or 0
+            _bar["oi_day_low"] = tick.get("oi_day_low") or 0
+            _bar["last_trade_ts"] = _exchange_timestamp(tick.get("last_trade_time"))
             if depth:
+                current_top = _top_of_book(depth)
+                _bar["l1_order_flow_imbalance"] += _l1_ofi(_previous_top, current_top)
+                _previous_top = current_top
                 _bar["depth"] = {
                     **depth,
                     "last_price": ltp,
@@ -194,7 +295,12 @@ def _on_ticks(ws, ticks):
 
 def _reset_bar():
     _bar.update({"ts": None, "open": None, "high": None,
-                 "low": None, "close": None, "oi": 0, "depth": None})
+                 "low": None, "close": None, "oi": 0,
+                 "last_quantity": 0, "average_traded_price": None,
+                 "total_buy_quantity": 0, "total_sell_quantity": 0,
+                 "oi_day_high": 0, "oi_day_low": 0, "last_trade_ts": None,
+                 "tick_count": 0, "l1_order_flow_imbalance": 0,
+                 "depth": None})
 
 
 # ── DB writer (flush thread) ───────────────────────────────────────────────────
@@ -226,13 +332,34 @@ _DEPTH_TABLE_SQL = """
         expiry              DATE,
         exchange_ts         TIMESTAMPTZ,
         received_at         TIMESTAMPTZ NOT NULL,
+        last_trade_ts       TIMESTAMPTZ,
         last_price          NUMERIC(12,2),
+        last_quantity       BIGINT,
+        average_traded_price NUMERIC(12,2),
+        volume_traded_day   BIGINT,
+        volume_delta        BIGINT,
+        oi                  BIGINT,
+        oi_day_high         BIGINT,
+        oi_day_low          BIGINT,
+        total_buy_quantity  BIGINT,
+        total_sell_quantity BIGINT,
+        tick_count          INTEGER,
         bid_prices          NUMERIC(12,2)[] NOT NULL,
         bid_quantities      BIGINT[] NOT NULL,
         bid_orders          INTEGER[] NOT NULL,
         ask_prices          NUMERIC(12,2)[] NOT NULL,
         ask_quantities      BIGINT[] NOT NULL,
         ask_orders          INTEGER[] NOT NULL,
+        best_bid_price      NUMERIC(12,2),
+        best_ask_price      NUMERIC(12,2),
+        spread              NUMERIC(12,4),
+        mid_price           NUMERIC(12,4),
+        microprice          NUMERIC(14,6),
+        bid_quantity_total  BIGINT,
+        ask_quantity_total  BIGINT,
+        book_imbalance_l1   DOUBLE PRECISION,
+        book_imbalance_l5   DOUBLE PRECISION,
+        l1_order_flow_imbalance BIGINT,
         available_at        TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
         PRIMARY KEY (ts, instrument),
         CHECK (
@@ -244,6 +371,27 @@ _DEPTH_TABLE_SQL = """
     );
     CREATE INDEX IF NOT EXISTS idx_mcx_futures_depth_contract
         ON mcx_futures_depth (tradingsymbol, ts DESC);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS last_trade_ts TIMESTAMPTZ;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS last_quantity BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS average_traded_price NUMERIC(12,2);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS volume_traded_day BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS volume_delta BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS oi BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS oi_day_high BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS oi_day_low BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS total_buy_quantity BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS total_sell_quantity BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS tick_count INTEGER;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_bid_price NUMERIC(12,2);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_ask_price NUMERIC(12,2);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread NUMERIC(12,4);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS mid_price NUMERIC(12,4);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice NUMERIC(14,6);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_quantity_total BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_quantity_total BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l1 DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l5 DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS l1_order_flow_imbalance BIGINT;
 """
 
 
@@ -258,14 +406,26 @@ def _write_depth(conn, snapshot: dict) -> None:
         cur.execute("""
             INSERT INTO mcx_futures_depth (
                 ts, instrument, tradingsymbol, instrument_token, expiry,
-                exchange_ts, received_at, last_price,
+                exchange_ts, received_at, last_trade_ts, last_price,
+                last_quantity, average_traded_price,
+                volume_traded_day, volume_delta, oi, oi_day_high, oi_day_low,
+                total_buy_quantity, total_sell_quantity, tick_count,
                 bid_prices, bid_quantities, bid_orders,
-                ask_prices, ask_quantities, ask_orders
+                ask_prices, ask_quantities, ask_orders,
+                best_bid_price, best_ask_price, spread, mid_price, microprice,
+                bid_quantity_total, ask_quantity_total,
+                book_imbalance_l1, book_imbalance_l5, l1_order_flow_imbalance
             ) VALUES (
                 %(ts)s, %(instrument)s, %(tradingsymbol)s, %(instrument_token)s, %(expiry)s,
-                %(exchange_ts)s, %(received_at)s, %(last_price)s,
+                %(exchange_ts)s, %(received_at)s, %(last_trade_ts)s, %(last_price)s,
+                %(last_quantity)s, %(average_traded_price)s,
+                %(volume_traded_day)s, %(volume_delta)s, %(oi)s, %(oi_day_high)s, %(oi_day_low)s,
+                %(total_buy_quantity)s, %(total_sell_quantity)s, %(tick_count)s,
                 %(bid_prices)s, %(bid_quantities)s, %(bid_orders)s,
-                %(ask_prices)s, %(ask_quantities)s, %(ask_orders)s
+                %(ask_prices)s, %(ask_quantities)s, %(ask_orders)s,
+                %(best_bid_price)s, %(best_ask_price)s, %(spread)s, %(mid_price)s, %(microprice)s,
+                %(bid_quantity_total)s, %(ask_quantity_total)s,
+                %(book_imbalance_l1)s, %(book_imbalance_l5)s, %(l1_order_flow_imbalance)s
             )
             ON CONFLICT (ts, instrument) DO UPDATE SET
                 tradingsymbol    = EXCLUDED.tradingsymbol,
@@ -273,13 +433,34 @@ def _write_depth(conn, snapshot: dict) -> None:
                 expiry           = EXCLUDED.expiry,
                 exchange_ts      = EXCLUDED.exchange_ts,
                 received_at      = EXCLUDED.received_at,
+                last_trade_ts    = EXCLUDED.last_trade_ts,
                 last_price       = EXCLUDED.last_price,
+                last_quantity    = EXCLUDED.last_quantity,
+                average_traded_price = EXCLUDED.average_traded_price,
+                volume_traded_day = EXCLUDED.volume_traded_day,
+                volume_delta     = EXCLUDED.volume_delta,
+                oi               = EXCLUDED.oi,
+                oi_day_high      = EXCLUDED.oi_day_high,
+                oi_day_low       = EXCLUDED.oi_day_low,
+                total_buy_quantity = EXCLUDED.total_buy_quantity,
+                total_sell_quantity = EXCLUDED.total_sell_quantity,
+                tick_count       = EXCLUDED.tick_count,
                 bid_prices       = EXCLUDED.bid_prices,
                 bid_quantities   = EXCLUDED.bid_quantities,
                 bid_orders       = EXCLUDED.bid_orders,
                 ask_prices       = EXCLUDED.ask_prices,
                 ask_quantities   = EXCLUDED.ask_quantities,
                 ask_orders       = EXCLUDED.ask_orders,
+                best_bid_price   = EXCLUDED.best_bid_price,
+                best_ask_price   = EXCLUDED.best_ask_price,
+                spread           = EXCLUDED.spread,
+                mid_price        = EXCLUDED.mid_price,
+                microprice       = EXCLUDED.microprice,
+                bid_quantity_total = EXCLUDED.bid_quantity_total,
+                ask_quantity_total = EXCLUDED.ask_quantity_total,
+                book_imbalance_l1 = EXCLUDED.book_imbalance_l1,
+                book_imbalance_l5 = EXCLUDED.book_imbalance_l5,
+                l1_order_flow_imbalance = EXCLUDED.l1_order_flow_imbalance,
                 available_at     = clock_timestamp()
         """, snapshot)
     conn.commit()
@@ -399,10 +580,29 @@ def _flush_thread():
                     vol_delta = max(0, _bar["vol_cum"] - _prev_vol_cum)
                     _prev_vol_cum = _bar["vol_cum"]
 
+                    depth_snapshot = None
+                    if _bar["depth"]:
+                        depth_snapshot = {
+                            **_bar["depth"],
+                            "last_trade_ts": _bar["last_trade_ts"],
+                            "last_quantity": _bar["last_quantity"],
+                            "average_traded_price": _bar["average_traded_price"],
+                            "volume_traded_day": _bar["vol_cum"],
+                            "volume_delta": vol_delta,
+                            "oi": _bar["oi"],
+                            "oi_day_high": _bar["oi_day_high"],
+                            "oi_day_low": _bar["oi_day_low"],
+                            "total_buy_quantity": _bar["total_buy_quantity"],
+                            "total_sell_quantity": _bar["total_sell_quantity"],
+                            "tick_count": _bar["tick_count"],
+                            "l1_order_flow_imbalance": _bar["l1_order_flow_imbalance"],
+                            **_depth_metrics(_bar["depth"]),
+                        }
+
                     snap = (
                         _bar["ts"], _bar["open"], _bar["high"],
                         _bar["low"], _bar["close"], vol_delta, _bar["oi"],
-                        _bar["depth"],
+                        depth_snapshot,
                     )
                     _reset_bar()
 
@@ -453,10 +653,40 @@ def _today_rows() -> int:
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
+def _start_global_reference_worker():
+    """Start the optional reference feed without coupling it to MCX writes."""
+    if not os.environ.get("TWELVE_DATA_API_KEY", "").strip():
+        logger.warning(
+            "[GLOBAL-REF] TWELVE_DATA_API_KEY absent; optional reference feed disabled."
+        )
+        return None
+
+    def run_worker():
+        try:
+            from options.global_reference_ws import main as global_reference_main
+
+            global_reference_main()
+        except Exception as exc:
+            logger.error(
+                "[GLOBAL-REF] Worker stopped; CRUDEOIL collection is unaffected: %s",
+                exc,
+            )
+
+    worker = threading.Thread(
+        target=run_worker,
+        daemon=True,
+        name="global-reference-worker",
+    )
+    worker.start()
+    return worker
+
+
 def main():
-    global _token_id, _running
+    global _token_id, _running, _previous_top
 
     logger.info("[CRUDE-WS] CRUDEOIL 1-second WebSocket daemon starting.")
+
+    _start_global_reference_worker()
 
     # Independent workers run for the process lifetime. Depth writes never share
     # the OHLC connection or block the OHLC flush thread.
@@ -498,6 +728,8 @@ def main():
         # ── Resolve near-month CRUDEOIL token ─────────────────────────────────
         try:
             _token_id = _get_crudeoil_token(kite)
+            with _lock:
+                _previous_top = None
         except Exception as exc:
             logger.error("[CRUDE-WS] Token resolution failed: %s — retry in 5 min.", exc)
             _time.sleep(300)

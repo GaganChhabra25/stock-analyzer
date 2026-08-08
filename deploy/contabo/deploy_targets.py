@@ -40,6 +40,11 @@ NIFTY_PATHS = {
     "options/nifty_ws.py",
 }
 
+CRUDE_PATHS = {
+    "options/crudeoil_ws.py",
+    "options/global_reference_ws.py",
+}
+
 
 @dataclass(frozen=True)
 class DeploymentPlan:
@@ -67,7 +72,7 @@ def deployment_plan(paths: list[str], deploy_all: bool = False) -> DeploymentPla
         services.update(DOCKER_SERVICES)
         deploy_web = True
 
-    if "options/crudeoil_ws.py" in normalized:
+    if normalized & CRUDE_PATHS:
         services.add("crudeoil-ws")
     if normalized & NIFTY_PATHS:
         services.add("nifty-ws")
