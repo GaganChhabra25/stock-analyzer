@@ -317,26 +317,50 @@ ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l1 DOUBLE 
 ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l5 DOUBLE PRECISION;
 ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS l1_order_flow_imbalance BIGINT;
 
--- Synchronized WTI x USDINR causal reference sampled once per completed second.
-CREATE TABLE IF NOT EXISTS global_reference_second (
-    ts                   TIMESTAMPTZ PRIMARY KEY,
-    wti_price            DOUBLE PRECISION NOT NULL,
-    usdinr_price         DOUBLE PRECISION NOT NULL,
-    theoretical_mcx      DOUBLE PRECISION NOT NULL,
-    wti_source_ts        TIMESTAMPTZ NOT NULL,
-    usdinr_source_ts     TIMESTAMPTZ NOT NULL,
-    wti_received_at      TIMESTAMPTZ NOT NULL,
-    usdinr_received_at   TIMESTAMPTZ NOT NULL,
-    wti_age_ms           INTEGER NOT NULL,
-    usdinr_age_ms        INTEGER NOT NULL,
-    source               VARCHAR(30) NOT NULL,
-    wti_source_symbol    VARCHAR(40) NOT NULL,
-    usdinr_source_symbol VARCHAR(40) NOT NULL,
-    available_at         TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+-- Compact ATM +/-10 CRUDEOIL option pressure captured from Kite each second.
+CREATE TABLE IF NOT EXISTS mcx_crude_option_pressure_second (
+    ts                          TIMESTAMPTZ PRIMARY KEY,
+    expiry                      DATE NOT NULL,
+    futures_tradingsymbol       VARCHAR(40) NOT NULL,
+    futures_ltp                 NUMERIC(12,2) NOT NULL,
+    futures_received_at         TIMESTAMPTZ NOT NULL,
+    futures_age_ms              INTEGER NOT NULL,
+    atm_strike                  INTEGER NOT NULL,
+    strike_step                 INTEGER NOT NULL DEFAULT 50,
+    wings                       SMALLINT NOT NULL,
+    subscribed_contracts        SMALLINT NOT NULL,
+    fresh_contracts             SMALLINT NOT NULL,
+    total_tick_count            INTEGER NOT NULL,
+    max_option_age_ms           INTEGER,
+    total_ce_oi                 BIGINT,
+    total_pe_oi                 BIGINT,
+    ce_oi_delta                 BIGINT,
+    pe_oi_delta                 BIGINT,
+    pcr_oi                      DOUBLE PRECISION,
+    oi_imbalance                DOUBLE PRECISION,
+    oi_delta_imbalance          DOUBLE PRECISION,
+    ce_volume_delta             BIGINT,
+    pe_volume_delta             BIGINT,
+    volume_imbalance            DOUBLE PRECISION,
+    call_wall_strike            INTEGER,
+    put_wall_strike             INTEGER,
+    call_wall_oi                BIGINT,
+    put_wall_oi                 BIGINT,
+    distance_to_call_wall       DOUBLE PRECISION,
+    distance_to_put_wall        DOUBLE PRECISION,
+    atm_ce_ltp                  NUMERIC(12,2),
+    atm_pe_ltp                  NUMERIC(12,2),
+    atm_straddle                NUMERIC(12,2),
+    atm_premium_skew            DOUBLE PRECISION,
+    ce_book_imbalance           DOUBLE PRECISION,
+    pe_book_imbalance           DOUBLE PRECISION,
+    directional_book_pressure   DOUBLE PRECISION,
+    chain                       JSONB NOT NULL,
+    available_at                TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 
-CREATE INDEX IF NOT EXISTS idx_global_reference_second_available
-    ON global_reference_second (available_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcx_crude_option_pressure_expiry
+    ON mcx_crude_option_pressure_second (expiry, ts DESC);
 
 
 -- ── Global commodity reference prices ─────────────────────────────────────────
@@ -381,7 +405,8 @@ SELECT
     (SELECT COUNT(*) FROM information_schema.tables
      WHERE table_schema = 'public'
        AND table_name IN ('users', 'kite_tokens', 'option_chain', 'market_snapshot',
-                          'mcx_ohlc', 'mcx_futures_depth', 'global_reference_second',
+                          'mcx_ohlc', 'mcx_futures_depth',
+                          'mcx_crude_option_pressure_second',
                           'global_prices', 'app_users')) AS tables_created;
 
 

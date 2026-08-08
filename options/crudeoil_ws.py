@@ -1,8 +1,9 @@
 """
 CRUDEOIL 1-second OHLC collector — Kite WebSocket daemon.
 
-Subscribes to near-month CRUDEOIL futures tick stream via Kite WebSocket.
-Aggregates ticks into 1-second OHLC bars → mcx_ohlc (interval='second').
+Subscribes to near-month CRUDEOIL futures and nearest-expiry ATM +/-10 options
+through one Kite WebSocket. Stores futures OHLC/depth and one compact option
+pressure snapshot per active second.
 
 Runs as a persistent Docker service (restart: unless-stopped).
   - Active only during MCX hours (09:00–23:30 IST); sleeps otherwise.
@@ -10,10 +11,12 @@ Runs as a persistent Docker service (restart: unless-stopped).
   - No manual steps needed.
 
 Architecture:
-  Main thread  → KiteTicker WebSocket (receives ticks, updates _bar buffer)
-  Flush thread → wakes every 100 ms, writes completed 1-sec bars to DB
+  Main thread    → KiteTicker WebSocket (futures critical path + option cache)
+  Flush thread   → writes completed 1-sec futures bars to DB
+  Option writer  → isolated DB connection; option failures cannot block futures
 """
 
+import json
 import logging
 import os
 import queue
@@ -32,7 +35,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from kiteconnect import KiteTicker
 
 from options.kite_auth import API_KEY, load_access_token
-from options.mcx_instruments import load_mcx_instruments
+from options.mcx_instruments import atm_strike_mcx, load_mcx_instruments
 from options.tg import once, send, db_size, table_rows, now_ist
 from options.kite_auth import get_kite
 from screener.db import _get_conn
@@ -43,6 +46,8 @@ logger = logging.getLogger(__name__)
 
 IST    = ZoneInfo("Asia/Kolkata")
 SYMBOL = "CRUDEOIL"
+OPTION_WINGS = 10
+OPTION_FRESHNESS_SECONDS = 15
 
 # ── Market hours ───────────────────────────────────────────────────────────────
 
@@ -78,7 +83,7 @@ def _seconds_until_open() -> int:
 # ── Instrument token ───────────────────────────────────────────────────────────
 
 def _get_crudeoil_token(kite) -> int:
-    global _tradingsymbol, _contract_expiry
+    global _tradingsymbol, _contract_expiry, _option_expiry, _option_universe
     df    = load_mcx_instruments(kite)
     today = date.today()
     fut   = df[(df["name"] == SYMBOL) & (df["instrument_type"] == "FUT")]
@@ -88,8 +93,38 @@ def _get_crudeoil_token(kite) -> int:
     row = near.iloc[0]
     _tradingsymbol = row["tradingsymbol"]
     _contract_expiry = row["expiry"]
+
+    option_rows = df[
+        (df["name"] == SYMBOL)
+        & (df["instrument_type"].isin(["CE", "PE"]))
+        & (df["expiry"] >= today)
+    ]
+    universe = {}
+    option_expiry = None
+    if not option_rows.empty:
+        option_expiry = min(option_rows["expiry"])
+        for _, option in option_rows[option_rows["expiry"] == option_expiry].iterrows():
+            strike = int(option["strike"])
+            option_type = str(option["instrument_type"])
+            universe[(strike, option_type)] = {
+                "instrument_token": int(option["instrument_token"]),
+                "tradingsymbol": str(option["tradingsymbol"]),
+                "expiry": option_expiry,
+                "strike": strike,
+                "option_type": option_type,
+            }
+    with _lock:
+        _option_expiry = option_expiry
+        _option_universe = universe
+
     logger.info("[CRUDE-WS] Token: %d  Contract: %s  Expiry: %s",
                 int(row["instrument_token"]), row["tradingsymbol"], row["expiry"])
+    logger.info(
+        "[CRUDE-OPT] Expiry=%s available_contracts=%d wings=ATM+/-%d",
+        option_expiry,
+        len(universe),
+        OPTION_WINGS,
+    )
     return int(row["instrument_token"])
 
 
@@ -123,6 +158,17 @@ _previous_top: Optional[tuple[float, int, float, int]] = None
 _running: bool    = True
 _depth_queue: queue.Queue = queue.Queue(maxsize=5000)
 _depth_drops: int = 0
+_option_expiry = None
+_option_universe: dict = {}
+_option_meta: dict = {}
+_active_option_tokens: set = set()
+_active_option_atm: Optional[int] = None
+_option_latest_ticks: dict = {}
+_option_prev_oi: dict = {}
+_option_prev_volume: dict = {}
+_option_tick_counts: dict = {}
+_last_futures_ltp: Optional[float] = None
+_last_futures_received_at: Optional[datetime] = None
 
 
 def _normalise_depth(raw_depth: Optional[dict]) -> Optional[dict]:
@@ -251,10 +297,85 @@ def _exchange_timestamp(value):
     return value
 
 
+def _select_option_contracts(atm: int) -> dict:
+    """Select nearest-expiry CRUDEOIL options at ATM +/- configured wings."""
+    step = 50
+    strikes = {atm + offset * step for offset in range(-OPTION_WINGS, OPTION_WINGS + 1)}
+    return {
+        int(meta["instrument_token"]): dict(meta)
+        for (strike, option_type), meta in _option_universe.items()
+        if strike in strikes and option_type in ("CE", "PE")
+    }
+
+
+def _roll_options(ws, futures_price: float) -> None:
+    """Move the subscribed option slice only when the futures ATM changes."""
+    global _active_option_atm, _active_option_tokens, _option_meta
+
+    if not _option_universe:
+        return
+    atm = atm_strike_mcx(futures_price, SYMBOL)
+    with _lock:
+        if atm == _active_option_atm and _active_option_tokens:
+            return
+        desired = _select_option_contracts(atm)
+        desired_tokens = set(desired)
+        added = desired_tokens - _active_option_tokens
+        removed = _active_option_tokens - desired_tokens
+
+    try:
+        if removed:
+            ws.unsubscribe(sorted(removed))
+        if added:
+            ws.subscribe(sorted(added))
+            ws.set_mode(ws.MODE_FULL, sorted(added))
+    except Exception as exc:
+        logger.error("[CRUDE-OPT] Subscription roll failed; futures unaffected: %s", exc)
+        return
+
+    with _lock:
+        for token in removed:
+            _option_latest_ticks.pop(token, None)
+            _option_prev_oi.pop(token, None)
+            _option_prev_volume.pop(token, None)
+            _option_tick_counts.pop(token, None)
+        _option_meta = desired
+        _active_option_tokens = desired_tokens
+        _active_option_atm = atm
+
+    logger.info(
+        "[CRUDE-OPT] ATM=%d subscribed=%d added=%d removed=%d",
+        atm,
+        len(desired_tokens),
+        len(added),
+        len(removed),
+    )
+
+
+def _reset_option_session() -> None:
+    global _active_option_atm, _active_option_tokens, _option_meta
+    with _lock:
+        _active_option_atm = None
+        _active_option_tokens = set()
+        _option_meta = {}
+        _option_latest_ticks.clear()
+        _option_prev_oi.clear()
+        _option_prev_volume.clear()
+        _option_tick_counts.clear()
+
+
 def _on_ticks(ws, ticks):
-    global _previous_top
+    global _previous_top, _last_futures_ltp, _last_futures_received_at
+    roll_price = None
     for tick in ticks:
-        if int(tick.get("instrument_token", 0)) != _token_id:
+        token = int(tick.get("instrument_token", 0))
+        if token != _token_id:
+            with _lock:
+                if token in _option_meta:
+                    copied = dict(tick)
+                    copied["_received_at"] = datetime.now(IST)
+                    _option_latest_ticks[token] = copied
+                    _option_tick_counts[token] = _option_tick_counts.get(token, 0) + 1
             continue
         ltp = tick.get("last_price") or 0
         if not ltp:
@@ -274,6 +395,8 @@ def _on_ticks(ws, ticks):
             _bar["close"]   = ltp
             _bar["vol_cum"] = vol
             _bar["oi"]      = oi
+            _last_futures_ltp = float(ltp)
+            _last_futures_received_at = received_at
             _bar["last_quantity"] = tick.get("last_traded_quantity") or 0
             _bar["average_traded_price"] = tick.get("average_traded_price")
             _bar["total_buy_quantity"] = tick.get("total_buy_quantity") or 0
@@ -291,6 +414,10 @@ def _on_ticks(ws, ticks):
                     "exchange_ts": _exchange_timestamp(tick.get("exchange_timestamp")),
                     "received_at": received_at,
                 }
+            roll_price = float(ltp)
+
+    if roll_price:
+        _roll_options(ws, roll_price)
 
 
 def _reset_bar():
@@ -544,6 +671,355 @@ def _depth_writer_thread() -> None:
         _depth_queue.task_done()
 
 
+_OPTION_PRESSURE_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS mcx_crude_option_pressure_second (
+        ts                          TIMESTAMPTZ PRIMARY KEY,
+        expiry                      DATE NOT NULL,
+        futures_tradingsymbol       VARCHAR(40) NOT NULL,
+        futures_ltp                 NUMERIC(12,2) NOT NULL,
+        futures_received_at         TIMESTAMPTZ NOT NULL,
+        futures_age_ms              INTEGER NOT NULL,
+        atm_strike                  INTEGER NOT NULL,
+        strike_step                 INTEGER NOT NULL DEFAULT 50,
+        wings                       SMALLINT NOT NULL,
+        subscribed_contracts        SMALLINT NOT NULL,
+        fresh_contracts             SMALLINT NOT NULL,
+        total_tick_count            INTEGER NOT NULL,
+        max_option_age_ms           INTEGER,
+        total_ce_oi                 BIGINT,
+        total_pe_oi                 BIGINT,
+        ce_oi_delta                 BIGINT,
+        pe_oi_delta                 BIGINT,
+        pcr_oi                      DOUBLE PRECISION,
+        oi_imbalance                DOUBLE PRECISION,
+        oi_delta_imbalance          DOUBLE PRECISION,
+        ce_volume_delta             BIGINT,
+        pe_volume_delta             BIGINT,
+        volume_imbalance            DOUBLE PRECISION,
+        call_wall_strike            INTEGER,
+        put_wall_strike             INTEGER,
+        call_wall_oi                BIGINT,
+        put_wall_oi                 BIGINT,
+        distance_to_call_wall       DOUBLE PRECISION,
+        distance_to_put_wall        DOUBLE PRECISION,
+        atm_ce_ltp                  NUMERIC(12,2),
+        atm_pe_ltp                  NUMERIC(12,2),
+        atm_straddle                NUMERIC(12,2),
+        atm_premium_skew            DOUBLE PRECISION,
+        ce_book_imbalance           DOUBLE PRECISION,
+        pe_book_imbalance           DOUBLE PRECISION,
+        directional_book_pressure   DOUBLE PRECISION,
+        chain                       JSONB NOT NULL,
+        available_at                TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcx_crude_option_pressure_expiry
+        ON mcx_crude_option_pressure_second (expiry, ts DESC);
+"""
+
+
+def _ensure_option_pressure_table(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_OPTION_PRESSURE_TABLE_SQL)
+    conn.commit()
+
+
+def _copy_option_snapshot() -> Optional[dict]:
+    observed_at = datetime.now(IST)
+    with _lock:
+        if (
+            not _active_option_tokens
+            or _active_option_atm is None
+            or _option_expiry is None
+            or _last_futures_ltp is None
+            or _last_futures_received_at is None
+        ):
+            return None
+        futures_age_ms = max(
+            0,
+            round((observed_at - _last_futures_received_at).total_seconds() * 1000),
+        )
+        if futures_age_ms > OPTION_FRESHNESS_SECONDS * 1000:
+            return None
+        options = [
+            (
+                token,
+                dict(_option_meta[token]),
+                dict(_option_latest_ticks[token]),
+                int(_option_tick_counts.get(token, 0)),
+            )
+            for token in sorted(_active_option_tokens)
+            if token in _option_meta and token in _option_latest_ticks
+        ]
+        for token in _active_option_tokens:
+            _option_tick_counts[token] = 0
+        return {
+            "observed_at": observed_at,
+            "futures_ltp": _last_futures_ltp,
+            "futures_received_at": _last_futures_received_at,
+            "futures_age_ms": futures_age_ms,
+            "atm": _active_option_atm,
+            "expiry": _option_expiry,
+            "subscribed_contracts": len(_active_option_tokens),
+            "options": options,
+        }
+
+
+def _option_depth_values(tick: dict) -> tuple:
+    depth = _normalise_depth(tick.get("depth"))
+    if not depth:
+        return None, None, 0, 0, None
+    bid_prices = depth.get("bid_prices") or []
+    ask_prices = depth.get("ask_prices") or []
+    bid_qty = sum(int(value or 0) for value in (depth.get("bid_quantities") or [])[:5])
+    ask_qty = sum(int(value or 0) for value in (depth.get("ask_quantities") or [])[:5])
+    total = bid_qty + ask_qty
+    imbalance = (bid_qty - ask_qty) / total if total else None
+    return (
+        float(bid_prices[0]) if bid_prices else None,
+        float(ask_prices[0]) if ask_prices else None,
+        bid_qty,
+        ask_qty,
+        imbalance,
+    )
+
+
+def _ratio_difference(left: float, right: float) -> Optional[float]:
+    total = abs(left) + abs(right)
+    return (left - right) / total if total else None
+
+
+def _build_option_pressure(ts: datetime, snapshot: dict) -> Optional[dict]:
+    chain = []
+    max_age_ms = 0
+    now = snapshot["observed_at"]
+
+    for token, meta, tick, tick_count in snapshot["options"]:
+        received_at = tick.get("_received_at")
+        if not isinstance(received_at, datetime):
+            continue
+        age_ms = max(0, round((now - received_at).total_seconds() * 1000))
+        if age_ms > OPTION_FRESHNESS_SECONDS * 1000:
+            continue
+
+        oi = int(tick.get("oi") or 0)
+        volume_day = int(tick.get("volume_traded") or 0)
+        with _lock:
+            previous_oi = _option_prev_oi.get(token, oi)
+            previous_volume = _option_prev_volume.get(token, volume_day)
+            _option_prev_oi[token] = oi
+            _option_prev_volume[token] = volume_day
+        bid, ask, bid_qty, ask_qty, book_imbalance = _option_depth_values(tick)
+        chain.append({
+            "instrument_token": token,
+            "tradingsymbol": meta["tradingsymbol"],
+            "strike": int(meta["strike"]),
+            "option_type": meta["option_type"],
+            "ltp": float(tick.get("last_price") or 0),
+            "last_quantity": int(tick.get("last_traded_quantity") or 0),
+            "oi": oi,
+            "oi_delta": oi - previous_oi,
+            "volume_day": volume_day,
+            "volume_delta": max(0, volume_day - previous_volume),
+            "best_bid": bid,
+            "best_ask": ask,
+            "bid_quantity_l5": bid_qty,
+            "ask_quantity_l5": ask_qty,
+            "book_imbalance": book_imbalance,
+            "tick_count": tick_count,
+            "age_ms": age_ms,
+        })
+        max_age_ms = max(max_age_ms, age_ms)
+
+    if not chain:
+        return None
+
+    calls = [row for row in chain if row["option_type"] == "CE"]
+    puts = [row for row in chain if row["option_type"] == "PE"]
+    if not calls or not puts:
+        return None
+
+    total_ce_oi = sum(row["oi"] for row in calls)
+    total_pe_oi = sum(row["oi"] for row in puts)
+    ce_oi_delta = sum(row["oi_delta"] for row in calls)
+    pe_oi_delta = sum(row["oi_delta"] for row in puts)
+    ce_volume_delta = sum(row["volume_delta"] for row in calls)
+    pe_volume_delta = sum(row["volume_delta"] for row in puts)
+
+    def side_book(rows: list) -> Optional[float]:
+        bid_qty = sum(row["bid_quantity_l5"] for row in rows)
+        ask_qty = sum(row["ask_quantity_l5"] for row in rows)
+        return _ratio_difference(bid_qty, ask_qty)
+
+    ce_book = side_book(calls)
+    pe_book = side_book(puts)
+    call_wall = max(calls, key=lambda row: row["oi"])
+    put_wall = max(puts, key=lambda row: row["oi"])
+    atm = int(snapshot["atm"])
+    atm_ce = next((row for row in calls if row["strike"] == atm), None)
+    atm_pe = next((row for row in puts if row["strike"] == atm), None)
+    atm_ce_ltp = atm_ce["ltp"] if atm_ce else None
+    atm_pe_ltp = atm_pe["ltp"] if atm_pe else None
+    straddle = (
+        atm_ce_ltp + atm_pe_ltp
+        if atm_ce_ltp is not None and atm_pe_ltp is not None
+        else None
+    )
+    futures_ltp = float(snapshot["futures_ltp"])
+
+    return {
+        "ts": ts,
+        "expiry": snapshot["expiry"],
+        "futures_tradingsymbol": _tradingsymbol,
+        "futures_ltp": futures_ltp,
+        "futures_received_at": snapshot["futures_received_at"],
+        "futures_age_ms": snapshot["futures_age_ms"],
+        "atm_strike": atm,
+        "strike_step": 50,
+        "wings": OPTION_WINGS,
+        "subscribed_contracts": snapshot["subscribed_contracts"],
+        "fresh_contracts": len(chain),
+        "total_tick_count": sum(row["tick_count"] for row in chain),
+        "max_option_age_ms": max_age_ms,
+        "total_ce_oi": total_ce_oi,
+        "total_pe_oi": total_pe_oi,
+        "ce_oi_delta": ce_oi_delta,
+        "pe_oi_delta": pe_oi_delta,
+        "pcr_oi": total_pe_oi / total_ce_oi if total_ce_oi else None,
+        "oi_imbalance": _ratio_difference(total_pe_oi, total_ce_oi),
+        "oi_delta_imbalance": _ratio_difference(pe_oi_delta, ce_oi_delta),
+        "ce_volume_delta": ce_volume_delta,
+        "pe_volume_delta": pe_volume_delta,
+        "volume_imbalance": _ratio_difference(ce_volume_delta, pe_volume_delta),
+        "call_wall_strike": call_wall["strike"],
+        "put_wall_strike": put_wall["strike"],
+        "call_wall_oi": call_wall["oi"],
+        "put_wall_oi": put_wall["oi"],
+        "distance_to_call_wall": call_wall["strike"] - futures_ltp,
+        "distance_to_put_wall": futures_ltp - put_wall["strike"],
+        "atm_ce_ltp": atm_ce_ltp,
+        "atm_pe_ltp": atm_pe_ltp,
+        "atm_straddle": straddle,
+        "atm_premium_skew": (
+            (atm_pe_ltp - atm_ce_ltp) / straddle if straddle else None
+        ),
+        "ce_book_imbalance": ce_book,
+        "pe_book_imbalance": pe_book,
+        "directional_book_pressure": (
+            (ce_book - pe_book) / 2 if ce_book is not None and pe_book is not None else None
+        ),
+        "chain": json.dumps(chain, separators=(",", ":")),
+    }
+
+
+def _write_option_pressure(conn, row: dict) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO mcx_crude_option_pressure_second (
+                ts, expiry, futures_tradingsymbol, futures_ltp,
+                futures_received_at, futures_age_ms, atm_strike, strike_step,
+                wings, subscribed_contracts, fresh_contracts, total_tick_count,
+                max_option_age_ms, total_ce_oi, total_pe_oi, ce_oi_delta,
+                pe_oi_delta, pcr_oi, oi_imbalance, oi_delta_imbalance,
+                ce_volume_delta, pe_volume_delta, volume_imbalance,
+                call_wall_strike, put_wall_strike, call_wall_oi, put_wall_oi,
+                distance_to_call_wall, distance_to_put_wall,
+                atm_ce_ltp, atm_pe_ltp, atm_straddle, atm_premium_skew,
+                ce_book_imbalance, pe_book_imbalance, directional_book_pressure,
+                chain
+            ) VALUES (
+                %(ts)s, %(expiry)s, %(futures_tradingsymbol)s, %(futures_ltp)s,
+                %(futures_received_at)s, %(futures_age_ms)s, %(atm_strike)s, %(strike_step)s,
+                %(wings)s, %(subscribed_contracts)s, %(fresh_contracts)s, %(total_tick_count)s,
+                %(max_option_age_ms)s, %(total_ce_oi)s, %(total_pe_oi)s, %(ce_oi_delta)s,
+                %(pe_oi_delta)s, %(pcr_oi)s, %(oi_imbalance)s, %(oi_delta_imbalance)s,
+                %(ce_volume_delta)s, %(pe_volume_delta)s, %(volume_imbalance)s,
+                %(call_wall_strike)s, %(put_wall_strike)s, %(call_wall_oi)s, %(put_wall_oi)s,
+                %(distance_to_call_wall)s, %(distance_to_put_wall)s,
+                %(atm_ce_ltp)s, %(atm_pe_ltp)s, %(atm_straddle)s, %(atm_premium_skew)s,
+                %(ce_book_imbalance)s, %(pe_book_imbalance)s, %(directional_book_pressure)s,
+                %(chain)s::jsonb
+            )
+            ON CONFLICT (ts) DO UPDATE SET
+                expiry = EXCLUDED.expiry,
+                futures_tradingsymbol = EXCLUDED.futures_tradingsymbol,
+                futures_ltp = EXCLUDED.futures_ltp,
+                futures_received_at = EXCLUDED.futures_received_at,
+                futures_age_ms = EXCLUDED.futures_age_ms,
+                atm_strike = EXCLUDED.atm_strike,
+                subscribed_contracts = EXCLUDED.subscribed_contracts,
+                fresh_contracts = EXCLUDED.fresh_contracts,
+                total_tick_count = EXCLUDED.total_tick_count,
+                max_option_age_ms = EXCLUDED.max_option_age_ms,
+                total_ce_oi = EXCLUDED.total_ce_oi,
+                total_pe_oi = EXCLUDED.total_pe_oi,
+                ce_oi_delta = EXCLUDED.ce_oi_delta,
+                pe_oi_delta = EXCLUDED.pe_oi_delta,
+                pcr_oi = EXCLUDED.pcr_oi,
+                oi_imbalance = EXCLUDED.oi_imbalance,
+                oi_delta_imbalance = EXCLUDED.oi_delta_imbalance,
+                ce_volume_delta = EXCLUDED.ce_volume_delta,
+                pe_volume_delta = EXCLUDED.pe_volume_delta,
+                volume_imbalance = EXCLUDED.volume_imbalance,
+                call_wall_strike = EXCLUDED.call_wall_strike,
+                put_wall_strike = EXCLUDED.put_wall_strike,
+                call_wall_oi = EXCLUDED.call_wall_oi,
+                put_wall_oi = EXCLUDED.put_wall_oi,
+                distance_to_call_wall = EXCLUDED.distance_to_call_wall,
+                distance_to_put_wall = EXCLUDED.distance_to_put_wall,
+                atm_ce_ltp = EXCLUDED.atm_ce_ltp,
+                atm_pe_ltp = EXCLUDED.atm_pe_ltp,
+                atm_straddle = EXCLUDED.atm_straddle,
+                atm_premium_skew = EXCLUDED.atm_premium_skew,
+                ce_book_imbalance = EXCLUDED.ce_book_imbalance,
+                pe_book_imbalance = EXCLUDED.pe_book_imbalance,
+                directional_book_pressure = EXCLUDED.directional_book_pressure,
+                chain = EXCLUDED.chain,
+                available_at = clock_timestamp()
+        """, row)
+    conn.commit()
+
+
+def _option_pressure_thread() -> None:
+    """Persist one compact option-chain pressure snapshot per active second."""
+    conn = None
+    last_second = None
+    while _running:
+        _time.sleep(0.1)
+        try:
+            if conn is None or conn.closed:
+                import psycopg2
+                conn = psycopg2.connect(
+                    os.environ.get("DATABASE_URL", ""),
+                    connect_timeout=5,
+                    application_name="crude_option_pressure_writer",
+                )
+                conn.autocommit = False
+                _ensure_option_pressure_table(conn)
+                logger.info("[CRUDE-OPT] Pressure table ready; isolated writer active.")
+
+            current_second = datetime.now(IST).replace(microsecond=0)
+            if current_second == last_second:
+                continue
+            last_second = current_second
+            if not _mcx_open():
+                continue
+            snapshot = _copy_option_snapshot()
+            if not snapshot:
+                continue
+            row = _build_option_pressure(current_second, snapshot)
+            if row:
+                _write_option_pressure(conn, row)
+        except Exception as exc:
+            logger.error("[CRUDE-OPT] Pressure write failed; futures unaffected: %s", exc)
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+            conn = None
+            _time.sleep(1)
+
+
 def _flush_thread():
     """Runs in background. Writes completed 1-sec bars every time second changes."""
     global _prev_vol_cum, _running
@@ -653,40 +1129,10 @@ def _today_rows() -> int:
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
-def _start_global_reference_worker():
-    """Start the optional reference feed without coupling it to MCX writes."""
-    if not os.environ.get("TWELVE_DATA_API_KEY", "").strip():
-        logger.warning(
-            "[GLOBAL-REF] TWELVE_DATA_API_KEY absent; optional reference feed disabled."
-        )
-        return None
-
-    def run_worker():
-        try:
-            from options.global_reference_ws import main as global_reference_main
-
-            global_reference_main()
-        except Exception as exc:
-            logger.error(
-                "[GLOBAL-REF] Worker stopped; CRUDEOIL collection is unaffected: %s",
-                exc,
-            )
-
-    worker = threading.Thread(
-        target=run_worker,
-        daemon=True,
-        name="global-reference-worker",
-    )
-    worker.start()
-    return worker
-
-
 def main():
     global _token_id, _running, _previous_top
 
     logger.info("[CRUDE-WS] CRUDEOIL 1-second WebSocket daemon starting.")
-
-    _start_global_reference_worker()
 
     # Independent workers run for the process lifetime. Depth writes never share
     # the OHLC connection or block the OHLC flush thread.
@@ -699,6 +1145,13 @@ def main():
 
     flusher = threading.Thread(target=_flush_thread, daemon=True, name="bar-flusher")
     flusher.start()
+
+    option_writer = threading.Thread(
+        target=_option_pressure_thread,
+        daemon=True,
+        name="crude-option-pressure-writer",
+    )
+    option_writer.start()
 
     consecutive_timeouts = 0
 
@@ -730,6 +1183,7 @@ def main():
             _token_id = _get_crudeoil_token(kite)
             with _lock:
                 _previous_top = None
+            _reset_option_session()
         except Exception as exc:
             logger.error("[CRUDE-WS] Token resolution failed: %s — retry in 5 min.", exc)
             _time.sleep(300)
@@ -743,7 +1197,10 @@ def main():
 
         def on_connect(ws, _resp):
             _connected_evt.set()
-            logger.info("[CRUDE-WS] Connected — subscribing token %d", _token_id)
+            logger.info(
+                "[CRUDE-WS] Connected — futures token %d; options select on first tick",
+                _token_id,
+            )
             ws.subscribe([_token_id])
             ws.set_mode(ws.MODE_FULL, [_token_id])
             once("crude_ws_start",
@@ -811,6 +1268,7 @@ def main():
             kws.close()
         except Exception:
             pass
+        _reset_option_session()
 
         _time.sleep(30)  # 30s cooldown — prevents duplicate sessions on Kite
 
