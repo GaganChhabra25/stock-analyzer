@@ -54,7 +54,13 @@ jobs:
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          if [ -z "$DEPLOY_SERVICES" ]; then DEPLOY_SERVICES=none; fi
+          if [ -z "$DEPLOY_SERVICES" ]; then
+            DEPLOY_SERVICES=none
+          else
+            # SSH concatenates command arguments. A comma-delimited value keeps
+            # the complete service plan in one remote positional argument.
+            DEPLOY_SERVICES="${DEPLOY_SERVICES// /,}"
+          fi
 
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" \
             bash -s -- "$TARGET_SHA" "$DEPLOY_WEB" "$DEPLOY_SERVICES" "$GH_PAT" <<'ENDSSH'
@@ -94,7 +100,7 @@ jobs:
 
           SERVICE_ARGS=()
           if [ "$DEPLOY_SERVICES" != "none" ]; then
-            read -r -a SERVICE_ARGS <<< "$DEPLOY_SERVICES"
+            IFS=',' read -r -a SERVICE_ARGS <<< "$DEPLOY_SERVICES"
           fi
           DEPLOY_DIR="$DEPLOY_DIR" VENV="$VENV" \
             bash "$DEPLOY_DIR/deploy/contabo/deploy_release.sh" \

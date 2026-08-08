@@ -9,8 +9,11 @@ from dataclasses import dataclass
 DOCKER_SERVICES = ("cron-worker", "crudeoil-ws", "nifty-ws")
 
 SHARED_DOCKER_PATHS = {
+    ".github/workflows/deploy.yml",
     "docker-compose.yml",
     "docker/cron-worker/Dockerfile",
+    "deploy/contabo/deploy_release.sh",
+    "deploy/contabo/deploy_targets.py",
     "requirements.txt",
     "config.py",
     "logging_config.py",
