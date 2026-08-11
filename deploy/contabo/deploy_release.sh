@@ -81,5 +81,17 @@ for service in "${SERVICES[@]}"; do
   fi
 done
 
+# Keep the recovery/default tag aligned with the exact image that just passed
+# verification.  Otherwise a later plain `docker compose up` resolves the
+# compose default (`latest`) and can silently downgrade a partially deployed
+# service to an older collector image.
+for service in "${SERVICES[@]}"; do
+  container_id="$(docker compose ps -q "$service")"
+  verified_image_id="$(docker inspect "$container_id" --format '{{.Image}}')"
+  latest_image="stock-analyzer-${service}:latest"
+  docker tag "$verified_image_id" "$latest_image"
+  [ "$(docker image inspect "$latest_image" --format '{{.Id}}')" = "$verified_image_id" ]
+done
+
 trap - ERR
 echo "Deployment verified at commit $TARGET_SHA; services: ${SERVICES[*]:-(source only)}"
