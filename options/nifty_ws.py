@@ -1,6 +1,6 @@
 """NIFTY 1-second WebSocket collector.
 
-Stores the nearest weekly NIFTY option chain at ATM ±10 strikes plus one
+Stores the nearest weekly NIFTY option chain at ATM +/-20 strikes plus one
 near-month NIFTY futures snapshot every second. This service is isolated from
 MCX ingestion and runs in its own Docker container.
 """
@@ -40,7 +40,7 @@ SYMBOL = "NIFTY"
 SPOT_TRADING_SYMBOL = "NIFTY 50"
 VIX_TRADING_SYMBOL = "INDIA VIX"
 STRIKE_STEP = 50
-N_STRIKES = 10
+N_STRIKES = 20
 RISK_FREE_RATE = 0.07
 
 _lock = threading.RLock()
@@ -56,6 +56,8 @@ _vix_token = 0
 _future_meta: dict = {}
 _active_atm: int | None = None
 _session_active = False
+_session_started_at: datetime | None = None
+_last_tick_received_at: datetime | None = None
 
 FEATURE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS nifty_features (
@@ -135,6 +137,18 @@ ALTER TABLE nifty_features
     ADD COLUMN IF NOT EXISTS source_interval_seconds SMALLINT NOT NULL DEFAULT 1;
 ALTER TABLE nifty_expiry_features
     ADD COLUMN IF NOT EXISTS source_interval_seconds SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE nifty_features ADD COLUMN IF NOT EXISTS market_phase VARCHAR(32);
+ALTER TABLE nifty_features ADD COLUMN IF NOT EXISTS spot_received_at TIMESTAMPTZ;
+ALTER TABLE nifty_features ADD COLUMN IF NOT EXISTS spot_age_seconds DOUBLE PRECISION;
+ALTER TABLE nifty_features ADD COLUMN IF NOT EXISTS spot_is_fresh BOOLEAN;
+ALTER TABLE nifty_features ADD COLUMN IF NOT EXISTS synthetic_forward DOUBLE PRECISION;
+ALTER TABLE nifty_features ADD COLUMN IF NOT EXISTS future_mid DOUBLE PRECISION;
+ALTER TABLE nifty_expiry_features ADD COLUMN IF NOT EXISTS market_phase VARCHAR(32);
+ALTER TABLE nifty_expiry_features ADD COLUMN IF NOT EXISTS spot_received_at TIMESTAMPTZ;
+ALTER TABLE nifty_expiry_features ADD COLUMN IF NOT EXISTS spot_age_seconds DOUBLE PRECISION;
+ALTER TABLE nifty_expiry_features ADD COLUMN IF NOT EXISTS spot_is_fresh BOOLEAN;
+ALTER TABLE nifty_expiry_features ADD COLUMN IF NOT EXISTS synthetic_forward DOUBLE PRECISION;
+ALTER TABLE nifty_expiry_features ADD COLUMN IF NOT EXISTS future_mid DOUBLE PRECISION;
 """
 
 
@@ -144,7 +158,17 @@ def _nse_open() -> bool:
     now = datetime.now(IST)
     if now.weekday() >= 5 or now.date().isoformat() in NSE_HOLIDAYS:
         return False
-    return time(9, 14) <= now.time() <= time(15, 31)
+    # Equity derivatives trade through 15:40 after the August 2026 CAS change.
+    # Keep one minute of tail time so the final exchange ticks are persisted.
+    return time(9, 14) <= now.time() <= time(15, 41)
+
+
+def _market_phase(ts: datetime) -> str:
+    if ts.time() < time(15, 15):
+        return "continuous"
+    if ts.time() < time(15, 30):
+        return "cash_cas"
+    return "derivatives_post_cas"
 
 
 def _seconds_until_open() -> int:
@@ -275,9 +299,11 @@ def _roll_options(ws, spot_price: float) -> None:
 
 
 def _on_ticks(ws, ticks) -> None:
+    global _last_tick_received_at
     spot_price = None
     received_at = datetime.now(IST)
     with _lock:
+        _last_tick_received_at = received_at
         for tick in ticks:
             token = int(tick.get("instrument_token", 0))
             if not token:
@@ -304,13 +330,27 @@ def _aware(value):
     if not isinstance(value, datetime):
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=IST)
+        # KiteTicker builds these naive datetimes in the container's local
+        # timezone. Production currently runs in CEST, not IST.
+        local_tz = datetime.now().astimezone().tzinfo
+        return value.replace(tzinfo=local_tz).astimezone(IST)
     return value.astimezone(IST)
+
+
+def _tick_age_seconds(ts: datetime, tick: dict) -> float | None:
+    received_at = tick.get("_received_at")
+    if not isinstance(received_at, datetime):
+        return None
+    return max(0.0, (ts - received_at.astimezone(IST)).total_seconds())
 
 
 def _copy_snapshot():
     with _lock:
         if not _session_active or not _active_option_tokens:
+            return None
+        if _last_tick_received_at is None:
+            return None
+        if (datetime.now(IST) - _last_tick_received_at).total_seconds() > 15:
             return None
         spot = dict(_latest_ticks.get(_spot_token) or {})
         if not spot.get("last_price"):
@@ -351,6 +391,8 @@ def _option_values(ts: datetime, snapshot: dict):
         sell = (tick.get("depth") or {}).get("sell") or []
         bid = float(buy[0].get("price") or 0) if buy else None
         ask = float(sell[0].get("price") or 0) if sell else None
+        bid_p, bid_q, bid_o = _depth_arrays(tick, "buy")
+        ask_p, ask_q, ask_o = _depth_arrays(tick, "sell")
         dte = max((meta["expiry"] - ts.date()).days / 365.0, 1 / 365.0)
         iv = implied_volatility(ltp, spot, strike, dte, RISK_FREE_RATE, option_type)
         sigma = (iv / 100.0) if iv else 0.20
@@ -360,6 +402,13 @@ def _option_values(ts: datetime, snapshot: dict):
             ltp, bid, ask, oi, oi - previous_oi,
             int(tick.get("volume_traded") or 0), iv,
             greeks["delta"], greeks["gamma"], greeks["theta"], greeks["vega"], spot,
+            int(meta["instrument_token"]), meta["tradingsymbol"],
+            _aware(tick.get("exchange_timestamp")), tick.get("_received_at") or ts,
+            tick.get("last_traded_quantity"), tick.get("average_traded_price"),
+            tick.get("total_buy_quantity"), tick.get("total_sell_quantity"),
+            tick.get("oi_day_high"), tick.get("oi_day_low"),
+            bid_p, bid_q, bid_o, ask_p, ask_q, ask_o,
+            _tick_age_seconds(ts, tick), _market_phase(ts),
         ))
         (call_oi if option_type == "CE" else put_oi)[strike] = oi
     return rows, call_oi, put_oi
@@ -462,9 +511,10 @@ def build_feature_payloads(ts: datetime, option_rows: list[tuple], market: dict)
     atm_pe = next((row for row in puts if row["strike"] == atm), None)
     atm_iv_values = [row["iv"] for row in (atm_ce, atm_pe) if row and row["iv"] is not None]
     atm_iv = statistics.mean(atm_iv_values) if atm_iv_values else None
-    prior_1m = _history_value(ts, 1, "spot")
-    prior_5m = _history_value(ts, 5, "spot")
-    prior_15m = _history_value(ts, 15, "spot")
+    spot_usable = market.get("phase") == "continuous" and market.get("spot_is_fresh")
+    prior_1m = _history_value(ts, 1, "spot") if spot_usable else None
+    prior_5m = _history_value(ts, 5, "spot") if spot_usable else None
+    prior_15m = _history_value(ts, 15, "spot") if spot_usable else None
     prior_atm_iv = _history_value(ts, 30, "atm_iv")
     ce_delta_sum = sum(row["delta"] * row["oi"] for row in calls)
     pe_delta_sum = sum(row["delta"] * row["oi"] for row in puts)
@@ -501,6 +551,12 @@ def build_feature_payloads(ts: datetime, option_rows: list[tuple], market: dict)
     common = {
         "ts": ts, "trade_date": ts.date(), "source_interval_seconds": 1,
         "underlying_ltp": spot, "dte": dte,
+        "market_phase": market.get("phase"),
+        "spot_received_at": market.get("spot_received_at"),
+        "spot_age_seconds": market.get("spot_age_seconds"),
+        "spot_is_fresh": market.get("spot_is_fresh"),
+        "synthetic_forward": market.get("synthetic_forward"),
+        "future_mid": market.get("future_mid"),
         "atm_strike": atm, "total_ce_oi": total_ce_oi, "total_pe_oi": total_pe_oi,
         "oi_imbalance": imbalance, "iv_skew": (
             (atm_pe["iv"] - atm_ce["iv"])
@@ -572,7 +628,8 @@ def build_feature_payloads(ts: datetime, option_rows: list[tuple], market: dict)
     }
     expiry_features["gex_net"] = expiry_features["gex_ce"] + expiry_features["gex_pe"]
 
-    _feature_history.append({"ts": ts, "spot": spot, "atm_iv": atm_iv})
+    if spot_usable:
+        _feature_history.append({"ts": ts, "spot": spot, "atm_iv": atm_iv})
     _previous_feature_totals.update({
         "total_ce_oi": total_ce_oi, "total_pe_oi": total_pe_oi,
         "gamma_sum": gamma_sum, "vega_sum": vega_sum, "theta_sum": theta_sum,
@@ -616,6 +673,36 @@ def _ensure_schema(conn) -> None:
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_nifty_futures_expiry_ts ON nifty_futures (expiry, ts DESC)")
+        cur.execute("""
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS instrument_token BIGINT;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS tradingsymbol VARCHAR(40);
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS exchange_ts TIMESTAMPTZ;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS last_quantity BIGINT;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS average_price NUMERIC(12,2);
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS total_buy_quantity BIGINT;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS total_sell_quantity BIGINT;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS oi_day_high BIGINT;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS oi_day_low BIGINT;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS bid_prices NUMERIC(12,2)[];
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS bid_quantities BIGINT[];
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS bid_orders INTEGER[];
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS ask_prices NUMERIC(12,2)[];
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS ask_quantities BIGINT[];
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS ask_orders INTEGER[];
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS tick_age_seconds DOUBLE PRECISION;
+            ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS market_phase VARCHAR(32);
+            CREATE TABLE IF NOT EXISTS nifty_collection_health (
+                minute_ts TIMESTAMPTZ PRIMARY KEY,
+                last_snapshot_ts TIMESTAMPTZ NOT NULL,
+                market_phase VARCHAR(32) NOT NULL,
+                option_rows INTEGER NOT NULL,
+                expected_option_rows INTEGER NOT NULL,
+                spot_age_seconds DOUBLE PRECISION,
+                future_age_seconds DOUBLE PRECISION,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+            );
+        """)
         cur.execute(FEATURE_SCHEMA_SQL)
     conn.commit()
 
@@ -648,7 +735,11 @@ def _write_snapshot(conn, ts: datetime, snapshot: dict) -> int:
         execute_values(cur, """
             INSERT INTO option_chain
                 (ts, instrument, expiry, strike, option_type, ltp, bid, ask,
-                 oi, oi_change, volume, iv, delta, gamma, theta, vega, underlying_ltp)
+                 oi, oi_change, volume, iv, delta, gamma, theta, vega, underlying_ltp,
+                 instrument_token, tradingsymbol, exchange_ts, received_at,
+                 last_quantity, average_price, total_buy_quantity, total_sell_quantity,
+                 oi_day_high, oi_day_low, bid_prices, bid_quantities, bid_orders,
+                 ask_prices, ask_quantities, ask_orders, tick_age_seconds, market_phase)
             VALUES %s
         """, option_rows, page_size=100)
         cur.execute("""
@@ -660,6 +751,27 @@ def _write_snapshot(conn, ts: datetime, snapshot: dict) -> int:
 
         future = snapshot["future_tick"]
         meta = snapshot["future_meta"]
+        future_bid_p, _, _ = _depth_arrays(future, "buy")
+        future_ask_p, _, _ = _depth_arrays(future, "sell")
+        future_mid = (
+            (future_bid_p[0] + future_ask_p[0]) / 2.0
+            if future_bid_p and future_ask_p else None
+        )
+        synthetic_forward = (
+            float(atm) + float(atm_ce[5]) - float(atm_pe[5])
+            if atm_ce and atm_pe else None
+        )
+        spot_received_at = snapshot["spot"].get("_received_at")
+        spot_age_seconds = _tick_age_seconds(ts, snapshot["spot"])
+        phase = _market_phase(ts)
+        market.update({
+            "phase": phase,
+            "spot_received_at": spot_received_at,
+            "spot_age_seconds": spot_age_seconds,
+            "spot_is_fresh": spot_age_seconds is not None and spot_age_seconds <= 2.0,
+            "synthetic_forward": synthetic_forward,
+            "future_mid": future_mid,
+        })
         if future.get("last_price"):
             bid_p, bid_q, bid_o = _depth_arrays(future, "buy")
             ask_p, ask_q, ask_o = _depth_arrays(future, "sell")
@@ -702,6 +814,24 @@ def _write_snapshot(conn, ts: datetime, snapshot: dict) -> int:
                 future.get("oi"), future.get("oi_day_high"), future.get("oi_day_low"),
                 bid_p, bid_q, bid_o, ask_p, ask_q, ask_o,
             ))
+
+        cur.execute("""
+            INSERT INTO nifty_collection_health
+                (minute_ts, last_snapshot_ts, market_phase, option_rows,
+                 expected_option_rows, spot_age_seconds, future_age_seconds)
+            VALUES (date_trunc('minute', %s::timestamptz), %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (minute_ts) DO UPDATE SET
+                last_snapshot_ts = EXCLUDED.last_snapshot_ts,
+                market_phase = EXCLUDED.market_phase,
+                option_rows = EXCLUDED.option_rows,
+                expected_option_rows = EXCLUDED.expected_option_rows,
+                spot_age_seconds = EXCLUDED.spot_age_seconds,
+                future_age_seconds = EXCLUDED.future_age_seconds,
+                updated_at = clock_timestamp()
+        """, (
+            ts, ts, phase, len(option_rows), 2 * (2 * N_STRIKES + 1),
+            spot_age_seconds, _tick_age_seconds(ts, future),
+        ))
 
         cur.execute("SAVEPOINT nifty_feature_write")
         try:
@@ -760,9 +890,12 @@ def _flush_loop() -> None:
 
 
 def _clear_session() -> None:
-    global _session_active, _active_atm, _active_option_tokens, _option_meta
+    global _session_active, _session_started_at, _last_tick_received_at
+    global _active_atm, _active_option_tokens, _option_meta
     with _lock:
         _session_active = False
+        _session_started_at = None
+        _last_tick_received_at = None
         _active_atm = None
         _active_option_tokens = set()
         _option_meta = {}
@@ -777,6 +910,7 @@ def main() -> None:
 
     logger.info("[NIFTY-WS] Starting ATM ±%d options + futures service", N_STRIKES)
     threading.Thread(target=_flush_loop, daemon=True, name="nifty-db-flusher").start()
+    failed_socket_cycles = 0
 
     while True:
         if not _nse_open():
@@ -788,27 +922,31 @@ def main() -> None:
         kite = get_kite()
         access_token = load_access_token(os.environ.get("KITE_ADMIN_USER_ID", ""))
         if not kite or not access_token or not API_KEY:
-            logger.warning("[NIFTY-WS] Kite credentials unavailable; retry in 5 minutes")
-            _time.sleep(300)
+            logger.warning("[NIFTY-WS] Kite credentials unavailable; retry in 15 seconds")
+            _time.sleep(15)
             continue
 
         try:
             _resolve_universe(kite)
         except Exception as exc:
             logger.error("[NIFTY-WS] Instrument resolution failed: %s", exc)
-            _time.sleep(300)
+            _time.sleep(15)
             continue
 
         kws = KiteTicker(API_KEY, access_token, reconnect=False)
+        connected_this_cycle = False
 
         def on_connect(ws, _response):
-            global _session_active
+            nonlocal connected_this_cycle
+            global _session_active, _session_started_at
             base_tokens = [_spot_token, _vix_token, int(_future_meta["instrument_token"])]
             ws.subscribe(base_tokens)
             ws.set_mode(ws.MODE_QUOTE, [_spot_token, _vix_token])
             ws.set_mode(ws.MODE_FULL, [int(_future_meta["instrument_token"])])
             with _lock:
                 _session_active = True
+                _session_started_at = datetime.now(IST)
+                connected_this_cycle = True
             logger.info("[NIFTY-WS] Connected; waiting for spot tick to select ATM ±%d", N_STRIKES)
 
         kws.on_connect = on_connect
@@ -824,6 +962,17 @@ def main() -> None:
             kws.connect(threaded=True)
             _time.sleep(2)
             while _nse_open() and kws.is_connected():
+                with _lock:
+                    last_tick = _last_tick_received_at
+                    started_at = _session_started_at
+                now = datetime.now(IST)
+                reference = last_tick or started_at
+                if reference and (now - reference).total_seconds() > 15:
+                    logger.error(
+                        "[NIFTY-WS] Connected socket is stale for %.1fs; forcing reconnect",
+                        (now - reference).total_seconds(),
+                    )
+                    break
                 _time.sleep(5)
         except Exception as exc:
             logger.error("[NIFTY-WS] Connection failure: %s", exc)
@@ -833,7 +982,17 @@ def main() -> None:
                 kws.close()
             except Exception:
                 pass
-        _time.sleep(30)
+        if connected_this_cycle:
+            failed_socket_cycles = 0
+        else:
+            failed_socket_cycles += 1
+            logger.error("[NIFTY-WS] WebSocket failed to connect (%d/3)", failed_socket_cycles)
+            if failed_socket_cycles >= 3:
+                logger.critical(
+                    "[NIFTY-WS] Repeated startup failure; exiting for a clean Docker restart"
+                )
+                os._exit(1)
+        _time.sleep(5)
 
 
 if __name__ == "__main__":
