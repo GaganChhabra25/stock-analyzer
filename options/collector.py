@@ -23,6 +23,7 @@ Symbol-isolated collection:
 import logging
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -61,7 +62,7 @@ def _try_symbol_lock(symbol: str):
     return conn
 
 
-def collect_once(symbol: str | None = None) -> None:
+def collect_once(symbol: Optional[str] = None) -> None:
     """Run one collection cycle, optionally isolated to one symbol.
 
     The default keeps CRUDEOIL on its established path. NATURALGAS runs from
