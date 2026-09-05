@@ -42,6 +42,10 @@ class MCXCollector(ExchangeCollector):
     quote_prefix = "MCX:"
     vix_symbol   = None         # no commodity VIX
 
+    def __init__(self, symbols: Optional[list[str]] = None) -> None:
+        """Optionally isolate collection to one or more MCX symbols."""
+        self.symbols = list(symbols) if symbols is not None else list(type(self).symbols)
+
     def is_open(self) -> bool:
         """
         MCX-aware market hours check.

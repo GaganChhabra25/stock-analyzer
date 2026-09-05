@@ -47,8 +47,11 @@ LOG=/app/logs
 
 # ── MCX options collector: every minute 09:00–23:30 IST = CEST 05:30–20:00 ──
 # NIFTY is handled independently by the persistent nifty-ws service.
-# MCXCollector activates 09:00–23:30 IST (checks its own is_open()).
+# CRUDEOIL remains on the default path; NATURALGAS is isolated below.
 */1 5-20 * * 1-5 cd $APP && $PY options/collector.py >> $LOG/options.log 2>&1
+# NATURALGAS gets an independent process and advisory lock, so a slow NG cycle
+# cannot delay or overlap the CRUDEOIL collector.
+*/1 5-20 * * 1-5 cd $APP && $PY options/collector.py --symbol NATURALGAS >> $LOG/options_ng.log 2>&1
 
 # ── Watchdog: every 10 min during all market hours = CEST 05:30–20:00 ────────
 # Covers NFO (05:30–12:05) + MCX (05:30–20:05) IST windows
