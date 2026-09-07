@@ -44,12 +44,24 @@ COLLECTORS = [
 
 
 def _try_symbol_lock(symbol: str):
-    """Return a held DB advisory-lock connection, or None when busy."""
-    from screener.db import _get_conn
+    """Return a held DB advisory-lock connection, or None when busy.
 
-    conn = _get_conn()
-    if conn is None:
+    _get_conn() is a @contextmanager (`with _get_conn() as conn:`) that
+    commits and closes on exit -- it cannot be used here, since this lock
+    connection must stay open and held by the caller across the whole
+    collection cycle, not just one `with` block. Connecting directly (as
+    introduced 2026-09-05, "Isolate natural gas options collection") broke
+    every NATURALGAS run with AttributeError: '_GeneratorContextManager'
+    object has no attribute 'cursor' -- silent since MCX doesn't trade
+    weekends, first surfaced by the watchdog on the next trading Monday.
+    """
+    import psycopg2
+    from screener.db import is_available, _db_url
+
+    if not is_available():
         return None
+    conn = psycopg2.connect(_db_url())
+    conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute(
             "SELECT pg_try_advisory_lock(hashtext(%s))",
