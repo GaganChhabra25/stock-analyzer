@@ -123,13 +123,19 @@ MCX_EVENING_ONLY_DAYS = {
     "2025-10-24",  # Dussehra
     "2025-11-15",  # Diwali Balipratipada / Gurunanak Jayanti
     "2025-12-25",  # Christmas
-    # 2026
+    # 2026 -- verified 2026-09-14 against kotakneo.com's MCX 2026 holiday
+    # list after the original "(tentative)" placeholder dates for
+    # Dussehra/Diwali-Balipratipada turned out wrong, and 2026-09-14
+    # (Ganesh Chaturthi, today) was missing entirely -- config.py is in
+    # SHARED_DOCKER_PATHS so this fix redeploys all three Docker services.
     "2026-03-03",  # Holi
     "2026-04-03",  # Good Friday
     "2026-04-14",  # Dr. Baba Saheb Ambedkar Jayanti
     "2026-05-01",  # Maharashtra Day
-    "2026-10-22",  # Dussehra (tentative)
-    "2026-11-15",  # Diwali Balipratipada (tentative)
+    "2026-09-14",  # Ganesh Chaturthi
+    "2026-10-20",  # Dussehra
+    "2026-11-10",  # Diwali Balipratipada
+    "2026-11-24",  # Guru Nanak Jayanti
     "2026-12-25",  # Christmas
 }
 
