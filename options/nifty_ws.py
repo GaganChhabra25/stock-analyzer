@@ -1,8 +1,8 @@
-"""NIFTY 1-second WebSocket collector.
+"""NIFTY WebSocket collector (10-second cadence, see CAPTURE_INTERVAL_SECONDS).
 
 Stores the nearest weekly NIFTY option chain at ATM +/-20 strikes plus one
-near-month NIFTY futures snapshot every second. This service is isolated from
-MCX ingestion and runs in its own Docker container.
+near-month NIFTY futures snapshot every CAPTURE_INTERVAL_SECONDS. This
+service is isolated from MCX ingestion and runs in its own Docker container.
 """
 
 from __future__ import annotations
@@ -42,6 +42,17 @@ VIX_TRADING_SYMBOL = "INDIA VIX"
 STRIKE_STEP = 50
 N_STRIKES = 20
 RISK_FREE_RATE = 0.07
+# 2026-09-13: dropped from every second to every 10th second -- nothing reads
+# this raw per-second option_chain/nifty_features data (no live NIFTY
+# strategy consumes it; the separate stock-analyzer screener/backtest/
+# trade_executor app is not in active use), and the existing 30-day
+# retention job already discards anything older than a month regardless.
+# At 1s cadence this table held a steady-state ~30GB for zero consumption;
+# 10s cuts that 10x. _history_value()/_rolling_vol() key off wall-clock
+# timestamps, not row counts, so the 1m/5m/15m/30m lookbacks are unaffected;
+# _feature_history's 2,000-row buffer now covers ~5.5h instead of ~33min,
+# still well over the 30-minute lookback it needs.
+CAPTURE_INTERVAL_SECONDS = 10
 
 _lock = threading.RLock()
 _latest_ticks: dict[int, dict] = {}
@@ -549,7 +560,7 @@ def build_feature_payloads(ts: datetime, option_rows: list[tuple], market: dict)
     }
 
     common = {
-        "ts": ts, "trade_date": ts.date(), "source_interval_seconds": 1,
+        "ts": ts, "trade_date": ts.date(), "source_interval_seconds": CAPTURE_INTERVAL_SECONDS,
         "underlying_ltp": spot, "dte": dte,
         "market_phase": market.get("phase"),
         "spot_received_at": market.get("spot_received_at"),
@@ -861,6 +872,8 @@ def _flush_loop() -> None:
         if current_second == last_second:
             continue
         last_second = current_second
+        if current_second.second % CAPTURE_INTERVAL_SECONDS != 0:
+            continue
         if not _nse_open():
             continue
         snapshot = _copy_snapshot()
