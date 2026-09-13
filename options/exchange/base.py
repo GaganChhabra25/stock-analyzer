@@ -15,6 +15,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import date, datetime, time, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -24,6 +25,14 @@ from screener.db import _get_conn
 logger = logging.getLogger(__name__)
 
 RISK_FREE_RATE = 0.07
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _exchange_timestamp(value):
+    """Kite exchange timestamps are naive IST; store them timezone-aware."""
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=IST)
+    return value
 
 
 class ExchangeCollector(ABC):
@@ -183,6 +192,7 @@ class ExchangeCollector(ABC):
                 iv     = implied_volatility(ltp, spot, strike, T, RISK_FREE_RATE, opt_type)
                 sigma  = (iv / 100.0) if iv else 0.20
                 greeks = calculate_greeks(spot, strike, T, RISK_FREE_RATE, sigma, opt_type)
+                quote_ts = _exchange_timestamp(quote.get("last_trade_time"))
 
                 option_rows.append({
                     "ts": ts, "instrument": symbol, "expiry": row_expiry,
@@ -193,6 +203,8 @@ class ExchangeCollector(ABC):
                     "delta": greeks["delta"], "gamma": greeks["gamma"],
                     "theta": greeks["theta"], "vega": greeks["vega"],
                     "underlying_ltp": spot,
+                    "quote_ts": quote_ts,
+                    "iv_is_fallback": iv is None,
                 })
 
                 if row_expiry == snapshot_expiry:
@@ -278,11 +290,13 @@ class ExchangeCollector(ABC):
                     INSERT INTO option_chain (
                         ts, instrument, expiry, strike, option_type,
                         ltp, bid, ask, oi, oi_change, volume, iv,
-                        delta, gamma, theta, vega, underlying_ltp
+                        delta, gamma, theta, vega, underlying_ltp,
+                        quote_ts, iv_is_fallback
                     ) VALUES (
                         %(ts)s, %(instrument)s, %(expiry)s, %(strike)s, %(option_type)s,
                         %(ltp)s, %(bid)s, %(ask)s, %(oi)s, %(oi_change)s, %(volume)s, %(iv)s,
-                        %(delta)s, %(gamma)s, %(theta)s, %(vega)s, %(underlying_ltp)s
+                        %(delta)s, %(gamma)s, %(theta)s, %(vega)s, %(underlying_ltp)s,
+                        %(quote_ts)s, %(iv_is_fallback)s
                     )
                 """, rows)
             conn.commit()

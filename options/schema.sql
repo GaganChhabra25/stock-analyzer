@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS option_chain (
     gamma           NUMERIC(9,6),
     theta           NUMERIC(9,4),
     vega             NUMERIC(9,4),
-    underlying_ltp  NUMERIC(10,2)               -- Nifty/BankNifty spot at capture time
+    underlying_ltp  NUMERIC(10,2),              -- Nifty/BankNifty spot at capture time
+    quote_ts        TIMESTAMPTZ,                -- Kite's per-contract last_trade_time (quote freshness)
+    iv_is_fallback  BOOLEAN DEFAULT false        -- true when IV solve failed and greeks used an assumed 20% sigma
 );
 
 CREATE INDEX IF NOT EXISTS idx_oc_lookup
@@ -63,6 +65,10 @@ CREATE INDEX IF NOT EXISTS idx_oc_ts
 
 COMMENT ON TABLE option_chain IS
     'NIFTY per-second and MCX per-minute option snapshots. Shared market data.';
+
+-- Existing installations: additive, nullable columns preserve old rows and consumers.
+ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS quote_ts TIMESTAMPTZ;
+ALTER TABLE option_chain ADD COLUMN IF NOT EXISTS iv_is_fallback BOOLEAN DEFAULT false;
 
 
 -- ── Per-minute market snapshots (shared market data) ──────────────────────────
