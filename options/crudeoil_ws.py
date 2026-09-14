@@ -67,17 +67,33 @@ def _mcx_open() -> bool:
 
 
 def _seconds_until_open() -> int:
-    """Seconds until pre-connect warmup (8:45 AM IST next valid day)."""
-    now  = datetime.now(IST)
-    nxt  = now.replace(hour=8, minute=45, second=0, microsecond=0)
-    if now.time() >= time(23, 30):      # past today's close — try tomorrow
-        nxt += timedelta(days=1)
-    if nxt <= now:
-        nxt += timedelta(days=1)
-    # Skip Saturday and Sunday
-    while nxt.weekday() >= 5:
-        nxt += timedelta(days=1)
-    return max(60, int((nxt - now).total_seconds()))
+    """Seconds until the next valid session open, honoring MCX_HOLIDAYS and
+    MCX_EVENING_ONLY_DAYS the same way _mcx_open() does.
+
+    2026-09-14: this previously always targeted 8:45 AM regardless of the
+    calendar, so on an evening-only day (open 17:00, not 8:45) it produced a
+    misleading "Sleeping N min" log implying an 8:45 AM wake. The outer
+    loop's sleep is capped at 3600s and rechecks _mcx_open() every hour
+    regardless, so this was not silently losing data across most of the
+    day -- but it did cost up to ~59 minutes of missed collection right at
+    the start of an evening-only session, depending on where 17:00 fell
+    inside the hourly recheck cycle (observed live today: last recheck at
+    13:20, session opened 17:00, next recheck would have been 17:20 --
+    worked around in the moment with a manual container restart, fixed
+    here for future evening-only days).
+    """
+    from config import MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
+    now = datetime.now(IST)
+    day = now.date()
+    for _ in range(14):  # bounded search; a valid open day is always <14 days out
+        day_str = day.strftime("%Y-%m-%d")
+        if day.weekday() < 5 and day_str not in MCX_HOLIDAYS:
+            open_time = time(17, 0) if day_str in MCX_EVENING_ONLY_DAYS else time(8, 45)
+            candidate = datetime.combine(day, open_time, tzinfo=IST)
+            if candidate > now:
+                return max(60, int((candidate - now).total_seconds()))
+        day += timedelta(days=1)
+    return 3600  # unreachable in practice; keeps the caller's cap meaningful
 
 
 # ── Instrument token ───────────────────────────────────────────────────────────
