@@ -187,6 +187,15 @@ class ExchangeCollector(ABC):
                 depth  = quote.get("depth", {})
                 bid    = depth.get("buy",  [{}])[0].get("price") if depth else None
                 ask    = depth.get("sell", [{}])[0].get("price") if depth else None
+                # L1 book size (quantity resting at the best price on each
+                # side). Same payload shape/field name Kite already supplies
+                # for futures depth (see crudeoil_ws.py's `_normalise_depth`,
+                # which reads `level.get("quantity")` from the identical
+                # `depth.buy`/`depth.sell` list-of-dict structure). Only L1
+                # is captured here, matching the existing `bid`/`ask` L1-only
+                # price scalars -- no L2-L5, no other field touched.
+                bid_qty = depth.get("buy",  [{}])[0].get("quantity") if depth else None
+                ask_qty = depth.get("sell", [{}])[0].get("quantity") if depth else None
 
                 T      = self._days_to_expiry(row_expiry)
                 iv     = implied_volatility(ltp, spot, strike, T, RISK_FREE_RATE, opt_type)
@@ -198,6 +207,8 @@ class ExchangeCollector(ABC):
                     "ts": ts, "instrument": symbol, "expiry": row_expiry,
                     "strike": strike, "option_type": opt_type,
                     "ltp": ltp, "bid": bid, "ask": ask,
+                    "bid_quantities": [int(bid_qty)] if bid_qty is not None else None,
+                    "ask_quantities": [int(ask_qty)] if ask_qty is not None else None,
                     "oi": oi, "oi_change": 0, "volume": volume,  # oi_change filled below
                     "iv": iv,
                     "delta": greeks["delta"], "gamma": greeks["gamma"],
@@ -291,12 +302,12 @@ class ExchangeCollector(ABC):
                         ts, instrument, expiry, strike, option_type,
                         ltp, bid, ask, oi, oi_change, volume, iv,
                         delta, gamma, theta, vega, underlying_ltp,
-                        quote_ts, iv_is_fallback
+                        quote_ts, iv_is_fallback, bid_quantities, ask_quantities
                     ) VALUES (
                         %(ts)s, %(instrument)s, %(expiry)s, %(strike)s, %(option_type)s,
                         %(ltp)s, %(bid)s, %(ask)s, %(oi)s, %(oi_change)s, %(volume)s, %(iv)s,
                         %(delta)s, %(gamma)s, %(theta)s, %(vega)s, %(underlying_ltp)s,
-                        %(quote_ts)s, %(iv_is_fallback)s
+                        %(quote_ts)s, %(iv_is_fallback)s, %(bid_quantities)s, %(ask_quantities)s
                     )
                 """, rows)
             conn.commit()
