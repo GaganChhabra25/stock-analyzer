@@ -247,6 +247,15 @@ COMMENT ON TABLE mcx_ohlc IS
 ALTER TABLE IF EXISTS mcx_ohlc
     ADD COLUMN IF NOT EXISTS tradingsymbol VARCHAR(40);
 
+-- Phase-1 (CRUDE_DATA_PHASE1_IMPLEMENTATION.md, trade-bot repo): additive,
+-- nullable session/quality tagging. Never used to delete or reinterpret an
+-- existing row; only labels it. crudeoil_ws.py's _ensure_ohlc_columns()
+-- applies the same statements on every (re)connect as a self-healing
+-- bootstrap, so this schema.sql copy is documentation-of-record, not the
+-- only place these columns get created.
+ALTER TABLE mcx_ohlc ADD COLUMN IF NOT EXISTS session_phase VARCHAR(20);
+ALTER TABLE mcx_ohlc ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20);
+
 -- Full five-level CRUDEOIL futures depth captured independently of OHLC writes.
 CREATE TABLE IF NOT EXISTS mcx_futures_depth (
     ts                  TIMESTAMPTZ NOT NULL,
@@ -323,6 +332,60 @@ ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l1 DOUBLE 
 ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l5 DOUBLE PRECISION;
 ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS l1_order_flow_imbalance BIGINT;
 
+-- Phase-1 (CRUDE_DATA_PHASE1_IMPLEMENTATION.md, trade-bot repo): all
+-- additive/nullable. "_close" for spread/microprice/imbalance_l1/
+-- imbalance_l5/bid_depth_l5/ask_depth_l5 already exist above (spread,
+-- microprice, book_imbalance_l1, book_imbalance_l5, bid_quantity_total,
+-- ask_quantity_total) -- not duplicated. bid/ask_depth_l1 are genuinely new.
+-- inferred_*/trade_classified_*/trade_unclassified_*/trade_classification_
+-- confidence are INFERRED, not ground truth -- see
+-- options/crude_tick_aggregator.py's module docstring before using.
+-- crudeoil_ws.py's _ensure_depth_table() applies the identical statements on
+-- every (re)connect; this copy is documentation-of-record.
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread_open DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread_min DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread_max DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_open DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_min DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_max DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_change_1s DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_open DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_min DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_max DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_change_1s DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_open DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_min DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_max DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_change_1s DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_open BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_min BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_max BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_close BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_open BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_min BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_max BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_close BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_open BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_min BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_max BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_change_1s BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_open BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_min BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_max BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_change_1s BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS depth_update_count INTEGER;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_bid_change_count INTEGER;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_ask_change_count INTEGER;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS inferred_buy_volume_1s BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS inferred_sell_volume_1s BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS inferred_signed_volume_1s BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS trade_classified_volume_1s BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS trade_unclassified_volume_1s BIGINT;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS trade_classification_confidence DOUBLE PRECISION;
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS session_phase VARCHAR(20);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20);
+ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS data_age_ms INTEGER;
+
 -- Compact ATM +/-10 CRUDEOIL option pressure captured from Kite each second.
 CREATE TABLE IF NOT EXISTS mcx_crude_option_pressure_second (
     ts                          TIMESTAMPTZ PRIMARY KEY,
@@ -367,6 +430,53 @@ CREATE TABLE IF NOT EXISTS mcx_crude_option_pressure_second (
 
 CREATE INDEX IF NOT EXISTS idx_mcx_crude_option_pressure_expiry
     ON mcx_crude_option_pressure_second (expiry, ts DESC);
+
+
+-- ── CRUDE collection health (Phase-1) ──────────────────────────────────────────
+-- One compact row per collector per health-check interval (~1 minute).
+-- Populated by options/crude_collection_health.py (DB-derived metrics,
+-- read-only against existing tables) and, for websocket_connected/
+-- reconnect_count only, by a small isolated beacon thread inside
+-- crudeoil_ws.py. Operational metadata only -- never a strategy signal, per
+-- CRUDE_DATA_PHASE1_IMPLEMENTATION.md Part 7. NULL means "not measurable
+-- this cycle", never a fabricated value.
+CREATE TABLE IF NOT EXISTS crude_collection_health (
+    id                      BIGSERIAL       PRIMARY KEY,
+    checked_at              TIMESTAMPTZ     NOT NULL DEFAULT clock_timestamp(),
+    collector_name          VARCHAR(60)     NOT NULL,   -- e.g. 'mcx_ohlc', 'mcx_futures_depth',
+                                                          -- 'mcx_crude_option_pressure_second',
+                                                          -- 'option_chain', 'crudeoil_ws_live'
+    instrument              VARCHAR(20)     NOT NULL DEFAULT 'CRUDEOIL',
+    session_phase           VARCHAR(20),
+
+    last_source_ts          TIMESTAMPTZ,
+    last_db_write_at        TIMESTAMPTZ,
+    source_age_ms           BIGINT,
+
+    window_start            TIMESTAMPTZ,
+    window_end              TIMESTAMPTZ,
+    expected_seconds        INTEGER,
+    received_seconds        INTEGER,
+    coverage_pct            DOUBLE PRECISION,
+
+    gap_count               INTEGER,
+    largest_gap_seconds     DOUBLE PRECISION,
+
+    stale_rows              INTEGER,
+    stale_pct               DOUBLE PRECISION,
+
+    websocket_connected     BOOLEAN,
+    reconnect_count         INTEGER,          -- cumulative for the live process's lifetime
+
+    status                  VARCHAR(20)     NOT NULL,   -- HEALTHY|DEGRADED|STALE|DISCONNECTED|PARTIAL_SESSION|NON_TRADING
+    status_reason           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_crude_collection_health_lookup
+    ON crude_collection_health (collector_name, checked_at DESC);
+
+COMMENT ON TABLE crude_collection_health IS
+    'Phase-1 collection-health telemetry for CRUDEOIL collectors. Operational metadata, not a strategy signal.';
 
 
 -- ── Global commodity reference prices ─────────────────────────────────────────

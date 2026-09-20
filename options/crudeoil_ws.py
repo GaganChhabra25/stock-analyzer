@@ -38,6 +38,11 @@ from options.kite_auth import API_KEY, load_access_token
 from options.mcx_instruments import atm_strike_mcx, load_mcx_instruments
 from options.tg import once, send, db_size, table_rows, now_ist
 from options.kite_auth import get_kite
+from options.crude_tick_aggregator import (
+    SecondAccumulator,
+    classify_session_phase,
+    classify_quality_flag,
+)
 from screener.db import _get_conn
 from logging_config import configure_logging
 
@@ -100,6 +105,16 @@ def _seconds_until_open() -> int:
 
 def _get_crudeoil_token(kite) -> int:
     global _tradingsymbol, _contract_expiry, _option_expiry, _option_universe
+    global _accum, _tick_prev_vol_cum, _tick_prev_ltp, _last_flushed_ts
+    # Phase-1: never carry within-second/trade-classification accumulator
+    # state or gap-recovery bookkeeping across a session/contract change --
+    # each new session (and every reconnect, since this function re-runs on
+    # every reconnect) starts these clean.
+    with _lock:
+        _accum = SecondAccumulator()
+        _tick_prev_vol_cum = 0
+        _tick_prev_ltp = None
+        _last_flushed_ts = None
     df    = load_mcx_instruments(kite)
     today = date.today()
     fut   = df[(df["name"] == SYMBOL) & (df["instrument_type"] == "FUT")]
@@ -165,6 +180,7 @@ _bar: dict = {
     "tick_count": 0,
     "l1_order_flow_imbalance": 0,
     "depth": None,    # latest full market-depth snapshot seen in this second
+    "last_tick_received_at": None,  # Phase-1: for data_age_ms at flush time
 }
 _prev_vol_cum: int = 0   # to compute per-second volume delta
 _token_id: int    = 0
@@ -185,6 +201,27 @@ _option_prev_volume: dict = {}
 _option_tick_counts: dict = {}
 _last_futures_ltp: Optional[float] = None
 _last_futures_received_at: Optional[datetime] = None
+
+# ── Phase-1 collection-health beacon state (Part 6/7) ───────────────────────
+# Best-effort only -- a failure here must never affect futures/depth/option
+# ingestion. websocket_connected/reconnect_count are process-lifetime facts
+# only this process can observe; everything else in crude_collection_health
+# is computed separately (read-only, DB-derived) by
+# options/crude_collection_health.py.
+_websocket_connected: bool = False
+_connection_attempts: int = 0
+
+# ── Phase-1 rich 1-second aggregation state (additive, runs alongside _bar) ──
+# See CRUDE_DATA_PHASE1_IMPLEMENTATION.md (trade-bot repo) for full design.
+# _accum never replaces _bar -- it only preserves within-second detail that
+# _bar's last-tick-wins fields already discard. Reset at every session/
+# reconnect boundary in _get_crudeoil_token() so no state leaks across
+# sessions (Phase-1 Part 11 requirement).
+_accum: SecondAccumulator = SecondAccumulator()
+_tick_prev_vol_cum: int = 0     # per-TICK (not per-second) cumulative volume,
+                                 # used only for INFERRED trade classification
+_tick_prev_ltp: Optional[float] = None
+_last_flushed_ts: Optional[datetime] = None   # for gap-recovery detection
 
 
 def _normalise_depth(raw_depth: Optional[dict]) -> Optional[dict]:
@@ -382,6 +419,7 @@ def _reset_option_session() -> None:
 
 def _on_ticks(ws, ticks):
     global _previous_top, _last_futures_ltp, _last_futures_received_at
+    global _tick_prev_vol_cum, _tick_prev_ltp
     roll_price = None
     for tick in ticks:
         token = int(tick.get("instrument_token", 0))
@@ -420,9 +458,38 @@ def _on_ticks(ws, ticks):
             _bar["oi_day_high"] = tick.get("oi_day_high") or 0
             _bar["oi_day_low"] = tick.get("oi_day_low") or 0
             _bar["last_trade_ts"] = _exchange_timestamp(tick.get("last_trade_time"))
+            _bar["last_tick_received_at"] = received_at
+
+            # ── Phase-1 additive aggregation: never replaces the block
+            # above, only records within-second detail it would otherwise
+            # discard. classify_trade() uses the PRE-update _previous_top
+            # (the book state that actually prevailed before this print) --
+            # computed before _previous_top is reassigned below.
+            prevailing_bid = _previous_top[0] if _previous_top else None
+            prevailing_ask = _previous_top[2] if _previous_top else None
+            tick_vol_delta = max(0, vol - _tick_prev_vol_cum)
+            _tick_prev_vol_cum = vol
+            _accum.add_price_tick(float(ltp))
+            _accum.classify_trade(
+                traded_qty=tick_vol_delta,
+                ltp=float(ltp),
+                prevailing_best_bid=prevailing_bid,
+                prevailing_best_ask=prevailing_ask,
+                prev_ltp=_tick_prev_ltp,
+            )
+            _tick_prev_ltp = float(ltp)
+
             if depth:
                 current_top = _top_of_book(depth)
                 _bar["l1_order_flow_imbalance"] += _l1_ofi(_previous_top, current_top)
+                bid_qty_l5 = sum(int(q or 0) for q in depth.get("bid_quantities", [])[:5])
+                ask_qty_l5 = sum(int(q or 0) for q in depth.get("ask_quantities", [])[:5])
+                if current_top:
+                    _accum.add_depth_tick(
+                        best_bid=current_top[0], best_bid_qty=current_top[1],
+                        best_ask=current_top[2], best_ask_qty=current_top[3],
+                        bid_qty_l5=bid_qty_l5, ask_qty_l5=ask_qty_l5,
+                    )
                 _previous_top = current_top
                 _bar["depth"] = {
                     **depth,
@@ -443,17 +510,35 @@ def _reset_bar():
                  "total_buy_quantity": 0, "total_sell_quantity": 0,
                  "oi_day_high": 0, "oi_day_low": 0, "last_trade_ts": None,
                  "tick_count": 0, "l1_order_flow_imbalance": 0,
-                 "depth": None})
+                 "depth": None, "last_tick_received_at": None})
 
 
 # ── DB writer (flush thread) ───────────────────────────────────────────────────
 
-def _write_bar(conn, ts, open_, high, low, close, volume, oi, tradingsymbol=""):
+# Phase-1: additive columns on the pre-existing mcx_ohlc table. Self-healing
+# bootstrap mirrors _ensure_depth_table()'s pattern -- ADD COLUMN IF NOT
+# EXISTS is idempotent and safe to run on every (re)connect regardless of
+# whether schema.sql has already been applied on this database.
+_OHLC_COLUMNS_SQL = """
+    ALTER TABLE mcx_ohlc ADD COLUMN IF NOT EXISTS session_phase VARCHAR(20);
+    ALTER TABLE mcx_ohlc ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20);
+"""
+
+
+def _ensure_ohlc_columns(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_OHLC_COLUMNS_SQL)
+    conn.commit()
+
+
+def _write_bar(conn, ts, open_, high, low, close, volume, oi, tradingsymbol="",
+               session_phase=None, quality_flag=None):
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO mcx_ohlc
-                (ts, instrument, interval, tradingsymbol, open, high, low, close, volume, oi)
-            VALUES (%s, %s, 'second', %s, %s, %s, %s, %s, %s, %s)
+                (ts, instrument, interval, tradingsymbol, open, high, low, close, volume, oi,
+                 session_phase, quality_flag)
+            VALUES (%s, %s, 'second', %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (ts, instrument, interval) DO UPDATE SET
                 tradingsymbol = EXCLUDED.tradingsymbol,
                 open   = EXCLUDED.open,
@@ -461,8 +546,11 @@ def _write_bar(conn, ts, open_, high, low, close, volume, oi, tradingsymbol=""):
                 low    = EXCLUDED.low,
                 close  = EXCLUDED.close,
                 volume = EXCLUDED.volume,
-                oi     = EXCLUDED.oi
-        """, (ts, SYMBOL, tradingsymbol, open_, high, low, close, volume, oi))
+                oi     = EXCLUDED.oi,
+                session_phase = EXCLUDED.session_phase,
+                quality_flag  = EXCLUDED.quality_flag
+        """, (ts, SYMBOL, tradingsymbol, open_, high, low, close, volume, oi,
+              session_phase, quality_flag))
     conn.commit()
 
 
@@ -535,7 +623,90 @@ _DEPTH_TABLE_SQL = """
     ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l1 DOUBLE PRECISION;
     ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS book_imbalance_l5 DOUBLE PRECISION;
     ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS l1_order_flow_imbalance BIGINT;
+
+    -- Phase-1 (see CRUDE_DATA_PHASE1_IMPLEMENTATION.md, trade-bot repo): all
+    -- additive/nullable. "_close" for spread/microprice/imbalance_l1/
+    -- imbalance_l5/bid_depth_l5/ask_depth_l5 already exist above (spread,
+    -- microprice, book_imbalance_l1, book_imbalance_l5, bid_quantity_total,
+    -- ask_quantity_total) -- not duplicated. bid/ask_depth_l1 are genuinely
+    -- new (no existing column stores raw top-of-book quantity, only the
+    -- imbalance derived from it).
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread_open DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread_min DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS spread_max DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_open DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_min DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_max DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS microprice_change_1s DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_open DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_min DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_max DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l1_change_1s DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_open DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_min DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_max DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS imbalance_l5_change_1s DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_open BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_min BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_max BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l1_close BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_open BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_min BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_max BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l1_close BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_open BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_min BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_max BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS bid_depth_l5_change_1s BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_open BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_min BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_max BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS ask_depth_l5_change_1s BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS depth_update_count INTEGER;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_bid_change_count INTEGER;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS best_ask_change_count INTEGER;
+    -- INFERRED, not ground truth -- see options/crude_tick_aggregator.py
+    -- module docstring and CRUDE_DATA_PHASE1_IMPLEMENTATION.md before using.
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS inferred_buy_volume_1s BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS inferred_sell_volume_1s BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS inferred_signed_volume_1s BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS trade_classified_volume_1s BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS trade_unclassified_volume_1s BIGINT;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS trade_classification_confidence DOUBLE PRECISION;
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS session_phase VARCHAR(20);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20);
+    ALTER TABLE mcx_futures_depth ADD COLUMN IF NOT EXISTS data_age_ms INTEGER;
 """
+
+
+# Phase-1 safety net: guarantees every column _write_depth's SQL references
+# is present in the dict passed to it, even in the defensive/unexpected case
+# where _accum.flush() returns None despite _bar having data this second
+# (should not happen given both are fed by the same tick loop under the same
+# lock, but a missing dict key would otherwise raise inside the critical
+# flush path -- None values are always safe to insert into nullable columns).
+_EMPTY_ACCUM_ROW = {
+    "spread_open": None, "spread_min": None, "spread_max": None,
+    "microprice_open": None, "microprice_min": None, "microprice_max": None,
+    "microprice_change_1s": None,
+    "imbalance_l1_open": None, "imbalance_l1_min": None, "imbalance_l1_max": None,
+    "imbalance_l1_change_1s": None,
+    "imbalance_l5_open": None, "imbalance_l5_min": None, "imbalance_l5_max": None,
+    "imbalance_l5_change_1s": None,
+    "bid_depth_l1_open": None, "bid_depth_l1_min": None, "bid_depth_l1_max": None,
+    "bid_depth_l1_close": None,
+    "ask_depth_l1_open": None, "ask_depth_l1_min": None, "ask_depth_l1_max": None,
+    "ask_depth_l1_close": None,
+    "bid_depth_l5_open": None, "bid_depth_l5_min": None, "bid_depth_l5_max": None,
+    "bid_depth_l5_change_1s": None,
+    "ask_depth_l5_open": None, "ask_depth_l5_min": None, "ask_depth_l5_max": None,
+    "ask_depth_l5_change_1s": None,
+    "depth_update_count": None, "best_bid_change_count": None, "best_ask_change_count": None,
+    "inferred_buy_volume_1s": None, "inferred_sell_volume_1s": None,
+    "inferred_signed_volume_1s": None,
+    "trade_classified_volume_1s": None, "trade_unclassified_volume_1s": None,
+    "trade_classification_confidence": None,
+}
 
 
 def _ensure_depth_table(conn) -> None:
@@ -557,7 +728,20 @@ def _write_depth(conn, snapshot: dict) -> None:
                 ask_prices, ask_quantities, ask_orders,
                 best_bid_price, best_ask_price, spread, mid_price, microprice,
                 bid_quantity_total, ask_quantity_total,
-                book_imbalance_l1, book_imbalance_l5, l1_order_flow_imbalance
+                book_imbalance_l1, book_imbalance_l5, l1_order_flow_imbalance,
+                spread_open, spread_min, spread_max,
+                microprice_open, microprice_min, microprice_max, microprice_change_1s,
+                imbalance_l1_open, imbalance_l1_min, imbalance_l1_max, imbalance_l1_change_1s,
+                imbalance_l5_open, imbalance_l5_min, imbalance_l5_max, imbalance_l5_change_1s,
+                bid_depth_l1_open, bid_depth_l1_min, bid_depth_l1_max, bid_depth_l1_close,
+                ask_depth_l1_open, ask_depth_l1_min, ask_depth_l1_max, ask_depth_l1_close,
+                bid_depth_l5_open, bid_depth_l5_min, bid_depth_l5_max, bid_depth_l5_change_1s,
+                ask_depth_l5_open, ask_depth_l5_min, ask_depth_l5_max, ask_depth_l5_change_1s,
+                depth_update_count, best_bid_change_count, best_ask_change_count,
+                inferred_buy_volume_1s, inferred_sell_volume_1s, inferred_signed_volume_1s,
+                trade_classified_volume_1s, trade_unclassified_volume_1s,
+                trade_classification_confidence,
+                session_phase, quality_flag, data_age_ms
             ) VALUES (
                 %(ts)s, %(instrument)s, %(tradingsymbol)s, %(instrument_token)s, %(expiry)s,
                 %(exchange_ts)s, %(received_at)s, %(last_trade_ts)s, %(last_price)s,
@@ -568,7 +752,20 @@ def _write_depth(conn, snapshot: dict) -> None:
                 %(ask_prices)s, %(ask_quantities)s, %(ask_orders)s,
                 %(best_bid_price)s, %(best_ask_price)s, %(spread)s, %(mid_price)s, %(microprice)s,
                 %(bid_quantity_total)s, %(ask_quantity_total)s,
-                %(book_imbalance_l1)s, %(book_imbalance_l5)s, %(l1_order_flow_imbalance)s
+                %(book_imbalance_l1)s, %(book_imbalance_l5)s, %(l1_order_flow_imbalance)s,
+                %(spread_open)s, %(spread_min)s, %(spread_max)s,
+                %(microprice_open)s, %(microprice_min)s, %(microprice_max)s, %(microprice_change_1s)s,
+                %(imbalance_l1_open)s, %(imbalance_l1_min)s, %(imbalance_l1_max)s, %(imbalance_l1_change_1s)s,
+                %(imbalance_l5_open)s, %(imbalance_l5_min)s, %(imbalance_l5_max)s, %(imbalance_l5_change_1s)s,
+                %(bid_depth_l1_open)s, %(bid_depth_l1_min)s, %(bid_depth_l1_max)s, %(bid_depth_l1_close)s,
+                %(ask_depth_l1_open)s, %(ask_depth_l1_min)s, %(ask_depth_l1_max)s, %(ask_depth_l1_close)s,
+                %(bid_depth_l5_open)s, %(bid_depth_l5_min)s, %(bid_depth_l5_max)s, %(bid_depth_l5_change_1s)s,
+                %(ask_depth_l5_open)s, %(ask_depth_l5_min)s, %(ask_depth_l5_max)s, %(ask_depth_l5_change_1s)s,
+                %(depth_update_count)s, %(best_bid_change_count)s, %(best_ask_change_count)s,
+                %(inferred_buy_volume_1s)s, %(inferred_sell_volume_1s)s, %(inferred_signed_volume_1s)s,
+                %(trade_classified_volume_1s)s, %(trade_unclassified_volume_1s)s,
+                %(trade_classification_confidence)s,
+                %(session_phase)s, %(quality_flag)s, %(data_age_ms)s
             )
             ON CONFLICT (ts, instrument) DO UPDATE SET
                 tradingsymbol    = EXCLUDED.tradingsymbol,
@@ -604,6 +801,49 @@ def _write_depth(conn, snapshot: dict) -> None:
                 book_imbalance_l1 = EXCLUDED.book_imbalance_l1,
                 book_imbalance_l5 = EXCLUDED.book_imbalance_l5,
                 l1_order_flow_imbalance = EXCLUDED.l1_order_flow_imbalance,
+                spread_open = EXCLUDED.spread_open,
+                spread_min = EXCLUDED.spread_min,
+                spread_max = EXCLUDED.spread_max,
+                microprice_open = EXCLUDED.microprice_open,
+                microprice_min = EXCLUDED.microprice_min,
+                microprice_max = EXCLUDED.microprice_max,
+                microprice_change_1s = EXCLUDED.microprice_change_1s,
+                imbalance_l1_open = EXCLUDED.imbalance_l1_open,
+                imbalance_l1_min = EXCLUDED.imbalance_l1_min,
+                imbalance_l1_max = EXCLUDED.imbalance_l1_max,
+                imbalance_l1_change_1s = EXCLUDED.imbalance_l1_change_1s,
+                imbalance_l5_open = EXCLUDED.imbalance_l5_open,
+                imbalance_l5_min = EXCLUDED.imbalance_l5_min,
+                imbalance_l5_max = EXCLUDED.imbalance_l5_max,
+                imbalance_l5_change_1s = EXCLUDED.imbalance_l5_change_1s,
+                bid_depth_l1_open = EXCLUDED.bid_depth_l1_open,
+                bid_depth_l1_min = EXCLUDED.bid_depth_l1_min,
+                bid_depth_l1_max = EXCLUDED.bid_depth_l1_max,
+                bid_depth_l1_close = EXCLUDED.bid_depth_l1_close,
+                ask_depth_l1_open = EXCLUDED.ask_depth_l1_open,
+                ask_depth_l1_min = EXCLUDED.ask_depth_l1_min,
+                ask_depth_l1_max = EXCLUDED.ask_depth_l1_max,
+                ask_depth_l1_close = EXCLUDED.ask_depth_l1_close,
+                bid_depth_l5_open = EXCLUDED.bid_depth_l5_open,
+                bid_depth_l5_min = EXCLUDED.bid_depth_l5_min,
+                bid_depth_l5_max = EXCLUDED.bid_depth_l5_max,
+                bid_depth_l5_change_1s = EXCLUDED.bid_depth_l5_change_1s,
+                ask_depth_l5_open = EXCLUDED.ask_depth_l5_open,
+                ask_depth_l5_min = EXCLUDED.ask_depth_l5_min,
+                ask_depth_l5_max = EXCLUDED.ask_depth_l5_max,
+                ask_depth_l5_change_1s = EXCLUDED.ask_depth_l5_change_1s,
+                depth_update_count = EXCLUDED.depth_update_count,
+                best_bid_change_count = EXCLUDED.best_bid_change_count,
+                best_ask_change_count = EXCLUDED.best_ask_change_count,
+                inferred_buy_volume_1s = EXCLUDED.inferred_buy_volume_1s,
+                inferred_sell_volume_1s = EXCLUDED.inferred_sell_volume_1s,
+                inferred_signed_volume_1s = EXCLUDED.inferred_signed_volume_1s,
+                trade_classified_volume_1s = EXCLUDED.trade_classified_volume_1s,
+                trade_unclassified_volume_1s = EXCLUDED.trade_unclassified_volume_1s,
+                trade_classification_confidence = EXCLUDED.trade_classification_confidence,
+                session_phase = EXCLUDED.session_phase,
+                quality_flag  = EXCLUDED.quality_flag,
+                data_age_ms   = EXCLUDED.data_age_ms,
                 available_at     = clock_timestamp()
         """, snapshot)
     conn.commit()
@@ -1038,10 +1278,11 @@ def _option_pressure_thread() -> None:
 
 def _flush_thread():
     """Runs in background. Writes completed 1-sec bars every time second changes."""
-    global _prev_vol_cum, _running
+    global _prev_vol_cum, _running, _accum, _last_flushed_ts
 
     conn = None
     last_sec = None
+    ohlc_columns_ready = False
 
     while _running:
         _time.sleep(0.1)
@@ -1054,7 +1295,29 @@ def _flush_thread():
                 db_url = os.environ.get("DATABASE_URL", "")
                 conn = psycopg2.connect(db_url)
                 conn.autocommit = False
+                ohlc_columns_ready = False
                 logger.info("[CRUDE-WS] DB connected.")
+
+            if not ohlc_columns_ready:
+                # Phase-1 safety fix (found in the pre-commit safety review):
+                # _ensure_depth_table()'s equivalent failure only affects the
+                # already-isolated depth-writer thread, but this call sits
+                # inside the core OHLC flush loop -- if it raised uncaught,
+                # the outer except below would force conn=None and retry the
+                # connect+ALTER every iteration forever, permanently blocking
+                # existing mcx_ohlc writes (a regression this phase must not
+                # introduce). Isolate it: log and proceed either way. If the
+                # ALTER genuinely never succeeds, the resulting _write_bar()
+                # failure is caught by the existing outer except exactly like
+                # any other write error today -- not a new failure mode.
+                try:
+                    _ensure_ohlc_columns(conn)
+                except Exception as exc:
+                    logger.error(
+                        "[CRUDE-WS] _ensure_ohlc_columns failed (non-fatal, "
+                        "existing OHLC writes continue attempting): %s", exc,
+                    )
+                ohlc_columns_ready = True
 
             now         = datetime.now(IST)
             current_sec = now.replace(microsecond=0)
@@ -1071,6 +1334,59 @@ def _flush_thread():
                 if _bar["open"] is not None and _bar["ts"] is not None:
                     vol_delta = max(0, _bar["vol_cum"] - _prev_vol_cum)
                     _prev_vol_cum = _bar["vol_cum"]
+
+                    # Phase-1: snapshot + reset the additive accumulator in
+                    # the same critical section as _bar, so both describe
+                    # exactly the same exchange-second.
+                    #
+                    # Safety fix (found in the pre-commit safety review): this
+                    # whole block previously ran unguarded inside the same
+                    # try/except as the pre-existing _bar-flush logic. Any
+                    # exception here (a bug in the new aggregator/session-
+                    # classification code) would have propagated to the
+                    # outer except, forcing conn=None and skipping this
+                    # cycle's _write_bar()/_write_depth() entirely -- i.e. a
+                    # Phase-1 bug could silently stop existing OHLC/depth
+                    # persistence, which Part 7 explicitly forbids. Isolated
+                    # so a failure here degrades to NULL session/quality
+                    # metadata for this one second, never blocks the
+                    # pre-existing write path.
+                    accum_row = None
+                    session_phase = None
+                    quality_flag = None
+                    data_age_ms = None
+                    try:
+                        accum_row = _accum.flush()
+                        from config import MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
+                        session_phase = classify_session_phase(
+                            _bar["ts"], MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
+                        )
+                        last_tick_at = _bar["last_tick_received_at"]
+                        data_age_ms = (
+                            max(0, round((now - last_tick_at).total_seconds() * 1000))
+                            if last_tick_at is not None else None
+                        )
+                        gap_seconds = (
+                            (_bar["ts"] - _last_flushed_ts).total_seconds()
+                            if _last_flushed_ts is not None else None
+                        )
+                        quality_flag = classify_quality_flag(
+                            session_phase=session_phase,
+                            tick_count=_bar["tick_count"],
+                            data_age_ms=data_age_ms,
+                            gap_seconds=gap_seconds,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "[CRUDE-WS] Phase-1 aggregation failed (non-fatal, "
+                            "existing OHLC/depth write continues with NULL "
+                            "session/quality metadata for this second): %s", exc,
+                        )
+                    finally:
+                        # Always start the next second clean, even if flush()
+                        # itself raised -- never let a failed second's state
+                        # leak into the next one.
+                        _accum = SecondAccumulator()
 
                     depth_snapshot = None
                     if _bar["depth"]:
@@ -1089,23 +1405,38 @@ def _flush_thread():
                             "tick_count": _bar["tick_count"],
                             "l1_order_flow_imbalance": _bar["l1_order_flow_imbalance"],
                             **_depth_metrics(_bar["depth"]),
+                            **_EMPTY_ACCUM_ROW,
+                            **(accum_row or {}),
+                            "session_phase": session_phase,
+                            "quality_flag": quality_flag,
+                            "data_age_ms": data_age_ms,
                         }
+                        # accum_row already carries open/high/low/close keys
+                        # (its own OHLC bookkeeping, kept for cross-check
+                        # only) -- do not let them shadow the depth-side
+                        # fields the INSERT actually reads by those same
+                        # generic names.
+                        for _k in ("open", "high", "low", "close", "tick_count"):
+                            depth_snapshot.pop(_k, None)
+                        depth_snapshot["tick_count"] = _bar["tick_count"]
 
                     snap = (
                         _bar["ts"], _bar["open"], _bar["high"],
                         _bar["low"], _bar["close"], vol_delta, _bar["oi"],
-                        depth_snapshot,
+                        depth_snapshot, session_phase, quality_flag,
                     )
                     _reset_bar()
+                    _last_flushed_ts = snap[0]
 
                 else:
                     snap = None
                     # Keep _prev_vol_cum unchanged (no trade this second)
 
             if snap:
-                ts, o, h, l, c, v, oi, depth = snap
+                ts, o, h, l, c, v, oi, depth, session_phase, quality_flag = snap
                 # Preserve the existing critical path: commit OHLC first.
-                _write_bar(conn, ts, o, h, l, c, v, oi, _tradingsymbol)
+                _write_bar(conn, ts, o, h, l, c, v, oi, _tradingsymbol,
+                           session_phase=session_phase, quality_flag=quality_flag)
                 if depth:
                     _enqueue_depth({
                         "ts": ts,
@@ -1123,6 +1454,107 @@ def _flush_thread():
         except Exception as exc:
             logger.error("[CRUDE-WS] Flush error: %s", exc)
             conn = None       # force reconnect on next iteration
+            _time.sleep(1)
+
+
+# ── Phase-1 collection-health beacon (Part 6/7) ─────────────────────────────
+
+_HEALTH_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS crude_collection_health (
+        id                      BIGSERIAL       PRIMARY KEY,
+        checked_at              TIMESTAMPTZ     NOT NULL DEFAULT clock_timestamp(),
+        collector_name          VARCHAR(60)     NOT NULL,
+        instrument              VARCHAR(20)     NOT NULL DEFAULT 'CRUDEOIL',
+        session_phase           VARCHAR(20),
+        last_source_ts          TIMESTAMPTZ,
+        last_db_write_at        TIMESTAMPTZ,
+        source_age_ms           BIGINT,
+        window_start            TIMESTAMPTZ,
+        window_end              TIMESTAMPTZ,
+        expected_seconds        INTEGER,
+        received_seconds        INTEGER,
+        coverage_pct            DOUBLE PRECISION,
+        gap_count               INTEGER,
+        largest_gap_seconds     DOUBLE PRECISION,
+        stale_rows              INTEGER,
+        stale_pct               DOUBLE PRECISION,
+        websocket_connected     BOOLEAN,
+        reconnect_count         INTEGER,
+        status                  VARCHAR(20)     NOT NULL,
+        status_reason           TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_crude_collection_health_lookup
+        ON crude_collection_health (collector_name, checked_at DESC);
+"""
+
+_HEALTH_BEACON_INTERVAL_SECONDS = 60
+
+
+def _ensure_health_table(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_HEALTH_TABLE_SQL)
+    conn.commit()
+
+
+def _health_beacon_thread() -> None:
+    """Best-effort, isolated. A failure here NEVER affects futures/depth/
+    option ingestion -- own connection, all exceptions swallowed, sleeps and
+    retries. Only reports facts this process itself can observe
+    (websocket_connected, reconnect_count); DB-derived coverage/gap/staleness
+    metrics are computed separately by crude_collection_health.py, which can
+    run even when this process is down.
+    """
+    conn = None
+    schema_ready = False
+    while _running:
+        try:
+            if conn is None or conn.closed:
+                import psycopg2
+                conn = psycopg2.connect(
+                    os.environ.get("DATABASE_URL", ""),
+                    connect_timeout=5,
+                    application_name="crude_health_beacon",
+                )
+                conn.autocommit = False
+                schema_ready = False
+            if not schema_ready:
+                _ensure_health_table(conn)
+                schema_ready = True
+
+            from config import MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
+            now = datetime.now(IST)
+            phase = classify_session_phase(now, MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS)
+            connected = _websocket_connected
+            reconnects = max(0, _connection_attempts - 1)
+
+            if phase in ("CLOSED",):
+                status, reason = "NON_TRADING", "Outside MCX session per calendar."
+            elif connected:
+                status, reason = "HEALTHY", "WebSocket connected."
+            else:
+                status, reason = "DISCONNECTED", "WebSocket not connected during an active session."
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO crude_collection_health
+                        (collector_name, instrument, session_phase,
+                         websocket_connected, reconnect_count, status, status_reason)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, ("crudeoil_ws_live", SYMBOL, phase, connected, reconnects, status, reason))
+            conn.commit()
+        except Exception as exc:
+            logger.warning("[CRUDE-HEALTH] Beacon write failed (non-critical): %s", exc)
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+            conn = None
+            schema_ready = False
+
+        for _ in range(_HEALTH_BEACON_INTERVAL_SECONDS):
+            if not _running:
+                break
             _time.sleep(1)
 
 
@@ -1146,7 +1578,7 @@ def _today_rows() -> int:
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
 def main():
-    global _token_id, _running, _previous_top
+    global _token_id, _running, _previous_top, _connection_attempts, _websocket_connected
 
     logger.info("[CRUDE-WS] CRUDEOIL 1-second WebSocket daemon starting.")
 
@@ -1169,11 +1601,19 @@ def main():
     )
     option_writer.start()
 
+    health_beacon = threading.Thread(
+        target=_health_beacon_thread,
+        daemon=True,
+        name="crude-health-beacon",
+    )
+    health_beacon.start()
+
     consecutive_timeouts = 0
 
     while True:
         # ── Sleep when MCX is closed ───────────────────────────────────────────
         if not _mcx_open():
+            _websocket_connected = False
             wait = _seconds_until_open()
             logger.info("[CRUDE-WS] MCX closed. Sleeping %d min.", wait // 60)
             _time.sleep(min(wait, 3600))
@@ -1212,7 +1652,9 @@ def main():
         _connected_evt = threading.Event()
 
         def on_connect(ws, _resp):
+            global _websocket_connected
             _connected_evt.set()
+            _websocket_connected = True
             logger.info(
                 "[CRUDE-WS] Connected — futures token %d; options select on first tick",
                 _token_id,
@@ -1228,9 +1670,13 @@ def main():
             _on_ticks(ws, ticks)
 
         def on_close(ws, code, reason):
+            global _websocket_connected
+            _websocket_connected = False
             logger.warning("[CRUDE-WS] Connection closed (%s): %s", code, reason)
 
         def on_error(ws, code, reason):
+            global _websocket_connected
+            _websocket_connected = False
             logger.error("[CRUDE-WS] Error (%s): %s", code, reason)
 
         kws.on_connect = on_connect
@@ -1239,6 +1685,7 @@ def main():
         kws.on_error   = on_error
 
         try:
+            _connection_attempts += 1
             kws.connect(threaded=True)
             logger.info("[CRUDE-WS] WebSocket thread started.")
 
@@ -1265,6 +1712,7 @@ def main():
                             kws.close()
                         except Exception:
                             pass
+                        _websocket_connected = False
                         once("crude_ws_end",
                              f"\U0001f534 CRUDEOIL 1-sec Ended\n"
                              f"{now_ist()}\n"
@@ -1273,6 +1721,7 @@ def main():
                         break
                     if not kws.is_connected():
                         logger.warning("[CRUDE-WS] Disconnected mid-session — will reconnect.")
+                        _websocket_connected = False
                         break
                     _time.sleep(10)
 
@@ -1284,6 +1733,7 @@ def main():
             kws.close()
         except Exception:
             pass
+        _websocket_connected = False
         _reset_option_session()
 
         _time.sleep(30)  # 30s cooldown — prevents duplicate sessions on Kite
