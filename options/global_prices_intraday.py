@@ -163,6 +163,36 @@ def _rows_for_symbol(df, instrument: str, observed_at: datetime) -> list:
     return rows
 
 
+def _try_run_lock():
+    """Return a held DB advisory-lock connection, or None when busy.
+
+    Same non-blocking pg_try_advisory_lock(hashtext(...)) idiom already used
+    by options/collector.py's `_try_symbol_lock()` for CRUDEOIL/NATURALGAS
+    overlap protection -- reused here rather than inventing a new mechanism,
+    so a slow/hung yfinance call in one scheduled run cannot overlap with
+    the next minute's run. Held for the whole fetch_and_store() cycle, same
+    as collector.py's usage, so a plain `with _get_conn()` (commits/closes
+    on exit) cannot be used for the lock connection itself.
+    """
+    import psycopg2
+    from screener.db import is_available, _db_url
+
+    if not is_available():
+        return None
+    conn = psycopg2.connect(_db_url())
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_try_advisory_lock(hashtext(%s))",
+            ("global_prices_intraday",),
+        )
+        acquired = bool(cur.fetchone()[0])
+    if not acquired:
+        conn.close()
+        return None
+    return conn
+
+
 def fetch_and_store() -> int:
     try:
         import yfinance as yf
@@ -170,6 +200,22 @@ def fetch_and_store() -> int:
         logger.error("[GLOBAL-INTRADAY] yfinance not installed.")
         return 0
 
+    lock_conn = _try_run_lock()
+    if lock_conn is None:
+        logger.info("[GLOBAL-INTRADAY] Previous run still in progress; skipping overlap.")
+        return 0
+
+    try:
+        return _fetch_and_store_locked(yf)
+    finally:
+        try:
+            with lock_conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("global_prices_intraday",))
+        finally:
+            lock_conn.close()
+
+
+def _fetch_and_store_locked(yf) -> int:
     observed_at = datetime.now(timezone.utc)
     total = 0
 

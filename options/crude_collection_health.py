@@ -224,7 +224,51 @@ def _insert_health_row(conn, collector_name: str, session_phase: str, metrics: d
     conn.commit()
 
 
+def _try_run_lock():
+    """Return a held DB advisory-lock connection, or None when busy.
+
+    Same non-blocking pg_try_advisory_lock(hashtext(...)) idiom already used
+    by options/collector.py's `_try_symbol_lock()` (CRUDEOIL/NATURALGAS
+    overlap protection) and options/global_prices_intraday.py's equivalent
+    guard -- reused here, not invented, so a slow health-check pass (several
+    sequential queries against high-row-count tables) cannot overlap with
+    the next scheduled run.
+    """
+    import psycopg2
+    from screener.db import is_available, _db_url
+
+    if not is_available():
+        return None
+    conn = psycopg2.connect(_db_url())
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_try_advisory_lock(hashtext(%s))",
+            ("crude_collection_health",),
+        )
+        acquired = bool(cur.fetchone()[0])
+    if not acquired:
+        conn.close()
+        return None
+    return conn
+
+
 def run_once() -> None:
+    lock_conn = _try_run_lock()
+    if lock_conn is None:
+        logger.info("[CRUDE-HEALTH] Previous run still in progress; skipping overlap.")
+        return
+    try:
+        _run_once_locked()
+    finally:
+        try:
+            with lock_conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(hashtext(%s))", ("crude_collection_health",))
+        finally:
+            lock_conn.close()
+
+
+def _run_once_locked() -> None:
     with _get_conn() as conn:
         if conn is None:
             logger.warning("[CRUDE-HEALTH] DB unavailable; skipping this cycle.")

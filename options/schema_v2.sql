@@ -59,6 +59,18 @@ CREATE INDEX IF NOT EXISTS idx_us_market_lookup
 COMMENT ON TABLE us_market IS
     'US futures (ES, NQ, YM), DXY, CBOE VIX, US 10Y yield via yfinance. 5-min intraday + daily.';
 
+-- P0-3 (CRUDE_DATA_FORENSIC_CERTIFICATION.md, 2026-09-20): us_market had no
+-- PIT/availability-clock column at all -- `ts` is only the bar's own close
+-- time, never when this process observed/wrote it. Additive, nullable,
+-- forward-only (us_market.py's writer also self-applies this same idempotent
+-- ALTER at runtime via `_ensure_columns()`, so running this file manually is
+-- not required, but kept here for documentation/manual-apply parity with the
+-- rest of this file's convention). Historical rows are NOT backfilled -- they
+-- stay NULL/UNKNOWN, per DATA_VALIDITY_WINDOWS.md's forward-only PIT rule.
+ALTER TABLE us_market ADD COLUMN IF NOT EXISTS received_at  TIMESTAMPTZ;
+ALTER TABLE us_market ADD COLUMN IF NOT EXISTS data_age_ms  BIGINT;
+ALTER TABLE us_market ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20);
+
 
 -- ── EOD derived metrics ────────────────────────────────────────────────────────
 -- Computed from option_chain data after market close.

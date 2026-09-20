@@ -53,6 +53,11 @@ LOG=/app/logs
 # cannot delay or overlap the CRUDEOIL collector.
 */1 5-20 * * 1-5 cd $APP && $PY options/collector.py --symbol NATURALGAS >> $LOG/options_ng.log 2>&1
 
+# ── Global prices intraday: WTI/Brent/USDINR 1-min, every minute 09:00–23:30 IST = CEST 05:30–20:00 ──
+*/1 5-20 * * 1-5 cd $APP && $PY options/global_prices_intraday.py >> $LOG/global_prices_intraday.log 2>&1
+# ── CRUDE collection-health deep check: every minute 09:00–23:30 IST = CEST 05:30–20:00 ──
+*/1 5-20 * * 1-5 cd $APP && $PY options/crude_collection_health.py >> $LOG/crude_collection_health.log 2>&1
+
 # ── Watchdog: every 10 min during all market hours = CEST 05:30–20:00 ────────
 # Covers NFO (05:30–12:05) + MCX (05:30–20:05) IST windows
 */10 5-20 * * 1-5 cd $APP && $PY options/watchdog.py >> $LOG/kite.log 2>&1

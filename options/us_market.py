@@ -51,31 +51,64 @@ SYMBOLS = {
     "GOLDF":   "GC=F",
 }
 
+# P0-3 (CRUDE_DATA_FORENSIC_CERTIFICATION.md, 2026-09-20): us_market had zero
+# PIT/availability-clock mechanism -- only `ts` (the bar's own close time),
+# never when this process actually observed/wrote the row. These 3 columns
+# are additive/nullable (see _ensure_columns below); historical rows stay
+# NULL forever (never backfilled/guessed). Only genuinely NEW rows inserted
+# after this deploy get a real, honestly-knowable received_at -- the
+# ON CONFLICT branch below deliberately excludes them so a later re-run of
+# the 60-day daily backfill (or the rolling 1-day intraday window) can never
+# bump an already-known row's received_at forward to "now" and quietly
+# understate its true age. Quality tag mirrors global_prices_intraday.py's
+# already-reviewed convention: yfinance is DELAYED, never claimed REALTIME.
+QUALITY_DELAYED = "DELAYED"
+
+_ALTER_SQL = """
+    ALTER TABLE us_market ADD COLUMN IF NOT EXISTS received_at  TIMESTAMPTZ;
+    ALTER TABLE us_market ADD COLUMN IF NOT EXISTS data_age_ms  BIGINT;
+    ALTER TABLE us_market ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20);
+"""
+
+
+def _ensure_columns(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_ALTER_SQL)
+    conn.commit()
+
 
 def _upsert(rows: list, interval: str) -> int:
     """Upsert rows into us_market. Returns count inserted."""
     if not rows:
         return 0
     with _get_conn() as conn:
+        _ensure_columns(conn)
         with conn.cursor() as cur:
             cur.executemany("""
                 INSERT INTO us_market
-                    (ts, symbol, interval, open, high, low, close, volume)
+                    (ts, symbol, interval, open, high, low, close, volume,
+                     received_at, data_age_ms, quality_flag)
                 VALUES
                     (%(ts)s, %(symbol)s, %(interval)s,
-                     %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s)
+                     %(open)s, %(high)s, %(low)s, %(close)s, %(volume)s,
+                     %(received_at)s, %(data_age_ms)s, %(quality_flag)s)
                 ON CONFLICT (ts, symbol, interval) DO UPDATE SET
                     open   = EXCLUDED.open,
                     high   = EXCLUDED.high,
                     low    = EXCLUDED.low,
                     close  = EXCLUDED.close,
                     volume = EXCLUDED.volume
+                    -- received_at/data_age_ms/quality_flag intentionally NOT
+                    -- updated here: preserves the row's true first-known
+                    -- time across repeated backfill/intraday re-fetches of
+                    -- the same (ts, symbol, interval) instead of refreshing
+                    -- it to "now" on every re-run.
             """, rows)
         conn.commit()
     return len(rows)
 
 
-def _df_to_rows(df, symbol: str, interval: str) -> list:
+def _df_to_rows(df, symbol: str, interval: str, observed_at: datetime) -> list:
     """Convert yfinance DataFrame to list of dicts for upsert."""
     rows = []
     for ts, row in df.iterrows():
@@ -89,6 +122,7 @@ def _df_to_rows(df, symbol: str, interval: str) -> list:
         if close is None or (hasattr(close, "__float__") and str(close) == "nan"):
             continue
 
+        data_age_ms = max(0, round((observed_at - ts).total_seconds() * 1000))
         rows.append({
             "ts":       ts,
             "symbol":   symbol,
@@ -98,6 +132,9 @@ def _df_to_rows(df, symbol: str, interval: str) -> list:
             "low":      float(row.get("Low")    or close),
             "close":    float(close),
             "volume":   int(row.get("Volume")   or 0),
+            "received_at":  observed_at,
+            "data_age_ms":  data_age_ms,
+            "quality_flag": QUALITY_DELAYED,
         })
     return rows
 
@@ -111,6 +148,7 @@ def run_intraday() -> None:
         sys.exit(1)
 
     total = 0
+    observed_at = datetime.now(timezone.utc)
     for symbol, ticker in SYMBOLS.items():
         try:
             df = yf.download(
@@ -128,7 +166,7 @@ def run_intraday() -> None:
             if hasattr(df.columns, "levels"):
                 df.columns = df.columns.get_level_values(0)
 
-            rows  = _df_to_rows(df, symbol, "5minute")
+            rows  = _df_to_rows(df, symbol, "5minute", observed_at)
             total += _upsert(rows, "5minute")
             logger.debug("[US-MARKET] %s: %d candles", symbol, len(rows))
 
@@ -162,6 +200,7 @@ def run_daily() -> None:
         sys.exit(1)
 
     total = 0
+    observed_at = datetime.now(timezone.utc)
     for symbol, ticker in SYMBOLS.items():
         try:
             df = yf.download(
@@ -178,7 +217,7 @@ def run_daily() -> None:
             if hasattr(df.columns, "levels"):
                 df.columns = df.columns.get_level_values(0)
 
-            rows  = _df_to_rows(df, symbol, "day")
+            rows  = _df_to_rows(df, symbol, "day", observed_at)
             total += _upsert(rows, "day")
             logger.info("[US-MARKET] %s: %d daily candles upserted", symbol, len(rows))
 
