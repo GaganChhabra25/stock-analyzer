@@ -502,6 +502,165 @@ COMMENT ON TABLE global_prices IS
     'Daily global prices: WTI, Brent, NatGas (Henry Hub), USD/INR. Used for MCX gap/correlation analysis.';
 
 
+-- ── Phase-2: WTI/Brent/USDINR 1-minute intraday (CRUDE_DATA_PHASE2_IMPLEMENTATION.md) ──
+-- Separate from global_prices (daily, unmodified) and from us_market (DXY/
+-- Gold/VIX 5-min, reused as-is, not duplicated). Source: yfinance, delayed/
+-- unofficial -- every row conservatively tagged 'DELAYED', never 'REALTIME'.
+-- Populated by options/global_prices_intraday.py.
+CREATE TABLE IF NOT EXISTS global_prices_intraday (
+    minute_ts     TIMESTAMPTZ NOT NULL,
+    instrument    VARCHAR(20) NOT NULL,   -- WTI | BRENT | USDINR
+    open          NUMERIC(14,4),
+    high          NUMERIC(14,4),
+    low           NUMERIC(14,4),
+    close         NUMERIC(14,4),
+    volume        BIGINT,
+    source        VARCHAR(20) NOT NULL DEFAULT 'yfinance',
+    source_ts     TIMESTAMPTZ,
+    received_at   TIMESTAMPTZ NOT NULL,
+    data_age_ms   BIGINT,
+    quality_flag  VARCHAR(20),            -- DELAYED | STALE (never REALTIME -- see report)
+    available_at  TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (minute_ts, instrument)
+);
+
+CREATE INDEX IF NOT EXISTS idx_global_prices_intraday_instrument
+    ON global_prices_intraday (instrument, minute_ts DESC);
+
+COMMENT ON TABLE global_prices_intraday IS
+    'Phase-2: WTI/Brent/USDINR 1-minute bars via yfinance. Delayed/unofficial vendor -- see CRUDE_DATA_PHASE2_IMPLEMENTATION.md before treating as real-time.';
+
+
+-- ── Phase-2: next-expiry CRUDEOIL futures, research-only (CRUDE_DATA_PHASE2_IMPLEMENTATION.md) ──
+-- Mirrors mcx_ohlc / mcx_futures_depth exactly (same columns, same
+-- aggregation semantics, same session_phase/quality_flag/INFERRED-field
+-- caveats) for the next-earliest-expiry contract instead of the front
+-- contract. Deliberately separate tables, never a shared row with the front
+-- contract's tables -- no stitching across contracts, ever (see report's
+-- "Contract/Rollover Semantics" section). Populated by crudeoil_ws.py's
+-- next-contract writer thread; never used to change which contract any
+-- existing strategy trades.
+CREATE TABLE IF NOT EXISTS mcx_ohlc_next_contract (
+    ts              TIMESTAMPTZ NOT NULL,
+    instrument      VARCHAR(20) NOT NULL,
+    interval        VARCHAR(10) NOT NULL,
+    tradingsymbol   VARCHAR(40) NOT NULL,
+    expiry          DATE,
+    contract_role   VARCHAR(10) NOT NULL DEFAULT 'next',
+    open            NUMERIC(12,2),
+    high            NUMERIC(12,2),
+    low             NUMERIC(12,2),
+    close           NUMERIC(12,2),
+    volume          BIGINT,
+    oi              BIGINT,
+    session_phase   VARCHAR(20),
+    quality_flag    VARCHAR(20),
+    available_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (ts, instrument, interval)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_next_contract_symbol
+    ON mcx_ohlc_next_contract (tradingsymbol, ts DESC);
+
+CREATE TABLE IF NOT EXISTS mcx_futures_depth_next_contract (
+    ts                  TIMESTAMPTZ NOT NULL,
+    instrument          VARCHAR(20) NOT NULL,
+    tradingsymbol       VARCHAR(40) NOT NULL,
+    instrument_token    BIGINT NOT NULL,
+    expiry              DATE,
+    contract_role       VARCHAR(10) NOT NULL DEFAULT 'next',
+    exchange_ts         TIMESTAMPTZ,
+    received_at         TIMESTAMPTZ NOT NULL,
+    last_trade_ts       TIMESTAMPTZ,
+    last_price          NUMERIC(12,2),
+    last_quantity       BIGINT,
+    average_traded_price NUMERIC(12,2),
+    volume_traded_day   BIGINT,
+    volume_delta        BIGINT,
+    oi                  BIGINT,
+    oi_day_high         BIGINT,
+    oi_day_low          BIGINT,
+    total_buy_quantity  BIGINT,
+    total_sell_quantity BIGINT,
+    tick_count          INTEGER,
+    bid_prices          NUMERIC(12,2)[] NOT NULL,
+    bid_quantities      BIGINT[] NOT NULL,
+    bid_orders          INTEGER[] NOT NULL,
+    ask_prices          NUMERIC(12,2)[] NOT NULL,
+    ask_quantities      BIGINT[] NOT NULL,
+    ask_orders          INTEGER[] NOT NULL,
+    best_bid_price      NUMERIC(12,2),
+    best_ask_price      NUMERIC(12,2),
+    spread              NUMERIC(12,4),
+    mid_price           NUMERIC(12,4),
+    microprice          NUMERIC(14,6),
+    bid_quantity_total  BIGINT,
+    ask_quantity_total  BIGINT,
+    book_imbalance_l1   DOUBLE PRECISION,
+    book_imbalance_l5   DOUBLE PRECISION,
+    spread_open DOUBLE PRECISION, spread_min DOUBLE PRECISION, spread_max DOUBLE PRECISION,
+    microprice_open DOUBLE PRECISION, microprice_min DOUBLE PRECISION,
+    microprice_max DOUBLE PRECISION, microprice_change_1s DOUBLE PRECISION,
+    imbalance_l1_open DOUBLE PRECISION, imbalance_l1_min DOUBLE PRECISION,
+    imbalance_l1_max DOUBLE PRECISION, imbalance_l1_change_1s DOUBLE PRECISION,
+    imbalance_l5_open DOUBLE PRECISION, imbalance_l5_min DOUBLE PRECISION,
+    imbalance_l5_max DOUBLE PRECISION, imbalance_l5_change_1s DOUBLE PRECISION,
+    bid_depth_l1_open BIGINT, bid_depth_l1_min BIGINT, bid_depth_l1_max BIGINT, bid_depth_l1_close BIGINT,
+    ask_depth_l1_open BIGINT, ask_depth_l1_min BIGINT, ask_depth_l1_max BIGINT, ask_depth_l1_close BIGINT,
+    bid_depth_l5_open BIGINT, bid_depth_l5_min BIGINT, bid_depth_l5_max BIGINT, bid_depth_l5_change_1s BIGINT,
+    ask_depth_l5_open BIGINT, ask_depth_l5_min BIGINT, ask_depth_l5_max BIGINT, ask_depth_l5_change_1s BIGINT,
+    depth_update_count INTEGER, best_bid_change_count INTEGER, best_ask_change_count INTEGER,
+    inferred_buy_volume_1s BIGINT, inferred_sell_volume_1s BIGINT,
+    inferred_signed_volume_1s BIGINT,
+    trade_classified_volume_1s BIGINT, trade_unclassified_volume_1s BIGINT,
+    trade_classification_confidence DOUBLE PRECISION,
+    session_phase VARCHAR(20), quality_flag VARCHAR(20), data_age_ms INTEGER,
+    available_at        TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (ts, instrument),
+    CHECK (
+        cardinality(bid_prices) = cardinality(bid_quantities)
+        AND cardinality(bid_prices) = cardinality(bid_orders)
+        AND cardinality(ask_prices) = cardinality(ask_quantities)
+        AND cardinality(ask_prices) = cardinality(ask_orders)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcx_futures_depth_next_contract
+    ON mcx_futures_depth_next_contract (tradingsymbol, ts DESC);
+
+COMMENT ON TABLE mcx_ohlc_next_contract IS
+    'Phase-2: next-expiry CRUDEOIL futures OHLC, research-only. Never used to change which contract any strategy trades. Do not stitch with mcx_ohlc across contracts.';
+COMMENT ON TABLE mcx_futures_depth_next_contract IS
+    'Phase-2: next-expiry CRUDEOIL futures depth/microstructure, research-only. Mirrors mcx_futures_depth field-for-field. INFERRED fields carry the same caveats as Phase-1 -- see options/crude_tick_aggregator.py.';
+
+
+-- ── Phase-2: crude_events -- SCHEMA ONLY, NOT YET SOURCED (CRUDE_DATA_PHASE2_IMPLEMENTATION.md) ──
+-- NOT CREATED IN THE RUNNING DATABASE by this change (no process bootstraps
+-- it, unlike every other table in this file). Kite Connect and yfinance
+-- (the only two vendors this codebase uses) expose no EIA/COT/FOMC/CPI/NFP
+-- event calendar or release data -- this is a genuine capability gap, not a
+-- configuration choice. This DDL documents the intended shape only, so a
+-- future task that has actually decided on a trustworthy event-data source
+-- doesn't have to redesign the schema from scratch. Do not apply this
+-- CREATE TABLE until a real source is chosen -- an empty table with no
+-- writer invites exactly the kind of silent-gap confusion Phase-1's health
+-- monitoring was built to prevent.
+--
+-- CREATE TABLE crude_events (
+--     id                    BIGSERIAL PRIMARY KEY,
+--     event_type            TEXT NOT NULL,        -- 'EIA_CRUDE_INVENTORY' | 'FOMC' | 'US_CPI' | 'US_NFP'
+--     scheduled_at          TIMESTAMPTZ NOT NULL,
+--     actual_release_at     TIMESTAMPTZ,           -- nullable until observed
+--     actual                NUMERIC,
+--     forecast              NUMERIC,
+--     previous              NUMERIC,
+--     revised_previous      NUMERIC,
+--     source                TEXT NOT NULL,
+--     received_at           TIMESTAMPTZ NOT NULL,  -- when THIS system learned of it
+--     available_at          TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+-- );
+
+
 -- ── App users (Google OAuth allowed accounts) ────────────────────────────────
 -- Stores emails allowed to log in via Google OAuth.
 -- Seeded from config.py ALLOWED_EMAILS on first use if table is empty.

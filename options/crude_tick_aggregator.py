@@ -133,6 +133,29 @@ def classify_quality_flag(
     return QUALITY_GOOD
 
 
+# ── Front/next contract selection (Phase-2) ─────────────────────────────────
+#
+# Pure, deterministic, no lookahead: `candidates` must already be filtered to
+# expiry >= today (the exact same candidate set crudeoil_ws.py's
+# _get_crudeoil_token() builds for near-contract selection) and sorted
+# ascending by expiry. Expiry dates are public/fixed metadata known well in
+# advance, so selecting "the next-earliest expiry after near" carries no
+# lookahead risk. This function does not know about "today" or fetch
+# instruments itself -- crudeoil_ws.py owns that; this only picks from an
+# already-resolved, already-sorted candidate list.
+
+def select_next_contract(candidates: list, near_expiry) -> Optional[dict]:
+    """Return the first candidate with expiry strictly after near_expiry, or
+    None if no further-dated contract exists yet (e.g. only one contract is
+    currently listed). `candidates` is a list of dicts, each with at least an
+    "expiry" key, sorted ascending by expiry.
+    """
+    for row in candidates:
+        if row["expiry"] > near_expiry:
+            return row
+    return None
+
+
 # ── Within-second min/open/max/close tracker ────────────────────────────────
 
 @dataclass

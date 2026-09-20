@@ -49,7 +49,13 @@ STALE_ROW_AGE_SECONDS = {
     "mcx_futures_depth": 5.0,
     "mcx_crude_option_pressure_second": 3.0,   # matches OPTION_FRESHNESS_SECONDS-adjacent gate
     "option_chain": 90.0,                       # matches V2's own snapshot-freshness tolerance
+    # Phase-2 (research-only, see CRUDE_DATA_PHASE2_IMPLEMENTATION.md):
+    "mcx_ohlc_next_contract": 5.0,
+    "mcx_futures_depth_next_contract": 5.0,
 }
+# Phase-2 1-minute external context: expected cadence is 1 row/minute per
+# instrument, not 1/second -- staleness threshold is minutes, not seconds.
+GLOBAL_PRICES_INTRADAY_STALE_MINUTES = 5.0
 DEGRADED_COVERAGE_PCT = 70.0     # below this during LIVE/SPECIAL -> DEGRADED, not HEALTHY
 STALE_STATUS_PCT = 50.0          # more than half the window's rows stale -> STALE
 GAP_ALERT_SECONDS = 10.0         # a single gap this long or longer flags DEGRADED
@@ -89,20 +95,34 @@ def _ensure_health_table(conn) -> None:
 
 def _second_level_health(conn, table: str, ts_col: str, avail_col: str,
                           window_start: datetime, window_end: datetime,
-                          session_phase: str) -> dict:
+                          session_phase: str, filter_instrument: bool = True) -> dict:
     """Coverage/gap/staleness for a per-second table over the window.
 
     Purely derived from already-stored timestamps -- no assumption about
     cadence beyond "one row per second is possible", which matches how
     mcx_ohlc/mcx_futures_depth/mcx_crude_option_pressure_second are written.
+
+    filter_instrument=False for tables with no `instrument` column (found
+    during Phase-2 validation: mcx_crude_option_pressure_second has none --
+    it is inherently CRUDEOIL-only by construction, so no filter is needed
+    or possible). Pre-existing bug, not introduced by Phase-2 -- see
+    CRUDE_DATA_PHASE2_IMPLEMENTATION.md validation section.
     """
     with conn.cursor() as cur:
-        cur.execute(f"""
-            SELECT {ts_col}, {avail_col}
-            FROM {table}
-            WHERE instrument = %s AND {ts_col} >= %s AND {ts_col} < %s
-            ORDER BY {ts_col}
-        """, (SYMBOL, window_start, window_end))
+        if filter_instrument:
+            cur.execute(f"""
+                SELECT {ts_col}, {avail_col}
+                FROM {table}
+                WHERE instrument = %s AND {ts_col} >= %s AND {ts_col} < %s
+                ORDER BY {ts_col}
+            """, (SYMBOL, window_start, window_end))
+        else:
+            cur.execute(f"""
+                SELECT {ts_col}, {avail_col}
+                FROM {table}
+                WHERE {ts_col} >= %s AND {ts_col} < %s
+                ORDER BY {ts_col}
+            """, (window_start, window_end))
         rows = cur.fetchall()
 
     received = len(rows)
@@ -176,7 +196,8 @@ def _classify_status(*, session_phase: str, coverage_pct: Optional[float],
 
 
 def _insert_health_row(conn, collector_name: str, session_phase: str, metrics: dict,
-                        window_start: datetime, window_end: datetime) -> None:
+                        window_start: datetime, window_end: datetime,
+                        instrument: str = SYMBOL) -> None:
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO crude_collection_health (
@@ -194,8 +215,10 @@ def _insert_health_row(conn, collector_name: str, session_phase: str, metrics: d
             )
         """, {
             "collector_name": collector_name,
-            "instrument": SYMBOL,
+            "instrument": instrument,
             "session_phase": session_phase,
+            "window_start": window_start,
+            "window_end": window_end,
             **metrics,
         })
     conn.commit()
@@ -221,7 +244,8 @@ def run_once() -> None:
             ("mcx_crude_option_pressure_second", "ts", "available_at"),
         ]:
             metrics = _second_level_health(
-                conn, table, ts_col, avail_col, window_start, window_end, session_phase
+                conn, table, ts_col, avail_col, window_start, window_end, session_phase,
+                filter_instrument=(table != "mcx_crude_option_pressure_second"),
             )
             _insert_health_row(conn, table, session_phase, metrics, window_start, window_end)
             logger.info(
@@ -274,6 +298,82 @@ def run_once() -> None:
         _insert_health_row(conn, "option_chain", session_phase, oc_metrics, window_start, window_end)
         logger.info("[CRUDE-HEALTH] option_chain status=%s rows=%d stale=%s",
                     status, len(rows), f"{stale_pct:.1f}%" if stale_pct is not None else "n/a")
+
+        # Phase-2 (see CRUDE_DATA_PHASE2_IMPLEMENTATION.md): next-contract
+        # per-second tables, checked with the same reusable per-second logic.
+        # Each wrapped independently -- a missing/not-yet-created next-
+        # contract table (e.g. before the first Phase-2 deploy has run) must
+        # never prevent the existing Phase-1 checks above from having already
+        # written their rows.
+        for table in ("mcx_ohlc_next_contract", "mcx_futures_depth_next_contract"):
+            try:
+                metrics = _second_level_health(
+                    conn, table, "ts", "available_at", window_start, window_end, session_phase
+                )
+                _insert_health_row(conn, table, session_phase, metrics, window_start, window_end)
+                logger.info("[CRUDE-HEALTH] %-40s status=%-12s coverage=%s",
+                            table, metrics["status"],
+                            f"{metrics['coverage_pct']:.1f}%" if metrics["coverage_pct"] is not None else "n/a")
+            except Exception as exc:
+                logger.warning("[CRUDE-HEALTH] %s check failed (other checks unaffected): %s", table, exc)
+                conn.rollback()
+
+        # Phase-2: WTI/Brent/USDINR 1-minute external context. Minute-level
+        # cadence, not per-second -- coverage measured against expected
+        # 1-minute rows over the window, same pattern as option_chain above.
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT instrument, minute_ts, available_at
+                    FROM global_prices_intraday
+                    WHERE minute_ts >= %s AND minute_ts < %s
+                    ORDER BY instrument, minute_ts
+                """, (window_start, window_end))
+                gp_rows = cur.fetchall()
+            by_instrument: dict = {}
+            for instrument, minute_ts, avail_at in gp_rows:
+                by_instrument.setdefault(instrument, []).append((minute_ts, avail_at))
+
+            expected_minutes = max(1, WINDOW_MINUTES)
+            for instrument in ("WTI", "BRENT", "USDINR"):
+                rows_i = by_instrument.get(instrument, [])
+                received = len(rows_i)
+                coverage_pct = received / expected_minutes * 100.0
+                stale_rows = sum(
+                    1 for ts, avail_at in rows_i
+                    if avail_at is not None
+                    and (avail_at - ts).total_seconds() > GLOBAL_PRICES_INTRADAY_STALE_MINUTES * 60
+                )
+                stale_pct = (stale_rows / received * 100.0) if received else None
+                last_source_ts = rows_i[-1][0] if rows_i else None
+                status, reason = _classify_status(
+                    session_phase=session_phase, coverage_pct=coverage_pct,
+                    stale_pct=stale_pct, largest_gap=0.0, received=received,
+                )
+                gp_metrics = {
+                    "last_source_ts": last_source_ts,
+                    "last_db_write_at": rows_i[-1][1] if rows_i else None,
+                    "source_age_ms": (
+                        max(0, round((now - last_source_ts).total_seconds() * 1000))
+                        if last_source_ts is not None else None
+                    ),
+                    "expected_seconds": None,
+                    "received_seconds": received,
+                    "coverage_pct": coverage_pct,
+                    "gap_count": None,
+                    "largest_gap_seconds": None,
+                    "stale_rows": stale_rows,
+                    "stale_pct": stale_pct,
+                    "status": status,
+                    "status_reason": reason,
+                }
+                _insert_health_row(conn, "global_prices_intraday", session_phase, gp_metrics,
+                                    window_start, window_end, instrument=instrument)
+            logger.info("[CRUDE-HEALTH] global_prices_intraday checked for %d instrument(s).",
+                        len(by_instrument))
+        except Exception as exc:
+            logger.warning("[CRUDE-HEALTH] global_prices_intraday check failed (other checks unaffected): %s", exc)
+            conn.rollback()
 
 
 if __name__ == "__main__":

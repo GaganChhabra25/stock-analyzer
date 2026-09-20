@@ -42,6 +42,7 @@ from options.crude_tick_aggregator import (
     SecondAccumulator,
     classify_session_phase,
     classify_quality_flag,
+    select_next_contract,
 )
 from screener.db import _get_conn
 from logging_config import configure_logging
@@ -106,6 +107,9 @@ def _seconds_until_open() -> int:
 def _get_crudeoil_token(kite) -> int:
     global _tradingsymbol, _contract_expiry, _option_expiry, _option_universe
     global _accum, _tick_prev_vol_cum, _tick_prev_ltp, _last_flushed_ts
+    global _next_token_id, _next_tradingsymbol, _next_contract_expiry
+    global _next_bar, _next_accum, _next_previous_top
+    global _next_tick_prev_vol_cum, _next_tick_prev_ltp, _next_last_flushed_ts
     # Phase-1: never carry within-second/trade-classification accumulator
     # state or gap-recovery bookkeeping across a session/contract change --
     # each new session (and every reconnect, since this function re-runs on
@@ -124,6 +128,38 @@ def _get_crudeoil_token(kite) -> int:
     row = near.iloc[0]
     _tradingsymbol = row["tradingsymbol"]
     _contract_expiry = row["expiry"]
+
+    # Phase-2: resolve the NEXT-expiry futures contract, research-only.
+    # Never changes which contract is used for FRONT (near) collection above
+    # -- this is purely additive metadata + a second WebSocket subscription.
+    # A failure here must never block near-contract resolution (already
+    # returned/raised above), so it's isolated in its own try/except and
+    # simply disables next-contract collection for this session on error.
+    with _lock:
+        _next_token_id = None
+        _next_tradingsymbol = ""
+        _next_contract_expiry = None
+        _next_bar = _empty_next_bar()
+        _next_accum = SecondAccumulator()
+        _next_previous_top = None
+        _next_tick_prev_vol_cum = 0
+        _next_tick_prev_ltp = None
+        _next_last_flushed_ts = None
+    try:
+        next_row = select_next_contract(near.to_dict("records"), row["expiry"])
+        if next_row is not None:
+            with _lock:
+                _next_token_id = int(next_row["instrument_token"])
+                _next_tradingsymbol = str(next_row["tradingsymbol"])
+                _next_contract_expiry = next_row["expiry"]
+            logger.info(
+                "[CRUDE-NEXT] Token: %d  Contract: %s  Expiry: %s",
+                _next_token_id, _next_tradingsymbol, _next_contract_expiry,
+            )
+        else:
+            logger.info("[CRUDE-NEXT] No further-dated CRUDEOIL future listed yet.")
+    except Exception as exc:
+        logger.error("[CRUDE-NEXT] Next-contract resolution failed (front contract unaffected): %s", exc)
 
     option_rows = df[
         (df["name"] == SYMBOL)
@@ -222,6 +258,37 @@ _tick_prev_vol_cum: int = 0     # per-TICK (not per-second) cumulative volume,
                                  # used only for INFERRED trade classification
 _tick_prev_ltp: Optional[float] = None
 _last_flushed_ts: Optional[datetime] = None   # for gap-recovery detection
+
+# ── Phase-2 next-contract state (additive, research-only) ──────────────────
+# See CRUDE_DATA_PHASE2_IMPLEMENTATION.md (trade-bot repo). Mirrors the
+# _bar/_accum/_previous_top lifecycle above exactly, but for the next-expiry
+# futures contract. Entirely separate module state, separate tables, separate
+# writer thread -- never read by, or capable of blocking, the FRONT-contract
+# pipeline above. _next_token_id is None whenever no next contract has been
+# resolved (or resolution failed), in which case this pipeline simply stays
+# idle for that session.
+
+
+def _empty_next_bar() -> dict:
+    return {
+        "ts": None, "open": None, "high": None, "low": None, "close": None,
+        "vol_cum": 0, "oi": 0, "last_quantity": 0, "average_traded_price": None,
+        "total_buy_quantity": 0, "total_sell_quantity": 0,
+        "oi_day_high": 0, "oi_day_low": 0, "last_trade_ts": None,
+        "tick_count": 0, "depth": None, "last_tick_received_at": None,
+    }
+
+
+_next_token_id: Optional[int] = None
+_next_tradingsymbol: str = ""
+_next_contract_expiry = None
+_next_bar: dict = _empty_next_bar()
+_next_prev_vol_cum: int = 0
+_next_previous_top: Optional[tuple[float, int, float, int]] = None
+_next_accum: SecondAccumulator = SecondAccumulator()
+_next_tick_prev_vol_cum: int = 0
+_next_tick_prev_ltp: Optional[float] = None
+_next_last_flushed_ts: Optional[datetime] = None
 
 
 def _normalise_depth(raw_depth: Optional[dict]) -> Optional[dict]:
@@ -417,6 +484,81 @@ def _reset_option_session() -> None:
         _option_tick_counts.clear()
 
 
+def _handle_next_tick(tick: dict) -> None:
+    """Phase-2: mirrors the FRONT-contract tick handling below exactly, but
+    for the next-expiry contract's own _next_bar/_next_accum/_next_previous_top
+    state. Does not touch _last_futures_ltp/_last_futures_received_at (those
+    feed the option-pressure pipeline, which is ATM-relative to FRONT only)
+    and never calls _roll_options() (options roll off the FRONT ATM only).
+    Caller wraps this in its own try/except so a bug here can never affect
+    FRONT-contract ingestion.
+    """
+    global _next_previous_top, _next_tick_prev_vol_cum, _next_tick_prev_ltp
+
+    ltp = tick.get("last_price") or 0
+    if not ltp:
+        return
+    vol = tick.get("volume_traded") or 0
+    oi = tick.get("oi") or 0
+    received_at = datetime.now(IST)
+    depth = _normalise_depth(tick.get("depth"))
+
+    with _lock:
+        _next_bar["tick_count"] += 1
+        if _next_bar["open"] is None:
+            _next_bar["ts"] = received_at.replace(microsecond=0)
+            _next_bar["open"] = ltp
+        _next_bar["high"] = max(_next_bar["high"] or ltp, ltp)
+        _next_bar["low"] = min(_next_bar["low"] or ltp, ltp)
+        _next_bar["close"] = ltp
+        _next_bar["vol_cum"] = vol
+        _next_bar["oi"] = oi
+        _next_bar["last_quantity"] = tick.get("last_traded_quantity") or 0
+        _next_bar["average_traded_price"] = tick.get("average_traded_price")
+        _next_bar["total_buy_quantity"] = tick.get("total_buy_quantity") or 0
+        _next_bar["total_sell_quantity"] = tick.get("total_sell_quantity") or 0
+        _next_bar["oi_day_high"] = tick.get("oi_day_high") or 0
+        _next_bar["oi_day_low"] = tick.get("oi_day_low") or 0
+        _next_bar["last_trade_ts"] = _exchange_timestamp(tick.get("last_trade_time"))
+        _next_bar["last_tick_received_at"] = received_at
+
+        prevailing_bid = _next_previous_top[0] if _next_previous_top else None
+        prevailing_ask = _next_previous_top[2] if _next_previous_top else None
+        tick_vol_delta = max(0, vol - _next_tick_prev_vol_cum)
+        _next_tick_prev_vol_cum = vol
+        _next_accum.add_price_tick(float(ltp))
+        _next_accum.classify_trade(
+            traded_qty=tick_vol_delta,
+            ltp=float(ltp),
+            prevailing_best_bid=prevailing_bid,
+            prevailing_best_ask=prevailing_ask,
+            prev_ltp=_next_tick_prev_ltp,
+        )
+        _next_tick_prev_ltp = float(ltp)
+
+        if depth:
+            current_top = _top_of_book(depth)
+            bid_qty_l5 = sum(int(q or 0) for q in depth.get("bid_quantities", [])[:5])
+            ask_qty_l5 = sum(int(q or 0) for q in depth.get("ask_quantities", [])[:5])
+            if current_top:
+                _next_accum.add_depth_tick(
+                    best_bid=current_top[0], best_bid_qty=current_top[1],
+                    best_ask=current_top[2], best_ask_qty=current_top[3],
+                    bid_qty_l5=bid_qty_l5, ask_qty_l5=ask_qty_l5,
+                )
+            _next_previous_top = current_top
+            _next_bar["depth"] = {
+                **depth,
+                "last_price": ltp,
+                "exchange_ts": _exchange_timestamp(tick.get("exchange_timestamp")),
+                "received_at": received_at,
+            }
+
+
+def _reset_next_bar():
+    _next_bar.update(_empty_next_bar())
+
+
 def _on_ticks(ws, ticks):
     global _previous_top, _last_futures_ltp, _last_futures_received_at
     global _tick_prev_vol_cum, _tick_prev_ltp
@@ -424,6 +566,14 @@ def _on_ticks(ws, ticks):
     for tick in ticks:
         token = int(tick.get("instrument_token", 0))
         if token != _token_id:
+            if _next_token_id and token == _next_token_id:
+                try:
+                    _handle_next_tick(tick)
+                except Exception as exc:
+                    logger.error(
+                        "[CRUDE-NEXT] Tick handling failed; FRONT contract unaffected: %s", exc
+                    )
+                continue
             with _lock:
                 if token in _option_meta:
                     copied = dict(tick)
@@ -1457,6 +1607,308 @@ def _flush_thread():
             _time.sleep(1)
 
 
+# ── Phase-2 next-contract tables + writer (research-only) ───────────────────
+# See CRUDE_DATA_PHASE2_IMPLEMENTATION.md. Brand-new tables (never an ALTER
+# on mcx_ohlc/mcx_futures_depth) so this pipeline cannot possibly collide with
+# or slow down anything an existing strategy/reader already depends on. Own
+# connection, own thread, own try/except -- a failure here is isolated
+# exactly like the Phase-1 depth/option/health writers above.
+
+_NEXT_OHLC_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS mcx_ohlc_next_contract (
+        ts              TIMESTAMPTZ NOT NULL,
+        instrument      VARCHAR(20) NOT NULL,
+        interval        VARCHAR(10) NOT NULL,
+        tradingsymbol   VARCHAR(40) NOT NULL,
+        expiry          DATE,
+        contract_role   VARCHAR(10) NOT NULL DEFAULT 'next',
+        open            NUMERIC(12,2),
+        high            NUMERIC(12,2),
+        low             NUMERIC(12,2),
+        close           NUMERIC(12,2),
+        volume          BIGINT,
+        oi              BIGINT,
+        session_phase   VARCHAR(20),
+        quality_flag    VARCHAR(20),
+        available_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (ts, instrument, interval)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_next_contract_symbol
+        ON mcx_ohlc_next_contract (tradingsymbol, ts DESC);
+"""
+
+_NEXT_DEPTH_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS mcx_futures_depth_next_contract (
+        ts                  TIMESTAMPTZ NOT NULL,
+        instrument          VARCHAR(20) NOT NULL,
+        tradingsymbol       VARCHAR(40) NOT NULL,
+        instrument_token    BIGINT NOT NULL,
+        expiry              DATE,
+        contract_role       VARCHAR(10) NOT NULL DEFAULT 'next',
+        exchange_ts         TIMESTAMPTZ,
+        received_at         TIMESTAMPTZ NOT NULL,
+        last_trade_ts       TIMESTAMPTZ,
+        last_price          NUMERIC(12,2),
+        last_quantity       BIGINT,
+        average_traded_price NUMERIC(12,2),
+        volume_traded_day   BIGINT,
+        volume_delta        BIGINT,
+        oi                  BIGINT,
+        oi_day_high         BIGINT,
+        oi_day_low          BIGINT,
+        total_buy_quantity  BIGINT,
+        total_sell_quantity BIGINT,
+        tick_count          INTEGER,
+        bid_prices          NUMERIC(12,2)[] NOT NULL,
+        bid_quantities      BIGINT[] NOT NULL,
+        bid_orders          INTEGER[] NOT NULL,
+        ask_prices          NUMERIC(12,2)[] NOT NULL,
+        ask_quantities      BIGINT[] NOT NULL,
+        ask_orders          INTEGER[] NOT NULL,
+        best_bid_price      NUMERIC(12,2),
+        best_ask_price      NUMERIC(12,2),
+        spread              NUMERIC(12,4),
+        mid_price           NUMERIC(12,4),
+        microprice          NUMERIC(14,6),
+        bid_quantity_total  BIGINT,
+        ask_quantity_total  BIGINT,
+        book_imbalance_l1   DOUBLE PRECISION,
+        book_imbalance_l5   DOUBLE PRECISION,
+        spread_open DOUBLE PRECISION, spread_min DOUBLE PRECISION, spread_max DOUBLE PRECISION,
+        microprice_open DOUBLE PRECISION, microprice_min DOUBLE PRECISION,
+        microprice_max DOUBLE PRECISION, microprice_change_1s DOUBLE PRECISION,
+        imbalance_l1_open DOUBLE PRECISION, imbalance_l1_min DOUBLE PRECISION,
+        imbalance_l1_max DOUBLE PRECISION, imbalance_l1_change_1s DOUBLE PRECISION,
+        imbalance_l5_open DOUBLE PRECISION, imbalance_l5_min DOUBLE PRECISION,
+        imbalance_l5_max DOUBLE PRECISION, imbalance_l5_change_1s DOUBLE PRECISION,
+        bid_depth_l1_open BIGINT, bid_depth_l1_min BIGINT, bid_depth_l1_max BIGINT, bid_depth_l1_close BIGINT,
+        ask_depth_l1_open BIGINT, ask_depth_l1_min BIGINT, ask_depth_l1_max BIGINT, ask_depth_l1_close BIGINT,
+        bid_depth_l5_open BIGINT, bid_depth_l5_min BIGINT, bid_depth_l5_max BIGINT, bid_depth_l5_change_1s BIGINT,
+        ask_depth_l5_open BIGINT, ask_depth_l5_min BIGINT, ask_depth_l5_max BIGINT, ask_depth_l5_change_1s BIGINT,
+        depth_update_count INTEGER, best_bid_change_count INTEGER, best_ask_change_count INTEGER,
+        -- INFERRED, not ground truth -- see options/crude_tick_aggregator.py.
+        inferred_buy_volume_1s BIGINT, inferred_sell_volume_1s BIGINT,
+        inferred_signed_volume_1s BIGINT,
+        trade_classified_volume_1s BIGINT, trade_unclassified_volume_1s BIGINT,
+        trade_classification_confidence DOUBLE PRECISION,
+        session_phase VARCHAR(20), quality_flag VARCHAR(20), data_age_ms INTEGER,
+        available_at        TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (ts, instrument),
+        CHECK (
+            cardinality(bid_prices) = cardinality(bid_quantities)
+            AND cardinality(bid_prices) = cardinality(bid_orders)
+            AND cardinality(ask_prices) = cardinality(ask_quantities)
+            AND cardinality(ask_prices) = cardinality(ask_orders)
+        )
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcx_futures_depth_next_contract
+        ON mcx_futures_depth_next_contract (tradingsymbol, ts DESC);
+"""
+
+
+def _ensure_next_contract_tables(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute(_NEXT_OHLC_TABLE_SQL)
+        cur.execute(_NEXT_DEPTH_TABLE_SQL)
+    conn.commit()
+
+
+def _write_next_bar(conn, ts, open_, high, low, close, volume, oi,
+                     tradingsymbol, expiry, session_phase, quality_flag) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO mcx_ohlc_next_contract
+                (ts, instrument, interval, tradingsymbol, expiry, open, high, low, close,
+                 volume, oi, session_phase, quality_flag)
+            VALUES (%s, %s, 'second', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (ts, instrument, interval) DO UPDATE SET
+                tradingsymbol = EXCLUDED.tradingsymbol,
+                expiry = EXCLUDED.expiry,
+                open   = EXCLUDED.open,
+                high   = EXCLUDED.high,
+                low    = EXCLUDED.low,
+                close  = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                oi     = EXCLUDED.oi,
+                session_phase = EXCLUDED.session_phase,
+                quality_flag  = EXCLUDED.quality_flag
+        """, (ts, SYMBOL, tradingsymbol, expiry, open_, high, low, close, volume, oi,
+              session_phase, quality_flag))
+    conn.commit()
+
+
+_NEXT_DEPTH_COLUMNS = [
+    "ts", "instrument", "tradingsymbol", "instrument_token", "expiry",
+    "exchange_ts", "received_at", "last_trade_ts", "last_price",
+    "last_quantity", "average_traded_price",
+    "volume_traded_day", "volume_delta", "oi", "oi_day_high", "oi_day_low",
+    "total_buy_quantity", "total_sell_quantity", "tick_count",
+    "bid_prices", "bid_quantities", "bid_orders",
+    "ask_prices", "ask_quantities", "ask_orders",
+    "best_bid_price", "best_ask_price", "spread", "mid_price", "microprice",
+    "bid_quantity_total", "ask_quantity_total",
+    "book_imbalance_l1", "book_imbalance_l5",
+    "spread_open", "spread_min", "spread_max",
+    "microprice_open", "microprice_min", "microprice_max", "microprice_change_1s",
+    "imbalance_l1_open", "imbalance_l1_min", "imbalance_l1_max", "imbalance_l1_change_1s",
+    "imbalance_l5_open", "imbalance_l5_min", "imbalance_l5_max", "imbalance_l5_change_1s",
+    "bid_depth_l1_open", "bid_depth_l1_min", "bid_depth_l1_max", "bid_depth_l1_close",
+    "ask_depth_l1_open", "ask_depth_l1_min", "ask_depth_l1_max", "ask_depth_l1_close",
+    "bid_depth_l5_open", "bid_depth_l5_min", "bid_depth_l5_max", "bid_depth_l5_change_1s",
+    "ask_depth_l5_open", "ask_depth_l5_min", "ask_depth_l5_max", "ask_depth_l5_change_1s",
+    "depth_update_count", "best_bid_change_count", "best_ask_change_count",
+    "inferred_buy_volume_1s", "inferred_sell_volume_1s", "inferred_signed_volume_1s",
+    "trade_classified_volume_1s", "trade_unclassified_volume_1s",
+    "trade_classification_confidence",
+    "session_phase", "quality_flag", "data_age_ms",
+]
+
+
+def _write_next_depth(conn, snapshot: dict) -> None:
+    cols = _NEXT_DEPTH_COLUMNS
+    placeholders = ", ".join(f"%({c})s" for c in cols)
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c not in ("ts", "instrument"))
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            INSERT INTO mcx_futures_depth_next_contract ({", ".join(cols)})
+            VALUES ({placeholders})
+            ON CONFLICT (ts, instrument) DO UPDATE SET
+                {updates},
+                available_at = clock_timestamp()
+        """, snapshot)
+    conn.commit()
+
+
+def _next_contract_flush_thread() -> None:
+    """Research-only. Isolated connection/thread; mirrors _flush_thread()'s
+    Phase-1 aggregation pattern but never touches _bar, mcx_ohlc, or
+    mcx_futures_depth. Idles harmlessly (writes nothing) whenever
+    _next_token_id is None (no further-dated contract resolved yet).
+    """
+    global _next_prev_vol_cum, _next_accum, _next_last_flushed_ts
+
+    conn = None
+    last_sec = None
+    tables_ready = False
+
+    while _running:
+        _time.sleep(0.1)
+        try:
+            if conn is None or conn.closed:
+                import psycopg2
+                conn = psycopg2.connect(
+                    os.environ.get("DATABASE_URL", ""),
+                    connect_timeout=5,
+                    application_name="crude_next_contract_writer",
+                )
+                conn.autocommit = False
+                tables_ready = False
+
+            if not tables_ready:
+                _ensure_next_contract_tables(conn)
+                tables_ready = True
+                logger.info("[CRUDE-NEXT] Tables ready; isolated writer active.")
+
+            now = datetime.now(IST)
+            current_sec = now.replace(microsecond=0)
+            if last_sec is None:
+                last_sec = current_sec
+                continue
+            if current_sec == last_sec:
+                continue
+
+            with _lock:
+                if _next_token_id is None or _next_bar["open"] is None or _next_bar["ts"] is None:
+                    last_sec = current_sec
+                    snap = None
+                else:
+                    vol_delta = max(0, _next_bar["vol_cum"] - _next_prev_vol_cum)
+                    _next_prev_vol_cum = _next_bar["vol_cum"]
+
+                    accum_row = None
+                    session_phase = None
+                    quality_flag = None
+                    data_age_ms = None
+                    try:
+                        accum_row = _next_accum.flush()
+                        from config import MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
+                        session_phase = classify_session_phase(
+                            _next_bar["ts"], MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
+                        )
+                        last_tick_at = _next_bar["last_tick_received_at"]
+                        data_age_ms = (
+                            max(0, round((now - last_tick_at).total_seconds() * 1000))
+                            if last_tick_at is not None else None
+                        )
+                        gap_seconds = (
+                            (_next_bar["ts"] - _next_last_flushed_ts).total_seconds()
+                            if _next_last_flushed_ts is not None else None
+                        )
+                        quality_flag = classify_quality_flag(
+                            session_phase=session_phase,
+                            tick_count=_next_bar["tick_count"],
+                            data_age_ms=data_age_ms,
+                            gap_seconds=gap_seconds,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "[CRUDE-NEXT] Aggregation failed for this second "
+                            "(row skipped, next second unaffected): %s", exc,
+                        )
+                    finally:
+                        _next_accum = SecondAccumulator()
+
+                    depth_snapshot = None
+                    if _next_bar["depth"] and accum_row is not None:
+                        depth_snapshot = {
+                            "ts": _next_bar["ts"], "instrument": SYMBOL,
+                            "tradingsymbol": _next_tradingsymbol,
+                            "instrument_token": _next_token_id,
+                            "expiry": _next_contract_expiry,
+                            **_next_bar["depth"],
+                            "last_trade_ts": _next_bar["last_trade_ts"],
+                            "last_quantity": _next_bar["last_quantity"],
+                            "average_traded_price": _next_bar["average_traded_price"],
+                            "volume_traded_day": _next_bar["vol_cum"],
+                            "volume_delta": vol_delta,
+                            "oi": _next_bar["oi"],
+                            "oi_day_high": _next_bar["oi_day_high"],
+                            "oi_day_low": _next_bar["oi_day_low"],
+                            "total_buy_quantity": _next_bar["total_buy_quantity"],
+                            "total_sell_quantity": _next_bar["total_sell_quantity"],
+                            **_depth_metrics(_next_bar["depth"]),
+                            **accum_row,
+                            "session_phase": session_phase,
+                            "quality_flag": quality_flag,
+                            "data_age_ms": data_age_ms,
+                        }
+                        for _k in ("open", "high", "low", "close"):
+                            depth_snapshot.pop(_k, None)
+                        depth_snapshot["tick_count"] = _next_bar["tick_count"]
+
+                    snap = (
+                        _next_bar["ts"], _next_bar["open"], _next_bar["high"],
+                        _next_bar["low"], _next_bar["close"], vol_delta, _next_bar["oi"],
+                        depth_snapshot, session_phase, quality_flag,
+                    )
+                    _reset_next_bar()
+                    _next_last_flushed_ts = snap[0]
+                    last_sec = current_sec
+
+            if snap:
+                ts, o, h, l, c, v, oi, depth, session_phase, quality_flag = snap
+                _write_next_bar(conn, ts, o, h, l, c, v, oi,
+                                 _next_tradingsymbol, _next_contract_expiry,
+                                 session_phase, quality_flag)
+                if depth:
+                    _write_next_depth(conn, depth)
+
+        except Exception as exc:
+            logger.error("[CRUDE-NEXT] Flush error (front contract unaffected): %s", exc)
+            conn = None
+            _time.sleep(1)
+
+
 # ── Phase-1 collection-health beacon (Part 6/7) ─────────────────────────────
 
 _HEALTH_TABLE_SQL = """
@@ -1542,6 +1994,30 @@ def _health_beacon_thread() -> None:
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """, ("crudeoil_ws_live", SYMBOL, phase, connected, reconnects, status, reason))
             conn.commit()
+
+            # Phase-2: next-contract health row. Isolated in its own
+            # try/except so a failure here can never skip or corrupt the
+            # FRONT-contract row written just above (and vice versa).
+            try:
+                if phase in ("CLOSED",):
+                    n_status, n_reason = "NON_TRADING", "Outside MCX session per calendar."
+                elif _next_token_id is None:
+                    n_status, n_reason = "DISCONNECTED", "No further-dated CRUDEOIL future resolved yet."
+                elif connected:
+                    n_status, n_reason = "HEALTHY", "WebSocket connected; next-contract token subscribed."
+                else:
+                    n_status, n_reason = "DISCONNECTED", "WebSocket not connected during an active session."
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO crude_collection_health
+                            (collector_name, instrument, session_phase,
+                             websocket_connected, reconnect_count, status, status_reason)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, ("crudeoil_ws_next_contract", SYMBOL, phase, connected, reconnects,
+                          n_status, n_reason))
+                conn.commit()
+            except Exception as exc:
+                logger.warning("[CRUDE-HEALTH] Next-contract beacon row failed (non-critical): %s", exc)
         except Exception as exc:
             logger.warning("[CRUDE-HEALTH] Beacon write failed (non-critical): %s", exc)
             try:
@@ -1608,6 +2084,13 @@ def main():
     )
     health_beacon.start()
 
+    next_contract_writer = threading.Thread(
+        target=_next_contract_flush_thread,
+        daemon=True,
+        name="crude-next-contract-writer",
+    )
+    next_contract_writer.start()
+
     consecutive_timeouts = 0
 
     while True:
@@ -1661,6 +2144,17 @@ def main():
             )
             ws.subscribe([_token_id])
             ws.set_mode(ws.MODE_FULL, [_token_id])
+            # Phase-2: subscribe the next-expiry contract too, research-only.
+            # Wrapped so a subscription failure here never prevents the
+            # FRONT-contract subscribe call above from having already
+            # succeeded (it always runs first, unconditionally).
+            if _next_token_id:
+                try:
+                    ws.subscribe([_next_token_id])
+                    ws.set_mode(ws.MODE_FULL, [_next_token_id])
+                    logger.info("[CRUDE-NEXT] Subscribed next-contract token %d", _next_token_id)
+                except Exception as exc:
+                    logger.error("[CRUDE-NEXT] Subscribe failed; FRONT unaffected: %s", exc)
             once("crude_ws_start",
                  f"\U0001f7e2 CRUDEOIL 1-sec Started\n"
                  f"{now_ist()}\n"

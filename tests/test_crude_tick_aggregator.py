@@ -8,10 +8,13 @@ repo) for the full report this covers.
 import unittest
 from datetime import datetime, timezone, timedelta
 
+from datetime import date
+
 from options.crude_tick_aggregator import (
     SecondAccumulator,
     classify_session_phase,
     classify_quality_flag,
+    select_next_contract,
     SESSION_WARMUP,
     SESSION_LIVE,
     SESSION_SPECIAL,
@@ -286,6 +289,49 @@ class SecondAccumulatorTradeClassificationTests(unittest.TestCase):
         row = acc.flush()
         self.assertIsNone(row["trade_classification_confidence"])
         self.assertEqual(row["inferred_signed_volume_1s"], 0)
+
+
+class SelectNextContractTests(unittest.TestCase):
+    """Phase-2: front/next contract identification. Pure function -- no
+    pandas, no I/O. See CRUDE_DATA_PHASE2_IMPLEMENTATION.md."""
+
+    def test_picks_next_earliest_expiry_after_near(self):
+        candidates = [
+            {"expiry": date(2026, 9, 17), "tradingsymbol": "CRUDEOIL26SEPFUT"},
+            {"expiry": date(2026, 10, 17), "tradingsymbol": "CRUDEOIL26OCTFUT"},
+            {"expiry": date(2026, 11, 18), "tradingsymbol": "CRUDEOIL26NOVFUT"},
+        ]
+        result = select_next_contract(candidates, date(2026, 9, 17))
+        self.assertEqual(result["tradingsymbol"], "CRUDEOIL26OCTFUT")
+
+    def test_no_next_contract_available(self):
+        candidates = [{"expiry": date(2026, 9, 17), "tradingsymbol": "CRUDEOIL26SEPFUT"}]
+        result = select_next_contract(candidates, date(2026, 9, 17))
+        self.assertIsNone(result)
+
+    def test_ignores_expiries_not_after_near_including_equal(self):
+        # A duplicate/equal expiry row (should never occur, but must never be
+        # selected as "next" if it did) is skipped in favor of the real next.
+        candidates = [
+            {"expiry": date(2026, 9, 17), "tradingsymbol": "A"},
+            {"expiry": date(2026, 9, 17), "tradingsymbol": "A-dup"},
+            {"expiry": date(2026, 10, 17), "tradingsymbol": "B"},
+        ]
+        result = select_next_contract(candidates, date(2026, 9, 17))
+        self.assertEqual(result["tradingsymbol"], "B")
+
+    def test_selection_uses_only_expiry_metadata_no_lookahead(self):
+        # Order in the input list (sorted ascending by expiry, as
+        # crudeoil_ws.py always provides it) is the only thing that matters --
+        # no volume/OI/price field is read, so there is no way for this
+        # function to use future market data to pick a contract.
+        candidates = [
+            {"expiry": date(2026, 9, 17), "volume": 999999},
+            {"expiry": date(2026, 10, 17), "volume": 1},
+            {"expiry": date(2026, 11, 18), "volume": 500000},
+        ]
+        result = select_next_contract(candidates, date(2026, 9, 17))
+        self.assertEqual(result["expiry"], date(2026, 10, 17))
 
 
 if __name__ == "__main__":
