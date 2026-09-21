@@ -68,7 +68,43 @@ _ALTER_SQL = """
     ALTER TABLE us_market ADD COLUMN IF NOT EXISTS received_at  TIMESTAMPTZ;
     ALTER TABLE us_market ADD COLUMN IF NOT EXISTS data_age_ms  BIGINT;
     ALTER TABLE us_market ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20);
+    ALTER TABLE us_market ADD COLUMN IF NOT EXISTS last_revised_at TIMESTAMPTZ;
+    ALTER TABLE us_market ADD COLUMN IF NOT EXISTS revision_count INTEGER NOT NULL DEFAULT 0;
 """
+# PIT follow-up (CRUDE_DATA_REMEDIATION_20260921.md investigation): P0-3
+# froze `received_at` to first-write time, but the ON CONFLICT branch still
+# blindly overwrote `close`/OHLC on every re-fetch -- so a provider-side
+# correction (or a yfinance re-download landing a different value for the
+# same (ts, symbol, interval)) could silently change what `close` means for
+# an already-"known" row without leaving any trace that a revision happened.
+# A downstream feature computed as of the original `received_at` would then
+# see the *revised* value as if it had always been knowable at that time --
+# a lookahead/repaint risk. Smallest safe fix: never touch `received_at`
+# (already true), and add `last_revised_at`/`revision_count` so a genuine
+# value change is explicitly logged instead of silently applied. Consumers
+# that need strict causal visibility (see mcx_feature_pipeline.py's
+# `_fetch_intraday_markets()`) can then gate on
+# GREATEST(received_at, last_revised_at) instead of `received_at` alone.
+
+
+def _revision_fields(
+    existing_close: Optional[float],
+    incoming_close: float,
+    existing_last_revised_at: Optional[datetime],
+    existing_revision_count: int,
+    incoming_received_at: datetime,
+) -> tuple[Optional[datetime], int]:
+    """Pure, unit-tested mirror of the `ON CONFLICT ... DO UPDATE` CASE
+    clauses in `_upsert()`'s SQL below (see `last_revised_at`/
+    `revision_count`). Not called at runtime -- the live upsert always goes
+    through the single atomic SQL statement to avoid a SELECT/UPSERT race
+    window -- this function exists only so that identical decision logic
+    can be exercised and tested without a live Postgres connection. Keep
+    this in sync with the SQL CASE by hand if either changes.
+    """
+    if existing_close is not None and incoming_close != existing_close:
+        return incoming_received_at, existing_revision_count + 1
+    return existing_last_revised_at, existing_revision_count
 
 
 def _ensure_columns(conn) -> None:
@@ -97,7 +133,23 @@ def _upsert(rows: list, interval: str) -> int:
                     high   = EXCLUDED.high,
                     low    = EXCLUDED.low,
                     close  = EXCLUDED.close,
-                    volume = EXCLUDED.volume
+                    volume = EXCLUDED.volume,
+                    -- Revision log (additive, PIT follow-up): only stamp a
+                    -- revision when the value actually changed (IS DISTINCT
+                    -- FROM is NULL-safe). received_at/data_age_ms/
+                    -- quality_flag remain untouched below -- this only
+                    -- records *that* and *when* a later re-fetch changed
+                    -- the close, never rewrites the original known-time.
+                    last_revised_at = CASE
+                        WHEN us_market.close IS DISTINCT FROM EXCLUDED.close
+                        THEN EXCLUDED.received_at
+                        ELSE us_market.last_revised_at
+                    END,
+                    revision_count = CASE
+                        WHEN us_market.close IS DISTINCT FROM EXCLUDED.close
+                        THEN us_market.revision_count + 1
+                        ELSE us_market.revision_count
+                    END
                     -- received_at/data_age_ms/quality_flag intentionally NOT
                     -- updated here: preserves the row's true first-known
                     -- time across repeated backfill/intraday re-fetches of
