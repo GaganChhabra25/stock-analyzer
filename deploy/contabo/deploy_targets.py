@@ -27,6 +27,7 @@ CRON_PATHS = {
     "deploy/contabo/crontab",
     "deploy/contabo/crontab.docker",
     "options/collector.py",
+    "options/crude_collection_health.py",
     "options/db_summary.py",
     "options/derived.py",
     "options/instruments.py",
