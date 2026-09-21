@@ -19,7 +19,7 @@ from trading outcomes.
 
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -42,6 +42,35 @@ SYMBOL = "CRUDEOIL"
 # Kept short (5 min) so this script stays cheap enough to run every minute
 # without scanning large ranges of high-frequency tables.
 WINDOW_MINUTES = 5
+
+# CRUDE_DATA_REMEDIATION_20260921.md Issue 1/6: us_market (DXY/Gold/VIX/
+# SP500F/NASDAQF/DOWF/US10Y, options/us_market.py) had ZERO coverage in this
+# health monitor before this change -- confirmed by reading this file: no
+# check block referenced the table at all, and a direct query of
+# crude_collection_health during the 2026-09-21 first-live-session audit
+# found no us_market rows in it at any checked_at. This is a real, provable
+# monitoring gap (not a threshold-tuning change): the collector's own
+# staleness was already honestly disclosed via its P0-3 received_at/
+# data_age_ms/quality_flag columns, but nothing surfaced that into this
+# table's operational view.
+#
+# us_market has its own schedule, deliberately different from the MCX
+# session calendar above -- reusing classify_session_phase() here would be
+# wrong (it would falsely flag DISCONNECTED for the ~19 hours/day this
+# collector is correctly idle). The two active windows below are copied
+# verbatim from the deployed crontab.docker entries (server-local CEST,
+# converted to UTC bounds so this check does not depend on the server's own
+# timezone setting):
+#   5   5 * * 1-6     -> options/us_market.py            (daily backfill)
+#   */5 15-22 * * 1-5 -> options/us_market.py --intraday (US market hours)
+# 15-22 CEST = 13:00-20:00 UTC; daily run is a single 03:05 UTC tick, given
+# a short grace window below since it is not a continuous-coverage source.
+US_MARKET_INTRADAY_SYMBOLS = ("DXY", "GOLDF", "USVIX", "SP500F", "NASDAQF", "DOWF", "US10Y")
+US_MARKET_INTRADAY_START_UTC = time(13, 0)   # 15:00 CEST
+US_MARKET_INTRADAY_END_UTC = time(20, 0)     # 22:00 CEST
+US_MARKET_DAILY_RUN_UTC = time(3, 5)         # 05:05 CEST, Mon-Sat
+US_MARKET_DAILY_GRACE_MINUTES = 15           # allow the daily cron itself to finish
+US_MARKET_STALE_MINUTES = 10.0               # > 2x the 5-min intraday cadence
 
 # Conservative, documented thresholds -- not optimized from trading outcomes.
 STALE_ROW_AGE_SECONDS = {
@@ -193,6 +222,32 @@ def _classify_status(*, session_phase: str, coverage_pct: Optional[float],
     if largest_gap >= GAP_ALERT_SECONDS:
         return "DEGRADED", f"Largest gap {largest_gap:.0f}s >= {GAP_ALERT_SECONDS:.0f}s threshold."
     return "HEALTHY", "Coverage/staleness/gaps within documented thresholds."
+
+
+def _us_market_active_window(now_utc: datetime) -> tuple:
+    """Is options/us_market.py's own cron expected to be producing fresh
+    rows right now? Pure function of wall-clock time; mirrors the deployed
+    crontab.docker entries verbatim (see module-level comment above the
+    US_MARKET_* constants) -- does not invent a new schedule.
+
+    Returns (active: bool, reason: str). `active=False` means "no cron tick
+    is due imminently" -- the caller must treat this like session_phase
+    CLOSED (NON_TRADING) rather than DISCONNECTED, since zero rows during
+    this window is the correct, expected state, not a failure.
+    """
+    weekday = now_utc.weekday()  # Monday=0 .. Sunday=6
+    t = now_utc.time()
+
+    if weekday <= 4 and US_MARKET_INTRADAY_START_UTC <= t <= US_MARKET_INTRADAY_END_UTC:
+        return True, "Within intraday cron window (13:00-20:00 UTC Mon-Fri)."
+
+    if weekday <= 5:
+        daily_end = (datetime.combine(now_utc.date(), US_MARKET_DAILY_RUN_UTC)
+                     + timedelta(minutes=US_MARKET_DAILY_GRACE_MINUTES)).time()
+        if US_MARKET_DAILY_RUN_UTC <= t <= daily_end:
+            return True, "Within daily-backfill cron grace window (03:05 UTC Mon-Sat)."
+
+    return False, "Outside us_market's own cron windows (US market hours / daily backfill) -- idle by design."
 
 
 def _insert_health_row(conn, collector_name: str, session_phase: str, metrics: dict,
@@ -417,6 +472,75 @@ def _run_once_locked() -> None:
                         len(by_instrument))
         except Exception as exc:
             logger.warning("[CRUDE-HEALTH] global_prices_intraday check failed (other checks unaffected): %s", exc)
+            conn.rollback()
+
+        # CRUDE_DATA_REMEDIATION_20260921.md Issue 1/6: us_market -- see
+        # US_MARKET_* constants above for why this is not simply reusing the
+        # MCX session_phase. Wrapped independently, same isolation pattern
+        # as the two blocks above -- a failure here can never affect any
+        # check that already ran and committed its own row.
+        try:
+            now_utc = window_end.astimezone(timezone.utc)
+            active, window_reason = _us_market_active_window(now_utc)
+            window_start_utc = window_start.astimezone(timezone.utc)
+
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT symbol, ts, received_at, data_age_ms, quality_flag
+                    FROM us_market
+                    WHERE interval = '5minute'
+                      AND ts >= %s AND ts < %s
+                    ORDER BY symbol, ts
+                """, (window_start_utc, now_utc))
+                um_rows = cur.fetchall()
+            by_symbol: dict = {}
+            for symbol, ts, received_at, data_age_ms, quality_flag in um_rows:
+                by_symbol.setdefault(symbol, []).append((ts, received_at, data_age_ms, quality_flag))
+
+            # Cadence is 1 row / 5 min per symbol -- over a WINDOW_MINUTES=5
+            # lookback, 1 row is "full coverage" for this source.
+            expected_per_symbol = max(1, WINDOW_MINUTES // 5)
+            for symbol in US_MARKET_INTRADAY_SYMBOLS:
+                rows_i = by_symbol.get(symbol, [])
+                received = len(rows_i)
+                coverage_pct = min(100.0, received / expected_per_symbol * 100.0)
+                stale_rows = sum(
+                    1 for ts, received_at, data_age_ms, quality_flag in rows_i
+                    if data_age_ms is not None and data_age_ms > US_MARKET_STALE_MINUTES * 60 * 1000
+                )
+                stale_pct = (stale_rows / received * 100.0) if received else None
+                last_source_ts = rows_i[-1][0] if rows_i else None
+
+                if not active:
+                    status, reason = "NON_TRADING", window_reason
+                else:
+                    status, reason = _classify_status(
+                        session_phase="LIVE", coverage_pct=coverage_pct,
+                        stale_pct=stale_pct, largest_gap=0.0, received=received,
+                    )
+                um_metrics = {
+                    "last_source_ts": last_source_ts,
+                    "last_db_write_at": rows_i[-1][1] if rows_i else None,
+                    "source_age_ms": (
+                        max(0, round((now_utc - last_source_ts).total_seconds() * 1000))
+                        if last_source_ts is not None else None
+                    ),
+                    "expected_seconds": None,
+                    "received_seconds": received,
+                    "coverage_pct": coverage_pct,
+                    "gap_count": None,
+                    "largest_gap_seconds": None,
+                    "stale_rows": stale_rows,
+                    "stale_pct": stale_pct,
+                    "status": status,
+                    "status_reason": reason,
+                }
+                _insert_health_row(conn, "us_market", session_phase, um_metrics,
+                                    window_start, window_end, instrument=symbol)
+            logger.info("[CRUDE-HEALTH] us_market checked for %d symbol(s), active_window=%s.",
+                        len(US_MARKET_INTRADAY_SYMBOLS), active)
+        except Exception as exc:
+            logger.warning("[CRUDE-HEALTH] us_market check failed (other checks unaffected): %s", exc)
             conn.rollback()
 
 
