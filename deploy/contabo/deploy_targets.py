@@ -36,6 +36,7 @@ CRON_PATHS = {
     "options/nifty_retention.py",
     "options/nse_ohlc.py",
     "options/save_instruments.py",
+    "options/us_market.py",
     "options/watchdog.py",
 }
 
