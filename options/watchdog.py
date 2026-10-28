@@ -50,8 +50,8 @@ def _build_windows():
     from options.exchange.nfo import NFOCollector
     from options.exchange.mcx import MCXCollector
     return [
-        ("NFO", "NIFTY",      NFOCollector()),
-        ("MCX", "NATURALGAS", MCXCollector()),
+        # ("NFO", "NIFTY", NFOCollector()),  # disabled 2026-10-21 crude-only
+        ("MCX", "CRUDEOIL",   MCXCollector(symbols=["CRUDEOIL"])),
     ]
 
 

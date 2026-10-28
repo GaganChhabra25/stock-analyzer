@@ -57,18 +57,18 @@ WINDOW_MINUTES = 5
 # us_market has its own schedule, deliberately different from the MCX
 # session calendar above -- reusing classify_session_phase() here would be
 # wrong (it would falsely flag DISCONNECTED for the ~19 hours/day this
-# collector is correctly idle). The two active windows below are copied
-# verbatim from the deployed crontab.docker entries (server-local CEST,
-# converted to UTC bounds so this check does not depend on the server's own
-# timezone setting):
-#   5   5 * * 1-6     -> options/us_market.py            (daily backfill)
-#   */5 15-22 * * 1-5 -> options/us_market.py --intraday (US market hours)
-# 15-22 CEST = 13:00-20:00 UTC; daily run is a single 03:05 UTC tick, given
-# a short grace window below since it is not a continuous-coverage source.
+# collector is correctly idle). The windows below come from the deployed
+# crontab.docker entries (IST since 2026-10-28), converted to UTC bounds so
+# this check does not depend on the server's own timezone setting:
+#   35 8 * * 1-6                -> options/us_market.py            (daily backfill)
+#   */5 18-23 / */5 0-2 (IST)   -> options/us_market.py --intraday (US market hours)
+# The cron runs 12:30-21:25 UTC; this check stays on the 13:00-20:00 UTC core.
+# The daily run is a single 03:05 UTC tick, given a short grace window below
+# since it is not a continuous-coverage source.
 US_MARKET_INTRADAY_SYMBOLS = ("DXY", "GOLDF", "USVIX", "SP500F", "NASDAQF", "DOWF", "US10Y")
-US_MARKET_INTRADAY_START_UTC = time(13, 0)   # 15:00 CEST
-US_MARKET_INTRADAY_END_UTC = time(20, 0)     # 22:00 CEST
-US_MARKET_DAILY_RUN_UTC = time(3, 5)         # 05:05 CEST, Mon-Sat
+US_MARKET_INTRADAY_START_UTC = time(13, 0)   # 18:30 IST
+US_MARKET_INTRADAY_END_UTC = time(20, 0)     # 01:30 IST
+US_MARKET_DAILY_RUN_UTC = time(3, 5)         # 08:35 IST, Mon-Sat
 US_MARKET_DAILY_GRACE_MINUTES = 15           # allow the daily cron itself to finish
 US_MARKET_STALE_MINUTES = 10.0               # > 2x the 5-min intraday cadence
 

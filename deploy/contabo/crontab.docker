@@ -1,95 +1,99 @@
 # =============================================================================
 # Stock Analyzer — Crontab for Docker cron-worker container
-# Server timezone: Europe/Berlin (CEST = UTC+2 in summer, CET = UTC+1 in winter)
 #
-# IST = UTC+5:30  →  CEST = IST − 3:30
+# ALL TIMES BELOW ARE IST. docker-compose.yml sets TZ=Asia/Kolkata for the
+# cron-worker service only (overriding the Dockerfile's Europe/Berlin), so
+# supercronic schedules in IST. IST has no DST, so these never shift.
 #
-# Key conversions (CEST / summer):
-#   IST 09:00 = CEST 05:30  |  IST 09:15 = CEST 05:45
-#   IST 15:30 = CEST 12:00  |  IST 15:35 = CEST 12:05
-#   IST 23:30 = CEST 20:00  |  IST 23:35 = CEST 20:05
+# 2026-10-28: previously this file was written in Berlin time assuming CEST
+# (IST-3:30). When Europe left DST on 2026-10-25 every job slipped one hour
+# later in IST -- Kite auto-login moved from 08:30 to 09:30 IST, so the
+# crudeoil-ws daemon had no token and missed 09:00-09:35 CRUDEOIL data daily.
+# Do not convert these back to server-local time.
 # =============================================================================
 
 APP=/app
 PY=python
 LOG=/app/logs
 
-# ── Global prices: WTI / Brent / NatGas / USDINR  08:30 IST = CEST 05:00 ─────
+# ── Global prices: WTI / Brent / NatGas / USDINR  08:30 IST ─────
 # Runs Mon-Sat to catch Friday's US close on Saturday morning
-0 5 * * 1-6 cd $APP && $PY options/global_prices.py >> $LOG/mcx.log 2>&1
+30 8 * * 1-6 cd $APP && $PY options/global_prices.py >> $LOG/mcx.log 2>&1
 
-# ── Kite auto-login: 08:30 IST = CEST 05:00 ──────────────────────────────────
-0 5 * * 1-5 cd $APP && $PY options/kite_auto_login.py >> $LOG/kite.log 2>&1
+# ── Kite auto-login: 08:30 IST (crudeoil-ws wakes at 08:45 and needs this token) ──────────────────────────────────
+30 8 * * 1-5 cd $APP && $PY options/kite_auto_login.py >> $LOG/kite.log 2>&1
 
-# ── Save instruments (NFO): 08:45 IST = CEST 05:15 ───────────────────────────
-15 5 * * 1-5 cd $APP && $PY options/save_instruments.py >> $LOG/kite.log 2>&1
+# ── Save instruments (NFO): 08:45 IST ───────────────────────────
+45 8 * * 1-5 cd $APP && $PY options/save_instruments.py >> $LOG/kite.log 2>&1
 
-# ── Reset predictions (wipe stale DB rows): 07:45 IST = CEST 04:15 ──────────
-15 4 * * 1-5 cd $APP && $PY scripts/reset_predictions.py >> $LOG/predictions.log 2>&1
+# ── Reset predictions (wipe stale DB rows): 07:45 IST ──────────
+45 7 * * 1-5 cd $APP && $PY scripts/reset_predictions.py >> $LOG/predictions.log 2>&1
 
-# ── MCX OHLC daily: previous day's candle  09:00 IST = CEST 05:30 ────────────
-30 5 * * 1-6 cd $APP && $PY options/mcx_ohlc.py >> $LOG/mcx.log 2>&1
+# ── MCX OHLC daily: previous day's candle  09:00 IST ────────────
+0 9 * * 1-6 cd $APP && $PY options/mcx_ohlc.py --symbol CRUDEOIL >> $LOG/mcx.log 2>&1
 
-# ── Screener: 09:00 IST Mon-Sat = CEST 05:30 ─────────────────────────────────
-30 5 * * 1-6 cd $APP && $PY run_screener.py --no-open >> $LOG/screener.log 2>&1
+# ── Screener: 09:00 IST Mon-Sat ─────────────────────────────────
+0 9 * * 1-6 cd $APP && $PY run_screener.py --no-open >> $LOG/screener.log 2>&1
 
-# ── Intraday rescore (2 PM prediction update): 14:00 IST = CEST 10:30 ────────
-30 10 * * 1-5 cd $APP && $PY scripts/intraday_rescore.py >> $LOG/rescore.log 2>&1
+# ── Intraday rescore (2 PM prediction update): 14:00 IST ────────
+0 14 * * 1-5 cd $APP && $PY scripts/intraday_rescore.py >> $LOG/rescore.log 2>&1
 
-# ── FII equity/derivative data: 15:00 IST = CEST 11:30 ───────────────────────
-30 11 * * 1-5 cd $APP && $PY scripts/collect_fii_data.py >> $LOG/fii.log 2>&1
+# ── FII equity/derivative data: 15:00 IST ───────────────────────
+0 15 * * 1-5 cd $APP && $PY scripts/collect_fii_data.py >> $LOG/fii.log 2>&1
 
-# ── Record prediction outcomes (EOD): 16:30 IST = CEST 13:00 ────────────────
-0 13 * * 1-5 cd $APP && $PY scripts/record_outcomes.py >> $LOG/outcomes.log 2>&1
+# ── Record prediction outcomes (EOD): 16:30 IST ────────────────
+30 16 * * 1-5 cd $APP && $PY scripts/record_outcomes.py >> $LOG/outcomes.log 2>&1
 
-# ── FII F&O participant OI (published ~6-7 PM IST): 19:00 IST = CEST 15:30 ──
-30 15 * * 1-5 cd $APP && $PY scripts/collect_fii_fo_data.py >> $LOG/fii_fo.log 2>&1
+# ── FII F&O participant OI (published ~6-7 PM IST): 19:00 IST ──
+0 19 * * 1-5 cd $APP && $PY scripts/collect_fii_fo_data.py >> $LOG/fii_fo.log 2>&1
 
-# ── MCX options collector: every minute 09:00–23:30 IST = CEST 05:30–20:00 ──
+# ── MCX options collector: every minute 09:00–23:59 IST (covers the 23:55 US-winter close) ──
 # NIFTY is handled independently by the persistent nifty-ws service.
 # CRUDEOIL remains on the default path; NATURALGAS is isolated below.
-*/1 5-20 * * 1-5 cd $APP && $PY options/collector.py >> $LOG/options.log 2>&1
+*/1 9-23 * * 1-5 cd $APP && $PY options/collector.py >> $LOG/options.log 2>&1
 # NATURALGAS gets an independent process and advisory lock, so a slow NG cycle
 # cannot delay or overlap the CRUDEOIL collector.
-*/1 5-20 * * 1-5 cd $APP && $PY options/collector.py --symbol NATURALGAS >> $LOG/options_ng.log 2>&1
+# DISABLED 2026-10-21 crude-only: */1 9-23 * * 1-5 cd $APP && $PY options/collector.py --symbol NATURALGAS >> $LOG/options_ng.log 2>&1
 
-# ── Global prices intraday: WTI/Brent/USDINR 1-min, every minute 09:00–23:30 IST = CEST 05:30–20:00 ──
-*/1 5-20 * * 1-5 cd $APP && $PY options/global_prices_intraday.py >> $LOG/global_prices_intraday.log 2>&1
-# ── CRUDE collection-health deep check: every minute 09:00–23:30 IST = CEST 05:30–20:00 ──
-*/1 5-20 * * 1-5 cd $APP && $PY options/crude_collection_health.py >> $LOG/crude_collection_health.log 2>&1
+# ── Global prices intraday: WTI/Brent/USDINR 1-min, every minute 09:00–23:59 IST ──
+*/1 9-23 * * 1-5 cd $APP && $PY options/global_prices_intraday.py >> $LOG/global_prices_intraday.log 2>&1
+# ── CRUDE collection-health deep check: every minute 09:00–23:59 IST ──
+*/1 9-23 * * 1-5 cd $APP && $PY options/crude_collection_health.py >> $LOG/crude_collection_health.log 2>&1
 
-# ── Watchdog: every 10 min during all market hours = CEST 05:30–20:00 ────────
-# Covers NFO (05:30–12:05) + MCX (05:30–20:05) IST windows
-*/10 5-20 * * 1-5 cd $APP && $PY options/watchdog.py >> $LOG/kite.log 2>&1
+# ── Watchdog: every 10 min during market hours 09:00–23:59 IST ────────
+*/10 9-23 * * 1-5 cd $APP && $PY options/watchdog.py >> $LOG/kite.log 2>&1
 
-# ── NFO EOD: collection stopped + DB summary: 15:35 IST = CEST 12:05 ─────────
-5 12 * * 1-5 cd $APP && $PY options/collector.py --eod NFO >> $LOG/kite.log 2>&1
-5 12 * * 1-5 cd $APP && $PY options/db_summary.py --exchange NFO >> $LOG/kite.log 2>&1
+# ── NFO EOD: collection stopped + DB summary: 15:35 IST ─────────
+# DISABLED 2026-10-21 crude-only: 35 15 * * 1-5 cd $APP && $PY options/collector.py --eod NFO >> $LOG/kite.log 2>&1
+# DISABLED 2026-10-21 crude-only: 35 15 * * 1-5 cd $APP && $PY options/db_summary.py --exchange NFO >> $LOG/kite.log 2>&1
 
-# ── MCX EOD: collection stopped + DB summary: 23:35 IST = CEST 20:05 ─────────
-5 20 * * 1-5 cd $APP && $PY options/collector.py --eod MCX >> $LOG/kite.log 2>&1
-5 20 * * 1-5 cd $APP && $PY options/db_summary.py --exchange MCX >> $LOG/kite.log 2>&1
+# ── MCX EOD summary: 23:58 IST (after both the 23:30 and US-winter 23:55 close) ─────────
+58 23 * * 1-5 cd $APP && $PY options/collector.py --eod MCX >> $LOG/kite.log 2>&1
+58 23 * * 1-5 cd $APP && $PY options/db_summary.py --exchange MCX >> $LOG/kite.log 2>&1
 
-# ── MCX OHLC: NATURALGAS 15-min  CEST 05:30–20:00
+# ── MCX OHLC: NATURALGAS 15-min
 # CRUDEOIL 1-min removed — replaced by crudeoil-ws WebSocket daemon (1-second)
-*/15 5-20 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --15min --symbol NATURALGAS >> $LOG/mcx.log 2>&1
+# DISABLED 2026-10-21 crude-only: */15 9-23 * * 1-5 cd $APP && $PY options/mcx_ohlc.py --15min --symbol NATURALGAS >> $LOG/mcx.log 2>&1
 
-# ── NSE indices + sector + USDINR daily bars: 09:05 IST = CEST 05:35 ────────
-35 5 * * 1-5 cd $APP && $PY options/nse_ohlc.py --daily >> $LOG/nse_ohlc.log 2>&1
+# ── NSE indices + sector + USDINR daily bars: 09:05 IST ────────
+# DISABLED 2026-10-21 crude-only: 5 9 * * 1-5 cd $APP && $PY options/nse_ohlc.py --daily >> $LOG/nse_ohlc.log 2>&1
 
-# ── NSE indices + sector + USDINR per-minute: 09:15–15:30 IST = CEST 05:45–12:00
-*/1 5-12 * * 1-5 cd $APP && $PY options/nse_ohlc.py --minute >> $LOG/nse_ohlc.log 2>&1
+# ── NSE indices + sector + USDINR per-minute: 09:15–15:30 IST
+# DISABLED 2026-10-21 crude-only: */1 9-15 * * 1-5 cd $APP && $PY options/nse_ohlc.py --minute >> $LOG/nse_ohlc.log 2>&1
 
-# ── US markets daily (S&P500/Nasdaq/DXY/VIX/10Y): 08:35 IST = CEST 05:05 ───
+# ── US markets daily (S&P500/Nasdaq/DXY/VIX/10Y): 08:35 IST ───
 # Mon-Sat to catch Friday US close on Saturday morning
-5 5 * * 1-6 cd $APP && $PY options/us_market.py >> $LOG/us_market.log 2>&1
+35 8 * * 1-6 cd $APP && $PY options/us_market.py >> $LOG/us_market.log 2>&1
 
-# ── US markets intraday (5-min): US hours 19:00–01:30 IST = CEST 15:30–22:00 ─
-*/5 15-22 * * 1-5 cd $APP && $PY options/us_market.py --intraday >> $LOG/us_market.log 2>&1
+# ── US markets intraday (5-min): 18:00–02:55 IST, covers US cash hours in both
+# US summer (19:00–01:30 IST) and US winter (20:00–02:30 IST). The after-midnight
+# part belongs to the previous US weekday, hence Tue-Sat.
+*/5 18-23 * * 1-5 cd $APP && $PY options/us_market.py --intraday >> $LOG/us_market.log 2>&1
+*/5 0-2 * * 2-6 cd $APP && $PY options/us_market.py --intraday >> $LOG/us_market.log 2>&1
 
-# ── Derived metrics (Max Pain, GEX, IV Skew): 15:40 IST = CEST 12:10 ────────
-10 12 * * 1-5 cd $APP && $PY options/derived.py >> $LOG/derived.log 2>&1
+# ── Derived metrics (Max Pain, GEX, IV Skew): 15:40 IST ────────
+# DISABLED 2026-10-21 crude-only: 40 15 * * 1-5 cd $APP && $PY options/derived.py >> $LOG/derived.log 2>&1
 
 # ── NIFTY 30-day retention: safely after NSE post-market jobs ────────────────
-# 13:30 server time = 17:00 IST (CEST) / 18:00 IST (CET), always post-market.
-30 13 * * * cd $APP && $PY options/nifty_retention.py >> $LOG/nifty_retention.log 2>&1
+# 17:30 IST, always post-market.
+# DISABLED 2026-10-21 crude-only: 30 17 * * * cd $APP && $PY options/nifty_retention.py >> $LOG/nifty_retention.log 2>&1

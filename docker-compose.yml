@@ -38,6 +38,10 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # crontab.docker is written in IST. Overrides the Dockerfile's
+      # Europe/Berlin for this service only, so Berlin DST changes can no
+      # longer shift job times (2026-10-28 incident: Kite login slipped to 09:30 IST).
+      TZ: Asia/Kolkata
       # Override localhost → postgres container hostname
       DATABASE_URL: postgresql://${POSTGRES_USER:-stockanalyzer}:${POSTGRES_PASSWORD}@postgres:5432/stock_analyzer
     volumes:
@@ -68,6 +72,7 @@ services:
   # NIFTY weekly options (ATM ±10) + near-month futures, one DB snapshot/second.
   # Isolated from MCX so restarts or failures cannot interrupt CRUDEOIL/NG.
   nifty-ws:
+    profiles: ["nifty-disabled"]  # NIFTY collection stopped 2026-10-21 (crude-only)
     image: stock-analyzer-nifty-ws:${APP_IMAGE_TAG:-latest}
     build:
       context: .
