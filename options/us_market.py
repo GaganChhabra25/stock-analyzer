@@ -285,6 +285,10 @@ if __name__ == "__main__":
                         help="Fetch 5-min intraday candles (run every 5 min via cron)")
     args = parser.parse_args()
 
+    from options.collector_control import is_paused
+    if is_paused("us_market"):
+        logger.info("[US-MARKET] Paused from Server page -- skipping this run.")
+        sys.exit(0)
     if args.intraday:
         run_intraday()
     else:

@@ -178,6 +178,12 @@ def _check_window(label: str, instrument: str, now: datetime) -> None:
     """Run one health check cycle for a market window."""
     logger.info("[%s] Watchdog check at %s IST", label, now.strftime("%H:%M"))
 
+    if label == "MCX":
+        from options.collector_control import is_paused
+        if is_paused("crude_options"):
+            logger.info("[MCX] Option collector paused from Server page -- no check.")
+            return
+
     if _has_recent_data(instrument, minutes=10):
         logger.info("[%s] Data flowing — pipeline healthy.", label)
         _clear_alert(f"{label}_login_failed")

@@ -35,6 +35,7 @@ from kiteconnect import KiteTicker
 
 from options.kite_auth import API_KEY, get_kite, load_access_token
 from options.crude_tick_aggregator import classify_session_phase, classify_quality_flag
+from options.collector_control import is_paused
 from logging_config import configure_logging
 
 configure_logging()
@@ -273,7 +274,18 @@ def main() -> None:
     threading.Thread(target=_flush_thread, daemon=True, name="gold-bar-flusher").start()
 
     consecutive_timeouts = 0
+    pause_logged = False
     while True:
+        if is_paused("gold_1s"):
+            if not pause_logged:
+                logger.info("[GOLD-WS] Paused from Server page -- idle until resumed.")
+                pause_logged = True
+            _time.sleep(30)
+            continue
+        if pause_logged:
+            logger.info("[GOLD-WS] Resumed from Server page.")
+            pause_logged = False
+
         if not _mcx_open():
             wait = _seconds_until_open()
             logger.info("[GOLD-WS] MCX closed. Sleeping %d min.", wait // 60)
@@ -332,6 +344,9 @@ def main() -> None:
                 while True:
                     if not _mcx_open():
                         logger.info("[GOLD-WS] MCX closing -- disconnecting.")
+                        break
+                    if is_paused("gold_1s"):
+                        logger.info("[GOLD-WS] Paused from Server page -- disconnecting.")
                         break
                     if date.today() != session_day:
                         break   # new day -> re-select contract

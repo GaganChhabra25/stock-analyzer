@@ -133,5 +133,9 @@ def fetch_and_store(days: int = BACKFILL_DAYS) -> int:
 
 
 if __name__ == "__main__":
+    from options.collector_control import is_paused
+    if is_paused("global_prices"):
+        logger.info("[GlobalPrices] Paused from Server page -- skipping this run.")
+        sys.exit(0)
     n = fetch_and_store()
     logger.info("[GlobalPrices] Done — %d rows total.", n)

@@ -29,7 +29,10 @@ CRON_PATHS = {
     "options/collector.py",
     "options/crude_collection_health.py",
     "options/db_summary.py",
+    "options/collector_control.py",
     "options/derived.py",
+    "options/global_prices.py",
+    "options/global_prices_intraday.py",
     "options/instruments.py",
     "options/mcx_ohlc.py",
     "options/notifier.py",
@@ -46,10 +49,12 @@ NIFTY_PATHS = {
 }
 
 GOLD_PATHS = {
+    "options/collector_control.py",
     "options/gold_ws.py",
 }
 
 CRUDE_PATHS = {
+    "options/collector_control.py",
     "options/crudeoil_ws.py",
     "options/global_reference_ws.py",
 }

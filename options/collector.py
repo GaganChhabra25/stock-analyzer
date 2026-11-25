@@ -135,4 +135,8 @@ if __name__ == "__main__":
     if args.eod:
         send_eod(args.eod)
     else:
-        collect_once(args.symbol)
+        from options.collector_control import is_paused
+        if is_paused("crude_options"):
+            logger.info("[collector] Paused from Server page -- skipping this run.")
+        else:
+            collect_once(args.symbol)

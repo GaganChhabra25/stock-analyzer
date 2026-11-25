@@ -37,6 +37,7 @@ from kiteconnect import KiteTicker
 from options.kite_auth import API_KEY, load_access_token
 from options.mcx_instruments import atm_strike_mcx, load_mcx_instruments
 from options.tg import once, send, db_size, table_rows, now_ist
+from options.collector_control import is_paused
 from options.kite_auth import get_kite
 from options.crude_tick_aggregator import (
     SecondAccumulator,
@@ -2093,7 +2094,20 @@ def main():
 
     consecutive_timeouts = 0
 
+    pause_logged = False
     while True:
+        # ── Paused from the trade-bot Server page ──────────────────────────────
+        if is_paused("crude_1s"):
+            _websocket_connected = False
+            if not pause_logged:
+                logger.info("[CRUDE-WS] Paused from Server page -- idle until resumed.")
+                pause_logged = True
+            _time.sleep(30)
+            continue
+        if pause_logged:
+            logger.info("[CRUDE-WS] Resumed from Server page.")
+            pause_logged = False
+
         # ── Sleep when MCX is closed ───────────────────────────────────────────
         if not _mcx_open():
             _websocket_connected = False
@@ -2212,6 +2226,9 @@ def main():
                              f"{now_ist()}\n"
                              f"Bars today : {_today_rows():,}\n"
                              f"DB         : {db_size()}")
+                        break
+                    if is_paused("crude_1s"):
+                        logger.info("[CRUDE-WS] Paused from Server page -- disconnecting.")
                         break
                     if not kws.is_connected():
                         logger.warning("[CRUDE-WS] Disconnected mid-session — will reconnect.")

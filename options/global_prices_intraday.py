@@ -258,5 +258,9 @@ def _fetch_and_store_locked(yf) -> int:
 
 
 if __name__ == "__main__":
+    from options.collector_control import is_paused
+    if is_paused("global_prices"):
+        logger.info("[GLOBAL-INTRADAY] Paused from Server page -- skipping this run.")
+        sys.exit(0)
     n = fetch_and_store()
     logger.info("[GLOBAL-INTRADAY] Done — %d rows total.", n)
