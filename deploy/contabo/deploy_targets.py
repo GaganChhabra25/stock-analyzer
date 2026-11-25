@@ -6,7 +6,7 @@ import argparse
 from dataclasses import dataclass
 
 
-DOCKER_SERVICES = ("cron-worker", "crudeoil-ws", "nifty-ws")
+DOCKER_SERVICES = ("cron-worker", "crudeoil-ws", "gold-ws", "nifty-ws")
 
 SHARED_DOCKER_PATHS = {
     ".github/workflows/deploy.yml",
@@ -45,6 +45,10 @@ NIFTY_PATHS = {
     "options/nifty_ws.py",
 }
 
+GOLD_PATHS = {
+    "options/gold_ws.py",
+}
+
 CRUDE_PATHS = {
     "options/crudeoil_ws.py",
     "options/global_reference_ws.py",
@@ -79,6 +83,8 @@ def deployment_plan(paths: list[str], deploy_all: bool = False) -> DeploymentPla
 
     if normalized & CRUDE_PATHS:
         services.add("crudeoil-ws")
+    if normalized & GOLD_PATHS:
+        services.add("gold-ws")
     if normalized & NIFTY_PATHS:
         services.add("nifty-ws")
     if normalized & CRON_PATHS or any(path.startswith("options/exchange/") for path in normalized):

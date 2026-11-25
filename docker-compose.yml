@@ -69,6 +69,26 @@ services:
       postgres:
         condition: service_healthy
 
+  # MCX GOLD front-future 1-second OHLC (added 2026-11-25). Separate process and
+  # Kite connection, so a GOLD failure can never interrupt CRUDEOIL collection.
+  gold-ws:
+    image: stock-analyzer-gold-ws:${APP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: docker/cron-worker/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stockanalyzer}:${POSTGRES_PASSWORD}@postgres:5432/stock_analyzer
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    command: ["python", "-u", "options/gold_ws.py"]
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # NIFTY weekly options (ATM ±10) + near-month futures, one DB snapshot/second.
   # Isolated from MCX so restarts or failures cannot interrupt CRUDEOIL/NG.
   nifty-ws:
