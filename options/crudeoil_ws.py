@@ -2192,6 +2192,7 @@ def main():
         kws.on_close   = on_close
         kws.on_error   = on_error
 
+        exit_for_pause = False
         try:
             _connection_attempts += 1
             kws.connect(threaded=True)
@@ -2229,6 +2230,7 @@ def main():
                         break
                     if is_paused("crude_1s"):
                         logger.info("[CRUDE-WS] Paused from Server page -- disconnecting.")
+                        exit_for_pause = True
                         break
                     if not kws.is_connected():
                         logger.warning("[CRUDE-WS] Disconnected mid-session — will reconnect.")
@@ -2246,6 +2248,14 @@ def main():
             pass
         _websocket_connected = False
         _reset_option_session()
+
+        if exit_for_pause:
+            # A reconnect inside the same process is unreliable (Twisted
+            # reactor). Exit; Docker restarts a fresh process that idles while
+            # paused and connects cleanly on resume.
+            logger.info("[CRUDE-WS] Exiting for a clean restart while paused.")
+            _time.sleep(5)
+            sys.exit(0)
 
         _time.sleep(30)  # 30s cooldown — prevents duplicate sessions on Kite
 

@@ -361,7 +361,13 @@ def main() -> None:
             kws.close()
         except Exception:
             pass
-        _time.sleep(30)
+        # KiteTicker's Twisted reactor does not reconnect reliably inside one
+        # process (observed 2026-11-25: resume after pause -> connect timeout).
+        # Exit instead; Docker (restart: unless-stopped) starts a fresh process,
+        # which idles while paused / closed and connects cleanly when needed.
+        logger.info("[GOLD-WS] Exiting for a clean restart (fresh WebSocket next time).")
+        _time.sleep(5)
+        sys.exit(0)
 
 
 if __name__ == "__main__":
