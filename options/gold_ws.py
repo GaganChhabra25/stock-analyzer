@@ -7,7 +7,8 @@ CRUDEOIL daemon writes, so the same research/backtest queries work by only
 changing the instrument filter.
 
 Fully isolated from crudeoil_ws.py: own process/container, own Kite
-WebSocket connection, own DB connection. No options, no depth, no Telegram.
+WebSocket connection, own DB connection. No options, no depth, no Telegram
+(front + next futures OHLC only).
 
 Front-contract rule (rollover): MCX GOLD expires bi-monthly and liquidity
 moves to the next contract several days before expiry, so the "nearest
@@ -15,6 +16,13 @@ expiry" rule used for crude would keep a dying contract. Instead, on every
 (re)connect the two nearest-expiry GOLD futures are quoted and the one with
 the higher open interest is collected. The contract actually collected is
 stored per row in mcx_ohlc.tradingsymbol.
+
+Next contract (added 2026-11-27): the GOLD future with the first expiry after
+the front one is also collected every second, all session, into
+mcx_ohlc_next_contract (instrument='GOLD', contract_role='next', expiry set) --
+the same table/format crudeoil_ws uses for CRUDEOIL. When OI rolls the front
+to that contract, the next table moves on to the one after it. Research only;
+a next-contract failure never blocks or alters front collection.
 """
 
 import logging
@@ -94,11 +102,15 @@ def _seconds_until_open() -> int:
 
 _token_id: Optional[int] = None
 _tradingsymbol: str = ""
+_next_token_id: Optional[int] = None
+_next_tradingsymbol: str = ""
+_next_expiry: Optional[date] = None
 
 
-def _select_front_contract(kite) -> tuple[int, str]:
-    """Return (instrument_token, tradingsymbol) of the GOLD future to collect:
-    of the two nearest unexpired contracts, the one with higher OI."""
+def _select_contracts(kite) -> tuple[tuple, Optional[tuple]]:
+    """Return (front, next) as (expiry, instrument_token, tradingsymbol).
+    Front = of the two nearest unexpired contracts, the one with higher OI.
+    Next  = first contract expiring after the front (None if not listed)."""
     instruments = kite.instruments("MCX")
     today = date.today()
     futs = []
@@ -127,48 +139,64 @@ def _select_front_contract(kite) -> tuple[int, str]:
             logger.warning("[GOLD-WS] OI quote failed, using nearest expiry: %s", exc)
     logger.info("[GOLD-WS] Front contract: %s (token %d, expiry %s)",
                 chosen[2], chosen[1], chosen[0])
-    return chosen[1], chosen[2]
+    nxt = next((f for f in futs if f[0] > chosen[0]), None)
+    if nxt:
+        logger.info("[GOLD-WS] Next contract: %s (token %d, expiry %s)", nxt[2], nxt[1], nxt[0])
+    else:
+        logger.warning("[GOLD-WS] No GOLD contract listed after the front -- next collection off.")
+    return chosen, nxt
 
 
 # -- Tick -> 1-second bar ------------------------------------------------------
 
 _lock = threading.Lock()
 _running = True
-_bar: dict = {}
-_prev_vol_cum: Optional[int] = None   # None = unknown baseline -> volume NULL
-_last_flushed_ts: Optional[datetime] = None
+# Per role ("front" / "next"): the bar being built, the previous cumulative
+# volume (None = unknown baseline -> volume NULL) and the last flushed second.
+_bars: dict = {"front": {}, "next": {}}
+_prev_vol_cum: dict = {"front": None, "next": None}
+_last_flushed_ts: dict = {"front": None, "next": None}
 
 
-def _reset_bar() -> None:
-    _bar.clear()
-    _bar.update({"ts": None, "open": None, "high": None, "low": None, "close": None,
-                 "vol_cum": None, "oi": 0, "tick_count": 0, "last_tick_at": None,
-                 "symbol": ""})
+def _reset_bar(role: str) -> None:
+    b = _bars[role]
+    b.clear()
+    b.update({"ts": None, "open": None, "high": None, "low": None, "close": None,
+              "vol_cum": None, "oi": 0, "tick_count": 0, "last_tick_at": None,
+              "symbol": "", "expiry": None})
 
 
-_reset_bar()
+_reset_bar("front")
+_reset_bar("next")
 
 
 def _on_ticks(_ws, ticks) -> None:
     for tick in ticks:
-        if int(tick.get("instrument_token", 0)) != _token_id:
+        tok = int(tick.get("instrument_token", 0))
+        if tok == _token_id:
+            role, symbol, expiry = "front", _tradingsymbol, None
+        elif _next_token_id is not None and tok == _next_token_id:
+            role, symbol, expiry = "next", _next_tradingsymbol, _next_expiry
+        else:
             continue
         ltp = tick.get("last_price") or 0
         if not ltp:
             continue
         received_at = datetime.now(IST)
         with _lock:
-            if _bar["open"] is None:
-                _bar["ts"] = received_at.replace(microsecond=0)
-                _bar["open"] = ltp
-                _bar["symbol"] = _tradingsymbol
-            _bar["high"] = max(_bar["high"] or ltp, ltp)
-            _bar["low"] = min(_bar["low"] or ltp, ltp)
-            _bar["close"] = ltp
-            _bar["vol_cum"] = tick.get("volume_traded")
-            _bar["oi"] = tick.get("oi") or 0
-            _bar["tick_count"] += 1
-            _bar["last_tick_at"] = received_at
+            bar = _bars[role]
+            if bar["open"] is None:
+                bar["ts"] = received_at.replace(microsecond=0)
+                bar["open"] = ltp
+                bar["symbol"] = symbol
+                bar["expiry"] = expiry
+            bar["high"] = max(bar["high"] or ltp, ltp)
+            bar["low"] = min(bar["low"] or ltp, ltp)
+            bar["close"] = ltp
+            bar["vol_cum"] = tick.get("volume_traded")
+            bar["oi"] = tick.get("oi") or 0
+            bar["tick_count"] += 1
+            bar["last_tick_at"] = received_at
 
 
 def _write_bar(conn, ts, o, h, l, c, volume, oi, symbol, session_phase, quality_flag) -> None:
@@ -189,13 +217,92 @@ def _write_bar(conn, ts, o, h, l, c, volume, oi, symbol, session_phase, quality_
     conn.commit()
 
 
+# Same DDL as crudeoil_ws.py (table normally exists already; IF NOT EXISTS).
+_NEXT_OHLC_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS mcx_ohlc_next_contract (
+        ts              TIMESTAMPTZ NOT NULL,
+        instrument      VARCHAR(20) NOT NULL,
+        interval        VARCHAR(10) NOT NULL,
+        tradingsymbol   VARCHAR(40) NOT NULL,
+        expiry          DATE,
+        contract_role   VARCHAR(10) NOT NULL DEFAULT 'next',
+        open            NUMERIC(12,2),
+        high            NUMERIC(12,2),
+        low             NUMERIC(12,2),
+        close           NUMERIC(12,2),
+        volume          BIGINT,
+        oi              BIGINT,
+        session_phase   VARCHAR(20),
+        quality_flag    VARCHAR(20),
+        available_at    TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        PRIMARY KEY (ts, instrument, interval)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mcx_ohlc_next_contract_symbol
+        ON mcx_ohlc_next_contract (tradingsymbol, ts DESC);
+"""
+
+
+def _write_next_bar(conn, ts, o, h, l, c, volume, oi, symbol, expiry,
+                    session_phase, quality_flag) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO mcx_ohlc_next_contract
+                (ts, instrument, interval, tradingsymbol, expiry, open, high, low, close,
+                 volume, oi, session_phase, quality_flag)
+            VALUES (%s, %s, 'second', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (ts, instrument, interval) DO UPDATE SET
+                tradingsymbol = EXCLUDED.tradingsymbol, expiry = EXCLUDED.expiry,
+                open = EXCLUDED.open, high = EXCLUDED.high,
+                low = EXCLUDED.low, close = EXCLUDED.close,
+                volume = EXCLUDED.volume, oi = EXCLUDED.oi,
+                session_phase = EXCLUDED.session_phase,
+                quality_flag = EXCLUDED.quality_flag
+        """, (ts, SYMBOL, symbol, expiry, o, h, l, c, volume, oi, session_phase, quality_flag))
+    conn.commit()
+
+
+def _take_snapshot(role: str) -> Optional[dict]:
+    """Pop the completed bar for ``role``. Caller holds _lock."""
+    bar = _bars[role]
+    if bar["open"] is None:
+        return None
+    vol_cum = bar["vol_cum"]
+    prev = _prev_vol_cum[role]
+    if vol_cum is None or prev is None or vol_cum < prev:
+        volume = None          # baseline unknown -> honest NULL
+    else:
+        volume = vol_cum - prev
+    if vol_cum is not None:
+        _prev_vol_cum[role] = vol_cum
+    snap = dict(bar, volume=volume)
+    _reset_bar(role)
+    return snap
+
+
+def _tags(snap: dict, role: str, now: datetime, holidays, evening_only) -> tuple:
+    session_phase = quality_flag = None
+    try:
+        session_phase = classify_session_phase(snap["ts"], holidays, evening_only)
+        last = _last_flushed_ts[role]
+        gap = (snap["ts"] - last).total_seconds() if last is not None else None
+        age_ms = max(0, round((now - snap["last_tick_at"]).total_seconds() * 1000))
+        quality_flag = classify_quality_flag(
+            session_phase=session_phase, tick_count=snap["tick_count"],
+            data_age_ms=age_ms, gap_seconds=gap)
+    except Exception as exc:
+        logger.error("[GOLD-WS] %s session/quality tag failed (row still written): %s", role, exc)
+    return session_phase, quality_flag
+
+
 def _flush_thread() -> None:
-    """Write each completed 1-second bar as soon as the wall-clock second changes."""
-    global _prev_vol_cum, _last_flushed_ts
+    """Write each completed 1-second bar as soon as the wall-clock second changes.
+    Front -> mcx_ohlc; next -> mcx_ohlc_next_contract. Next-contract errors are
+    logged and dropped -- they never affect the front row or the connection."""
     import psycopg2
     from config import MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS
 
     conn = None
+    next_ready = False
     last_sec = None
     while _running:
         _time.sleep(0.1)
@@ -203,6 +310,7 @@ def _flush_thread() -> None:
             if conn is None or conn.closed:
                 conn = psycopg2.connect(os.environ.get("DATABASE_URL", ""))
                 conn.autocommit = False
+                next_ready = False
                 logger.info("[GOLD-WS] DB connected.")
 
             now = datetime.now(IST)
@@ -212,36 +320,35 @@ def _flush_thread() -> None:
                 continue
             last_sec = current_sec
 
-            snap = None
             with _lock:
-                if _bar["open"] is not None:
-                    vol_cum = _bar["vol_cum"]
-                    if vol_cum is None or _prev_vol_cum is None or vol_cum < _prev_vol_cum:
-                        volume = None          # baseline unknown -> honest NULL
-                    else:
-                        volume = vol_cum - _prev_vol_cum
-                    if vol_cum is not None:
-                        _prev_vol_cum = vol_cum
-                    snap = dict(_bar, volume=volume)
-                    _reset_bar()
+                snap = _take_snapshot("front")
+                nsnap = _take_snapshot("next")
 
             if snap:
-                session_phase = quality_flag = None
-                try:
-                    session_phase = classify_session_phase(
-                        snap["ts"], MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS)
-                    gap = ((snap["ts"] - _last_flushed_ts).total_seconds()
-                           if _last_flushed_ts is not None else None)
-                    age_ms = max(0, round((now - snap["last_tick_at"]).total_seconds() * 1000))
-                    quality_flag = classify_quality_flag(
-                        session_phase=session_phase, tick_count=snap["tick_count"],
-                        data_age_ms=age_ms, gap_seconds=gap)
-                except Exception as exc:
-                    logger.error("[GOLD-WS] session/quality tag failed (row still written): %s", exc)
+                phase, flag = _tags(snap, "front", now, MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS)
                 _write_bar(conn, snap["ts"], snap["open"], snap["high"], snap["low"],
                            snap["close"], snap["volume"], snap["oi"], snap["symbol"],
-                           session_phase, quality_flag)
-                _last_flushed_ts = snap["ts"]
+                           phase, flag)
+                _last_flushed_ts["front"] = snap["ts"]
+
+            if nsnap:
+                try:
+                    if not next_ready:
+                        with conn.cursor() as cur:
+                            cur.execute(_NEXT_OHLC_TABLE_SQL)
+                        conn.commit()
+                        next_ready = True
+                    phase, flag = _tags(nsnap, "next", now, MCX_HOLIDAYS, MCX_EVENING_ONLY_DAYS)
+                    _write_next_bar(conn, nsnap["ts"], nsnap["open"], nsnap["high"], nsnap["low"],
+                                    nsnap["close"], nsnap["volume"], nsnap["oi"], nsnap["symbol"],
+                                    nsnap["expiry"], phase, flag)
+                    _last_flushed_ts["next"] = nsnap["ts"]
+                except Exception as exc:
+                    logger.error("[GOLD-WS] Next-contract write failed (front unaffected): %s", exc)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
         except Exception as exc:
             logger.error("[GOLD-WS] Flush error: %s", exc)
             try:
@@ -257,18 +364,18 @@ def _start_session_baseline(connected_at: datetime) -> None:
     """Volume baseline for the new connection. Connected before the session
     opened -> cumulative volume starts at 0, so the first bar's volume is
     exact. Connected mid-session -> unknown, first bar gets NULL volume."""
-    global _prev_vol_cum, _last_flushed_ts
     open_at = _session_open_today()
     with _lock:
-        _reset_bar()
-        _prev_vol_cum = 0 if open_at and connected_at < open_at else None
-        _last_flushed_ts = None
+        for role in ("front", "next"):
+            _reset_bar(role)
+            _prev_vol_cum[role] = 0 if open_at and connected_at < open_at else None
+            _last_flushed_ts[role] = None
 
 
 # -- Main loop -----------------------------------------------------------------
 
 def main() -> None:
-    global _token_id, _tradingsymbol
+    global _token_id, _tradingsymbol, _next_token_id, _next_tradingsymbol, _next_expiry
 
     logger.info("[GOLD-WS] GOLD 1-second WebSocket daemon starting.")
     threading.Thread(target=_flush_thread, daemon=True, name="gold-bar-flusher").start()
@@ -300,13 +407,17 @@ def main() -> None:
             continue
 
         try:
-            token, symbol = _select_front_contract(kite)
+            front, nxt = _select_contracts(kite)
         except Exception as exc:
             logger.error("[GOLD-WS] Contract selection failed: %s -- retry in 5 min.", exc)
             _time.sleep(300)
             continue
         with _lock:
-            _token_id, _tradingsymbol = token, symbol
+            _token_id, _tradingsymbol = front[1], front[2]
+            if nxt:
+                _next_expiry, _next_token_id, _next_tradingsymbol = nxt
+            else:
+                _next_expiry, _next_token_id, _next_tradingsymbol = None, None, ""
         _start_session_baseline(datetime.now(IST))
 
         # reconnect=False: this loop owns reconnection (same as crudeoil_ws).
@@ -315,9 +426,11 @@ def main() -> None:
 
         def on_connect(ws, _resp):
             connected.set()
-            ws.subscribe([_token_id])
-            ws.set_mode(ws.MODE_FULL, [_token_id])   # FULL carries OI
-            logger.info("[GOLD-WS] Connected -- subscribed %s (%d)", _tradingsymbol, _token_id)
+            tokens = [_token_id] + ([_next_token_id] if _next_token_id else [])
+            ws.subscribe(tokens)
+            ws.set_mode(ws.MODE_FULL, tokens)   # FULL carries OI
+            logger.info("[GOLD-WS] Connected -- subscribed front %s (%d), next %s (%s)",
+                        _tradingsymbol, _token_id, _next_tradingsymbol or "-", _next_token_id)
 
         def on_close(_ws, code, reason):
             logger.warning("[GOLD-WS] Connection closed (%s): %s", code, reason)
@@ -349,7 +462,7 @@ def main() -> None:
                         logger.info("[GOLD-WS] Paused from Server page -- disconnecting.")
                         break
                     if date.today() != session_day:
-                        break   # new day -> re-select contract
+                        break   # new day -> re-select contracts
                     if not kws.is_connected():
                         logger.warning("[GOLD-WS] Disconnected mid-session -- reconnecting.")
                         break
